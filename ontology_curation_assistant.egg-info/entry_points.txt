@@ -1,0 +1,2 @@
+[console_scripts]
+oca = backend.app.cli:app

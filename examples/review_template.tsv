@@ -1,0 +1,3 @@
+candidate_id	candidate_label	term_type	proposed_definition	synonyms	source_document	evidence_quote	proposed_parent_term	proposed_relation_type	related_term	confidence_score	direct_or_inferred	reviewer_decision	reviewer_comment	approval_status
+CAND:0001	example biological process	class	A placeholder process used to demonstrate the review template.	example process	DOC:0001	This sentence is placeholder evidence.	biological process	is_a	biological process	0.80	direct			new
+
