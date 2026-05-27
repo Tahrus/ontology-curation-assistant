@@ -17,6 +17,8 @@ This is a project scaffold with:
 - documentation for architecture, workflow, and ODK integration
 - starter tests
 
+See [docs/current-state.md](docs/current-state.md) for a snapshot of what is implemented now versus what is still planned.
+
 AI suggestions are intentionally separated from approved ontology exports.
 
 ## Layout
@@ -71,7 +73,27 @@ OCA_ONTOLOGY_REPO=C:\path\to\your\odk-managed-ontology
 
 The assistant should generate reviewed templates into the ontology repository, then run configured ODK or Make targets.
 
+## Zotero Metadata
+
+Offline metadata import:
+
+```powershell
+oca zotero-import .\zotero-export.json
+oca zotero-list
+oca zotero-show 1
+oca zotero-link-documents .\literature
+```
+
+Zotero Web API metadata sync:
+
+```powershell
+oca zotero-config
+oca zotero-sync --library-type user --library-id 123456 --dry-run
+oca zotero-sync --library-type group --library-id 123456 --collection COLLECTIONKEY
+```
+
+Configure API sync with `OCA_ZOTERO_LIBRARY_TYPE`, `OCA_ZOTERO_LIBRARY_ID`, optional `OCA_ZOTERO_API_KEY`, optional `OCA_ZOTERO_COLLECTION_KEY`, and `OCA_ZOTERO_API_BASE_URL`. Sync imports metadata only; it does not download attachments or write to Zotero.
+
 ## Safety Rule
 
 The AI layer may create candidates. It may not create ontology changes. Only human-approved records are eligible for ODK export.
-

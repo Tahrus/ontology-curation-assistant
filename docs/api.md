@@ -9,6 +9,21 @@ GET /health
 GET /api/config
 ```
 
+## Current CLI-Only Literature Source Workflow
+
+Zotero metadata import and sync are currently exposed through CLI commands:
+
+```text
+oca zotero-import <metadata_file>
+oca zotero-list
+oca zotero-show <source_id>
+oca zotero-link-documents <literature_dir>
+oca zotero-config
+oca zotero-sync
+```
+
+This workflow imports exported metadata into OCA's local database, can sync metadata from the Zotero Web API, and links already ingested documents conservatively. It does not read Zotero's internal database, download attachments, or write to Zotero.
+
 ## Future Endpoints
 
 ```text
@@ -31,4 +46,3 @@ GET /api/audit
 - Export endpoints must reject candidates that are not human-approved.
 - Build endpoints should run on a Git branch, not directly on a main branch.
 - API responses should expose evidence and provenance for all suggestions.
-

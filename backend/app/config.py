@@ -20,9 +20,13 @@ class Settings(BaseSettings):
     require_human_approval: bool = True
     llm_provider: str | None = None
     llm_model: str | None = None
+    zotero_library_type: str | None = None
+    zotero_library_id: str | None = None
+    zotero_api_key: str | None = None
+    zotero_collection_key: str | None = None
+    zotero_api_base_url: str = "https://api.zotero.org"
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

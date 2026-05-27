@@ -6,6 +6,7 @@ The production database should be implemented with SQLAlchemy and Alembic.
 
 ```text
 documents
+literature_sources
 document_segments
 extraction_runs
 candidate_terms
@@ -22,6 +23,8 @@ odk_builds
 
 ## Important Relationships
 
+- A literature source stores upstream bibliographic metadata, currently from offline Zotero/Better BibTeX-style exports or metadata-only Zotero Web API sync.
+- A document may link to one literature source.
 - A document has many document segments.
 - An extraction run has many candidate terms and relations.
 - A candidate term has many evidence records and synonyms.
@@ -33,4 +36,3 @@ odk_builds
 ## Review Status Rule
 
 Only `approved` and `approved_with_edits` are exportable.
-

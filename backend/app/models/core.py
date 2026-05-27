@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -36,5 +36,4 @@ class CandidateTerm(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     evidence: list[Evidence] = Field(default_factory=list)
     review_status: ReviewStatus = ReviewStatus.NEW
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
