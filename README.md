@@ -70,7 +70,7 @@ The browser UI is split into small pages:
 - Curation: document ingestion, candidate extraction, candidate editing, local PPO matching, and external OLS matching.
 - Export: approved candidate downloads for ROBOT/ODK/Protégé-oriented workflows.
 
-The header includes a small consistent logo link back to the Dashboard and a Light/Dark theme toggle. Theme choice is stored in browser local storage; if no choice exists, the UI follows the system color-scheme preference. Header and dashboard navigation use the static app's current client-side route map, so switching pages updates the visible workflow immediately without requiring a browser refresh.
+The header includes a consistent logo link back to the Dashboard and a Light/Dark theme toggle. Theme choice is stored in browser local storage; if no choice exists, the UI follows the system color-scheme preference. Header and dashboard navigation use the static app's current client-side route map, so switching pages updates the visible workflow immediately without requiring a browser refresh.
 
 The workflow supports:
 
@@ -94,6 +94,16 @@ The UI calls JSON endpoints under `/api/...`, so CLI-created candidates and brow
 Credentials entered in the UI are stored in the local SQLite database for development use and are masked in API responses.
 Saved API configurations are listed on the Configuration page with provider/library/model metadata, masked secrets, timestamps, and active-state controls.
 
+Literature import, ingestion, linking, and Zotero sync workflows refresh the authoritative LLM-ready literature repository at:
+
+```text
+literature/literature.json
+```
+
+The folder is created automatically when needed. The JSON uses schema version `1.0` and stores a `papers` list. Each paper has a stable `paper_id`, validated Zotero item key/URI diagnostics, citation metadata, attachments, extracted sections (`abstract`, `introduction`, `methodology`, `results`, `discussion`, `conclusion`, `figures_tables`, `references`), full text where available, LLM-sized chunks with paper/section/chunk metadata, source metadata, and quality flags such as `missing_full_text`, `missing_attachment`, or `possible_scanned_pdf`.
+
+The SQLite tables are runtime cache and workflow state. Literature repository content should be regenerated from and represented by `literature/literature.json` when handing the corpus to an LLM.
+
 ### Zotero from the Browser
 
 In API Key Configuration, enter:
@@ -103,7 +113,7 @@ In API Key Configuration, enter:
 - Zotero API key, if needed for the target library
 - optional collection key
 
-Use Zotero Connection to test the credentials, then click `Sync All Zotero Records`. The browser sync defaults to no limit and follows Zotero pagination until all records in the configured library or collection are retrieved. An advanced optional limit is available only for testing.
+Use Zotero Connection to test the credentials, then click `Sync All Zotero Records`. The browser sync defaults to no limit and follows Zotero pagination until all records in the configured library or collection are retrieved. An advanced optional limit is available only for testing. Sync refreshes `literature/literature.json`.
 
 If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
 

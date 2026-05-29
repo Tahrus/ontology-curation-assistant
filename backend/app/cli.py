@@ -49,6 +49,7 @@ def ingest(
     from sqlalchemy.exc import IntegrityError
 
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.literature.exporter import export_literature_json
     from backend.app.models.db import LiteratureDocument
 
     if not literature_dir.exists():
@@ -94,8 +95,11 @@ def ingest(
                 skipped += 1
                 console.print(f"[yellow]skipped duplicate[/yellow] {path}")
 
+        export_path = export_literature_json(session)
+
     console.print(f"[bold]Inserted:[/bold] {inserted}")
     console.print(f"[bold]Skipped:[/bold] {skipped}")
+    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
     
 
 @app.command("literature-list")
@@ -362,6 +366,7 @@ def zotero_import(
 ) -> None:
     """Import offline Zotero-style metadata into the local workflow database."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.literature.exporter import export_literature_json
     from backend.app.models.db import LiteratureSource
     from backend.app.zotero.importer import import_sources
 
@@ -374,6 +379,7 @@ def zotero_import(
             result = import_sources(session, metadata_file)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
+        export_path = export_literature_json(session)
 
     # Keep the import above from looking unused to future readers: importing the model
     # registers it with SQLAlchemy metadata before ensure_runtime_schema().
@@ -381,6 +387,7 @@ def zotero_import(
     console.print(f"[bold]Inserted:[/bold] {result.inserted}")
     console.print(f"[bold]Updated:[/bold] {result.updated}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
+    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
 
 
 @app.command("zotero-list")
@@ -453,6 +460,7 @@ def zotero_link_documents(
 ) -> None:
     """Conservatively link ingested local documents to imported Zotero records."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.literature.exporter import export_literature_json
     from backend.app.models.db import LiteratureDocument, LiteratureSource
     from backend.app.zotero.importer import link_documents_to_sources
 
@@ -465,11 +473,13 @@ def zotero_link_documents(
     ensure_runtime_schema()
     with SessionLocal() as session:
         result = link_documents_to_sources(session, literature_dir, force=force)
+        export_path = export_literature_json(session)
 
     _ = (LiteratureDocument, LiteratureSource)
     console.print(f"[bold]Linked:[/bold] {result.linked}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
     console.print(f"[bold]Ambiguous:[/bold] {result.ambiguous}")
+    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
 
 
 @app.command("zotero-config")
@@ -512,6 +522,7 @@ def zotero_sync(
 ) -> None:
     """Sync Zotero Web API metadata into the local workflow database."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.literature.exporter import export_literature_json
     from backend.app.zotero.client import (
         ZoteroApiClient,
         ZoteroApiConfig,
@@ -562,7 +573,9 @@ def zotero_sync(
     ensure_runtime_schema()
     with SessionLocal() as session:
         result = import_parsed_sources(session, sources, skipped=skipped, synced=True)
+        export_path = export_literature_json(session)
 
     console.print(f"[bold]Inserted:[/bold] {result.inserted}")
     console.print(f"[bold]Updated:[/bold] {result.updated}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
+    console.print(f"[bold]Literature JSON:[/bold] {export_path}")

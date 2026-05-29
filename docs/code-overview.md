@@ -7,7 +7,7 @@ Last updated: 2026-05-29
 - `backend/app/main.py` creates the FastAPI app, initializes the runtime schema on startup, mounts `/static`, and serves the browser UI at `/`, `/config`, `/zotero`, `/literature`, `/ontology`, `/curation`, and `/export`.
 - `backend/app/api/routes.py` contains the JSON API used by the browser UI.
 - `backend/app/static/index.html`, `styles.css`, and `app.js` implement the dependency-light browser workflow.
-- The static UI includes a shared smaller logo in the top bar, local-storage-backed theme selection, client-side route handling for header/dashboard links, SVG graph rendering, candidate rejection controls, and saved API configuration selection.
+- The static UI includes a shared top-bar logo, local-storage-backed theme selection, client-side route handling for header/dashboard links, SVG graph rendering, candidate rejection controls, and saved API configuration selection.
 
 ## Configuration Flow
 
@@ -21,7 +21,9 @@ Last updated: 2026-05-29
 - `backend/app/zotero/client.py` wraps the Zotero Web API and follows pagination through Link headers.
 - `backend/app/zotero/importer.py` normalizes Zotero API or CSL-like records into `LiteratureSource` rows.
 - `POST /api/zotero/sync` defaults to no limit and imports all records returned by the configured library or collection.
-- `GET /api/zotero/entries` feeds the dedicated Literature/Zotero page. Entry payloads include a Zotero select URI when the provider item key is available, and the frontend renders title-first records with metadata and expandable per-record JSON.
+- `GET /api/zotero/entries` feeds the dedicated Literature/Zotero page. Entry payloads include a Zotero select URI only when the provider item key is valid and unambiguous, and the frontend renders title-first records with metadata and expandable per-record JSON.
+- `backend/app/literature/exporter.py` builds the authoritative LLM-ready `literature/literature.json` export from the runtime SQLite cache. The JSON uses schema version `1.0` with a `papers` list, stable `paper_id` values, validated Zotero diagnostics, citation metadata, attachments, labeled sections, full text, LLM-sized chunks, source metadata, and quality flags. It creates the folder automatically and deduplicates by Zotero key, DOI, or source file.
+- Browser literature ingestion, test Zotero import, browser Zotero sync, CLI ingest, CLI Zotero import, CLI Zotero link, and CLI Zotero sync refresh the literature JSON export after successful persistence.
 
 ## Existing Ontology Flow
 

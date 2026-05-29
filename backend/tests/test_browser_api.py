@@ -18,6 +18,7 @@ from backend.app.ontology.ols import OlsLookupService, parse_ols_search_response
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     database_path = tmp_path / "api.sqlite3"
+    monkeypatch.chdir(tmp_path)
     engine = create_engine(
         f"sqlite:///{database_path}",
         connect_args={"check_same_thread": False},
@@ -135,6 +136,11 @@ def test_create_update_review_and_export_candidate(client):
     )
     assert document_response.status_code == 200
     document_id = document_response.json()["id"]
+    literature_json = Path("literature") / "literature.json"
+    assert literature_json.exists()
+    exported = json.loads(literature_json.read_text(encoding="utf-8"))
+    assert exported["schema_version"] == "1.0"
+    assert exported["papers"][0]["full_text"] == "Preferential hydration stabilizes proteins."
 
     created = client.post(
         "/api/candidates",
@@ -296,6 +302,8 @@ def test_zotero_sync_handles_incomplete_non_string_fields(client, monkeypatch):
     assert entry["title"] == "12345"
     assert entry["provider_item_key"] == "ODDKEY"
     assert entry["zotero_select_uri"] == "zotero://select/library/items/ODDKEY"
+    assert entry["zotero"]["item_key"] == "ODDKEY"
+    assert entry["zotero"]["diagnostics"] == []
 
 
 def test_zotero_sync_accepts_optional_test_limit(client, monkeypatch):
@@ -337,6 +345,8 @@ def test_static_ui_has_current_routes_theme_and_literature_json_controls():
     assert "/static/app.js?v=" in html
     assert "/static/styles.css?v=" in html
     assert "object-fit: contain" in styles
+    assert "width: 224px" in styles
+    assert "height: 68px" in styles
     assert "APP_ROUTES" in script
     assert "ACTIVE_CANDIDATE_STATUSES" in script
     assert "No active candidates need curation." in script

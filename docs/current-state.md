@@ -50,6 +50,7 @@ Implemented commands:
 - `oca zotero-link-documents <literature_dir>`: conservatively links already ingested documents to imported source records.
 - `oca zotero-config`: shows Zotero API sync configuration without printing the API key.
 - `oca zotero-sync`: syncs metadata from the Zotero Web API into local source records.
+- Literature-changing CLI workflows refresh the authoritative `literature/literature.json` schema version `1.0` file with LLM-ready paper IDs, validated Zotero link diagnostics, citation metadata, full text, labeled sections, chunks, attachment provenance, source metadata, and quality flags.
 - `docs/odk-workflow-and-code-overview.md`: self-contained implementation and ODK workflow overview.
 
 Supported ingestion content extraction:
@@ -97,7 +98,8 @@ Implemented:
 - Import from a Zotero Web-API-like JSON item shape when present in exported files.
 - Metadata-only sync from Zotero user or group libraries through the Zotero Web API.
 - Browser sync defaults to no limit and follows Zotero pagination until all configured records are fetched.
-- Browser literature records are shown by title with author/year/type/DOI/key metadata, an `Open in Zotero` URI when an item key is available, and an expandable JSON section for the corresponding record payload.
+- Browser literature records are shown by title with author/year/type/DOI/key metadata, an `Open in Zotero` URI only when a Zotero item key is valid and unambiguous, and an expandable JSON section for the corresponding record payload.
+- Browser literature ingestion, test imports, and Zotero sync refresh `literature/literature.json`; the export folder is created automatically.
 - Optional collection sync through configured or CLI-provided collection keys.
 - Secret-safe `zotero-config` output.
 - Pagination through Zotero `Link` headers.
@@ -288,6 +290,7 @@ Covered by tests:
 - Saved API configuration masking and activation
 - Permanent candidate rejection and restore
 - Static JavaScript regression coverage ensuring `.casefold()` is not used, current routes are present, theme persistence is wired, and literature JSON/Zotero controls are rendered
+- Literature JSON folder creation, schema validity, stable paper IDs, full-text export, section extraction, chunking, metadata preservation, quality flags, duplicate avoidance, and Zotero key ambiguity handling
 - Graph endpoint shape for ontology and meta-ontology views
 
 ## Known Gaps

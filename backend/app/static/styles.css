@@ -103,9 +103,9 @@ h3 {
 
 .logo {
   display: block;
-  width: 112px;
-  max-width: 28vw;
-  height: 34px;
+  width: 224px;
+  max-width: 44vw;
+  height: 68px;
   object-fit: contain;
   object-position: left center;
 }

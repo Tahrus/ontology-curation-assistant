@@ -35,14 +35,17 @@ class LiteratureDocument(Base):
         if suffix in {".txt", ".md", ".tsv", ".csv"}:
             content = path.read_text(encoding="utf-8", errors="replace")
         elif suffix == ".pdf":
-            from pypdf import PdfReader
+            try:
+                from pypdf import PdfReader
 
-            reader = PdfReader(str(path))
+                reader = PdfReader(str(path))
 
-            if reader.is_encrypted:
-                reader.decrypt("")
+                if reader.is_encrypted:
+                    reader.decrypt("")
 
-            content = "\n".join(page.extract_text() or "" for page in reader.pages)
+                content = "\n".join(page.extract_text() or "" for page in reader.pages)
+            except Exception:
+                content = None
 
         return cls(
             path=str(path.resolve()),

@@ -19,6 +19,11 @@ from backend.app.db.session import get_session
 from backend.app.extraction.prompts import build_candidate_extraction_prompt
 from backend.app.extraction.service import build_candidate_id, normalize_label, persist_candidates
 from backend.app.llm.service import LlmUnavailableError, extract_candidates_with_optional_llm
+from backend.app.literature.exporter import (
+    export_literature_json,
+    is_valid_zotero_item_key,
+    zotero_select_uri,
+)
 from backend.app.models.core import ReviewStatus
 from backend.app.models.db import AppSetting, CandidateTermRecord, LiteratureDocument, LiteratureSource
 from backend.app.odk.integration import write_candidate_tsv, write_robot_template
@@ -631,19 +636,91 @@ def create_literature(payload: LiteratureCreate, session: Session = Depends(get_
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="Literature document already exists") from exc
+    export_literature_json(session)
     return {"id": document.id, "filename": document.filename}
 
 
-def _zotero_select_uri(source: LiteratureSource, session: Session) -> str | None:
-    if not source.provider_item_key:
-        return None
+def _zotero_link_payload(source: LiteratureSource, session: Session) -> dict[str, Any]:
     config = zotero_config(session)
-    if config.library_type == "group" and config.library_id:
-        return f"zotero://select/groups/{config.library_id}/items/{source.provider_item_key}"
-    return f"zotero://select/library/items/{source.provider_item_key}"
+    duplicate = False
+    if source.provider_item_key:
+        duplicate = session.scalar(
+            select(LiteratureSource.id)
+            .where(
+                LiteratureSource.provider == "zotero",
+                LiteratureSource.provider_item_key == source.provider_item_key,
+                LiteratureSource.id != source.id,
+            )
+            .limit(1)
+        ) is not None
+    uri, diagnostics = zotero_select_uri(
+        source.provider_item_key,
+        library_type=config.library_type,
+        library_id=config.library_id,
+        duplicate=duplicate,
+    )
+    return {
+        "item_key": source.provider_item_key if is_valid_zotero_item_key(source.provider_item_key) else None,
+        "uri": uri,
+        "library_id": config.library_id,
+        "diagnostics": diagnostics,
+    }
+
+
+def _document_attachment_payload(document: LiteratureDocument) -> dict[str, Any]:
+    return {
+        "filename": document.filename,
+        "path": document.path,
+        "mime_type": {
+            ".pdf": "application/pdf",
+            ".txt": "text/plain",
+            ".md": "text/markdown",
+            ".tsv": "text/tab-separated-values",
+            ".csv": "text/csv",
+        }.get(document.suffix),
+        "text_extracted": bool(document.content),
+    }
+
+
+def _source_text_payload(source: LiteratureSource, session: Session) -> dict[str, Any]:
+    documents = session.scalars(
+        select(LiteratureDocument)
+        .where(LiteratureDocument.source_id == source.id)
+        .order_by(LiteratureDocument.id)
+    ).all()
+    text_parts = [document.content.strip() for document in documents if document.content and document.content.strip()]
+    sections = [
+        {
+            "heading": document.filename,
+            "text": document.content.strip(),
+            "page_start": None,
+            "page_end": None,
+        }
+        for document in documents
+        if document.content and document.content.strip()
+    ]
+    quality_flags = []
+    if not source.title:
+        quality_flags.append("missing_title")
+    if not documents:
+        quality_flags.append("missing_attachment")
+    if not text_parts and not source.abstract:
+        quality_flags.append("missing_full_text")
+    for document in documents:
+        if document.suffix == ".pdf" and not document.content:
+            quality_flags.append("possible_scanned_pdf")
+    return {
+        "full_text": "\n\n".join(text_parts) if text_parts else None,
+        "sections": sections,
+        "attachments": [_document_attachment_payload(document) for document in documents],
+        "source_file": documents[0].path if documents else None,
+        "quality_flags": sorted(set(quality_flags)),
+    }
 
 
 def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any]:
+    text_payload = _source_text_payload(source, session)
+    zotero = _zotero_link_payload(source, session)
     return {
         "id": source.id,
         "provider": source.provider,
@@ -659,8 +736,25 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "collections": _json_loads(source.collections_json, []),
         "item_type": source.item_type,
         "publication_venue": source.item_type,
-        "zotero_select_uri": _zotero_select_uri(source, session),
+        "zotero": zotero,
+        "zotero_select_uri": zotero["uri"],
         "synced_at": source.synced_at.isoformat() if source.synced_at else None,
+        "full_text": text_payload["full_text"],
+        "sections": text_payload["sections"],
+        "attachments": text_payload["attachments"],
+        "source_file": text_payload["source_file"],
+        "quality_flags": text_payload["quality_flags"],
+        "raw_json": {
+            "provider": source.provider,
+            "provider_item_key": source.provider_item_key,
+            "citation_key": source.citation_key,
+            "zotero_version": source.zotero_version,
+            "item_type": source.item_type,
+            "tags": _json_loads(source.tags_json, []),
+            "collections": _json_loads(source.collections_json, []),
+            "url": source.url,
+            "synced_at": source.synced_at.isoformat() if source.synced_at else None,
+        },
     }
 
 
@@ -719,6 +813,7 @@ def sync_zotero(
     except Exception as exc:
         session.rollback()
         raise HTTPException(status_code=400, detail=f"Zotero sync import failed: {exc}") from exc
+    export_literature_json(session)
     return {
         "fetched": len(items),
         "inserted": result.inserted,
@@ -759,6 +854,7 @@ def import_test_zotero_entries(session: Session = Depends(get_session)) -> dict[
         ),
     ]
     result = import_parsed_sources(session, sources, synced=False)
+    export_literature_json(session)
     return {"inserted": result.inserted, "updated": result.updated, "skipped": result.skipped}
 
 
