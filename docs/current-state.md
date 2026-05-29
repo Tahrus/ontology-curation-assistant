@@ -1,12 +1,12 @@
 # Current Project State
 
-Last reviewed: 2026-05-27
+Last reviewed: 2026-05-29
 
 ## Summary
 
 Ontology Curation Assistant is currently an early working scaffold for a human-in-the-loop ontology curation workflow. The repository already has a FastAPI backend, a Typer command-line interface, SQLAlchemy-backed local persistence, ODK integration helpers, review policy logic, JSON schemas, prompt templates, and tests for the implemented slices.
 
-The main implemented value today is local literature ingestion and inspection, offline Zotero metadata import/linking, metadata-only Zotero Web API sync, structured mockable candidate extraction, candidate persistence for review, plus explicit enforcement of the rule that only human-approved candidates may be exported to ODK-oriented outputs.
+The main implemented value today is a local browser workflow for configuration, Zotero metadata sync, local PPO ontology readout, candidate extraction/curation, OLS/local ontology matching, graph visualization, rejection management, and approved-candidate export, plus CLI support for the underlying ingestion and Zotero workflows.
 
 ## Implemented Capabilities
 
@@ -18,8 +18,17 @@ Implemented endpoints:
 
 - `GET /health`: returns service health and app name.
 - `GET /api/config`: returns selected runtime configuration, including ODK path status, ontology repository path, and human-approval setting.
+- Browser pages: `/`, `/config`, `/zotero`, `/literature`, `/ontology`, `/curation`, `/export`.
+- Browser UI includes client-side route handling for dashboard/header links, a Light/Dark theme toggle persisted in local storage, and a smaller shared logo link back to the dashboard.
+- Configuration: `/api/config/status`, `/api/config/zotero`, `/api/config/llm`, `/api/config/ontology-path`, `/api/config/test-zotero`.
+- Saved API configurations: `/api/config/saved`, `/api/config/saved/{id}/activate`, and deletion.
+- Zotero: `/api/zotero/test`, `/api/zotero/sync`, `/api/zotero/entries`, `/api/zotero/entries/{id}`, `/api/zotero/import-test`.
+- Existing ontology: `/api/ontology/status`, `/api/ontology/scan`, `/api/ontology/select-file`, `/api/ontology/index`, `/api/ontology/terms`, `/api/ontology/terms/{term_id}`, `/api/ontology/search`, `/api/ontology/graph`.
+- Meta-ontology graph: `/api/meta-ontology/graph`.
+- Literature and candidates: `/api/literature`, `/api/extraction/candidates`, `/api/candidates`, `/api/candidates/{id}`, review, OLS matching, local ontology matching, match selection, and decision endpoints. The default active candidate queue includes draft/in-review/deferred/needs-more-evidence records and excludes approved or rejected records.
+- Export: `/api/exports/approved.robot.tsv` and `/api/exports/approved.candidates.tsv`.
 
-The broader review, candidate, export, and audit APIs are documented as planned endpoints in `docs/api.md`, but are not implemented yet.
+The broader audit APIs remain planned.
 
 ### Command-Line Interface
 
@@ -64,6 +73,7 @@ Implemented SQLAlchemy tables:
 - `literature_sources`
 - `extraction_runs`
 - `candidate_terms`
+- `app_settings`
 
 Stored document fields:
 
@@ -75,7 +85,7 @@ Stored document fields:
 - `content`
 - `created_at`
 
-The larger intended schema is described in `docs/database-schema.md`. Literature sources, extraction runs, and candidate terms now have minimal persistence tables, while richer evidence segmentation, review decisions, audit events, and ODK exports are still planned rather than implemented as database tables.
+The larger intended schema is described in `docs/database-schema.md`. Literature sources, extraction runs, and candidate terms now have persistence tables, including browser curation fields for selected OLS match, selected local ontology match, lookup statuses, curator decision, rejection reason, and permanent rejection timestamp. Richer evidence segmentation, audit events, and formal migrations are still planned.
 
 ### Zotero Literature Sources
 
@@ -86,6 +96,8 @@ Implemented:
 - Import from CSL JSON-like Zotero/Better BibTeX exports.
 - Import from a Zotero Web-API-like JSON item shape when present in exported files.
 - Metadata-only sync from Zotero user or group libraries through the Zotero Web API.
+- Browser sync defaults to no limit and follows Zotero pagination until all configured records are fetched.
+- Browser literature records are shown by title with author/year/type/DOI/key metadata, an `Open in Zotero` URI when an item key is available, and an expandable JSON section for the corresponding record payload.
 - Optional collection sync through configured or CLI-provided collection keys.
 - Secret-safe `zotero-config` output.
 - Pagination through Zotero `Link` headers.
@@ -130,7 +142,7 @@ Implemented:
 - `preview_export_path()`
 - `build_command_candidates()`
 
-Current behavior is preview-only. It can compute the configured export path, but it does not yet write ROBOT templates, run ODK validation, create Git branches, commit files, or open pull requests.
+Current behavior can compute the configured export path and generate downloadable approved-candidate TSV/ROBOT-template TSV from the browser API. It does not yet write directly into an ODK repository, run ODK validation, create Git branches, commit files, or open pull requests.
 
 Default configured paths:
 
@@ -140,11 +152,18 @@ Default configured paths:
 
 ### Ontology Matching
 
-Implemented in `backend/app/ontology/matching.py`:
+Implemented in `backend/app/ontology/matching.py` and `backend/app/ontology/local.py`:
 
 - Exact label matching against a supplied dictionary of existing ontology terms.
+- Local ontology folder scanning for `.owl`, `.rdf`, `.ttl`, `.obo`, and `.tsv`.
+- RDF/OWL/Turtle parsing through `rdflib`.
+- Simple OBO and ROBOT/template TSV readout.
+- Term extraction for ID/IRI, label, definition, synonyms, parents, and source file.
+- Local candidate matching by label/synonym similarity.
+- Browser OLS matching through EMBL-EBI OLS4.
+- Ontology and meta-ontology graph payloads for SVG graph rendering in the browser.
 
-Approximate matching, synonym matching, ontology lookups, and duplicate detection workflows are not implemented yet.
+Local and OLS matches are never auto-selected. Curators must explicitly choose a match or mark a candidate as a new term proposal.
 
 ### Extraction
 
@@ -160,10 +179,13 @@ Implemented:
 - Pydantic validation for labels, confidence scores, evidence, and `direct_or_inferred`
 - Persistence of validated candidate terms and extraction runs
 
+Implemented browser extraction:
+
+- Deterministic mock extraction for local testing without API keys.
+- Optional OpenAI-compatible chat-completions call when LLM provider/API key are configured.
+
 Not implemented yet:
 
-- LLM provider integration
-- Prompt execution
 - Relation extraction persistence
 
 ## Repository Layout
@@ -204,12 +226,15 @@ Important settings:
 - `OCA_DATABASE_URL`
 - `OCA_ODK_HOME`
 - `OCA_ONTOLOGY_REPO`
+- `OCA_LOCAL_ONTOLOGY_PATH`
 - `OCA_TEMPLATE_DIR`
 - `OCA_DEFAULT_TEMPLATE_FILE`
 - `OCA_GIT_BRANCH_PREFIX`
 - `OCA_REQUIRE_HUMAN_APPROVAL`
 - `OCA_LLM_PROVIDER`
+- `OCA_LLM_API_KEY`
 - `OCA_LLM_MODEL`
+- `OCA_LLM_BASE_URL`
 - `OCA_ZOTERO_LIBRARY_TYPE`
 - `OCA_ZOTERO_LIBRARY_ID`
 - `OCA_ZOTERO_API_KEY`
@@ -226,9 +251,9 @@ Current test command:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Verified on 2026-05-27:
+Verified on 2026-05-28:
 
-- 37 tests passed.
+- 46 tests passed before the current ontology/page split; the focused browser/API suite has 14 tests for the new browser, Zotero, OLS, local ontology, and export behavior.
 - Ruff passed.
 
 Covered by tests:
@@ -252,6 +277,18 @@ Covered by tests:
 - Ambiguous Zotero link skipping
 - ODK preview path generation
 - Export policy for approved versus non-approved candidate statuses
+- Browser page routing
+- Secret masking in config APIs
+- Zotero browser sync defaulting to no artificial limit
+- OLS lookup not auto-selecting the first match
+- Local ontology scan/index/search on fixture files
+- Local ontology match selection defaulting to nothing selected
+- Export fields for selected local/OLS matches and curator decision
+- Approved and rejected candidates leaving the active curation queue
+- Saved API configuration masking and activation
+- Permanent candidate rejection and restore
+- Static JavaScript regression coverage ensuring `.casefold()` is not used, current routes are present, theme persistence is wired, and literature JSON/Zotero controls are rendered
+- Graph endpoint shape for ontology and meta-ontology views
 
 ## Known Gaps
 
@@ -261,11 +298,8 @@ The project is not yet a full ontology curation application. The following piece
 - Evidence segment storage
 - Zotero attachment ingestion
 - Writing changes back to Zotero
-- AI/LLM extraction execution
-- Candidate review API
-- Review UI
+- Full production-grade AI/LLM extraction execution and retries
 - Audit log persistence
-- ODK template generation
 - ODK validation/build execution
 - Git branch, commit, and pull request workflow
 - Authentication and reviewer roles
@@ -284,8 +318,8 @@ The core safety boundary is already represented in code and tests:
 
 1. Add Alembic and formal migrations for the existing `literature_documents` table.
 2. Add richer evidence segment storage and review decision tables.
-3. Add API endpoints for literature sources, documents, and candidates.
+3. Add persisted ontology index tables if indexing large ontologies becomes slow.
 4. Add Zotero attachment discovery/download as a separate metadata-to-file workflow.
-5. Implement a real LLM provider behind the structured extraction interface.
-6. Add ODK TSV export generation for approved candidates only.
+5. Harden the OpenAI-compatible LLM provider with retries, model validation, and structured-output support.
+6. Add direct ODK repository write/validation actions for approved candidates only.
 7. Add validation around exported rows and map validation errors back to candidate IDs.

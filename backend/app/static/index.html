@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ontology Curation Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260529-2" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <a href="/" class="logo-link" aria-label="Ontology Curation Assistant dashboard">
+          <img src="/assets/Logo-Ontology-Curation-Assistant.png" alt="Ontology Curation Assistant dashboard" class="logo" />
+        </a>
+        <p id="app-status">Loading local workspace...</p>
+      </div>
+      <nav class="nav">
+        <a href="/" data-nav="dashboard">Dashboard</a>
+        <a href="/config" data-nav="config">Configuration</a>
+        <a href="/zotero" data-nav="zotero">Literature</a>
+        <a href="/ontology" data-nav="ontology">Existing Ontology</a>
+        <a href="/curation" data-nav="curation">Curation</a>
+        <a href="/export" data-nav="export">Export</a>
+      </nav>
+      <div class="theme-control" role="group" aria-label="Theme">
+        <button id="theme-light" type="button">Light</button>
+        <button id="theme-dark" type="button">Dark</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel wide page-section" data-page="dashboard" id="dashboard-section">
+        <h2>Dashboard</h2>
+        <p class="description">
+          Start here for a compact view of local readiness and links into the Zotero, PPO ontology, candidate curation, and export workflows.
+        </p>
+        <div id="status-grid" class="status-grid"></div>
+        <div class="button-row">
+          <a href="/config" data-route>Configure APIs and Sync Zotero</a>
+          <a href="/zotero" data-route>Open Literature</a>
+          <a href="/ontology" data-route>Open Existing Ontology</a>
+          <a href="/curation" data-route>Open Candidate Curation</a>
+          <a href="/export" data-route>Export Approved Candidates</a>
+        </div>
+        <div class="graph-card">
+          <h2>Meta-Ontology Graph</h2>
+          <p class="description">
+            Compact graph of the curation meta-ontology: sources, evidence, candidates, matching, decisions, and export.
+          </p>
+          <div id="meta-graph" class="graph-panel"></div>
+          <div id="meta-graph-details" class="graph-details">Select a node or edge for details.</div>
+        </div>
+      </section>
+
+      <section class="panel page-section" data-page="config" id="api-key-section">
+        <h2>Zotero API Configuration</h2>
+        <p class="description">
+          Enter the Zotero API key, user or group ID, library type, and optional collection key used for local metadata sync.
+        </p>
+        <p class="warning">Development warning: credentials are stored locally in this project database and are masked in API responses.</p>
+        <form id="zotero-config-form" class="stack">
+          <select name="library_type" required>
+            <option value="user">user</option>
+            <option value="group">group</option>
+          </select>
+          <input name="library_id" placeholder="Zotero user ID or group ID" required />
+          <input name="api_key" type="password" placeholder="Zotero API key" />
+          <input name="collection_key" placeholder="Optional collection key" />
+          <input name="base_url" placeholder="https://api.zotero.org" />
+          <button type="submit">Save Zotero Config</button>
+        </form>
+      </section>
+
+      <section class="panel page-section" data-page="config" id="llm-key-section">
+        <h2>LLM / Chatbot API Configuration</h2>
+        <p class="description">
+          Enter the provider, API key, model name, and optional OpenAI-compatible base URL used for candidate extraction.
+        </p>
+        <form id="llm-config-form" class="stack">
+          <input name="provider" placeholder="Provider, e.g. openai" required />
+          <input name="api_key" type="password" placeholder="LLM API key" />
+          <input name="model" placeholder="Optional model, e.g. gpt-4o-mini" />
+          <input name="base_url" placeholder="Optional OpenAI-compatible base URL" />
+          <button type="submit">Save LLM Config</button>
+        </form>
+      </section>
+
+      <section class="panel page-section" data-page="config" id="zotero-connection-section">
+        <h2>Zotero Connection Test</h2>
+        <p class="description">
+          Check whether the saved Zotero credentials are valid before importing metadata.
+        </p>
+        <button id="test-zotero" type="button">Test Zotero</button>
+        <p id="zotero-message" class="message"></p>
+      </section>
+
+      <section class="panel page-section" data-page="config" id="zotero-sync-section">
+        <h2>Zotero Synchronization</h2>
+        <p class="description">
+          Import metadata from Zotero into the local database. By default sync follows pagination until all configured records are retrieved.
+        </p>
+        <div class="button-row">
+          <button id="sync-zotero" type="button">Sync All Zotero Records</button>
+          <button id="import-test-zotero" type="button" class="secondary">Load Test Entries</button>
+        </div>
+        <label class="inline"><input id="zotero-use-limit" type="checkbox" /> Advanced: limit records for testing</label>
+        <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
+      </section>
+
+      <section class="panel wide page-section" data-page="config" id="saved-config-section">
+        <h2>Saved API Configurations</h2>
+        <p class="description">
+          Previously saved Zotero and LLM configurations are listed here with masked secrets. Select one to make it active, or delete stale entries.
+        </p>
+        <div id="saved-configs" class="table-list"></div>
+      </section>
+
+      <section class="panel wide page-section" data-page="zotero" id="zotero-entries-section">
+        <h2>Literature Records</h2>
+        <p class="description">
+          This page lists bibliography records imported or synced from Zotero. Titles are the primary label, with source links and record-level JSON for curator inspection.
+        </p>
+        <input id="zotero-filter" placeholder="Search title, author, DOI, key, or year" />
+        <div id="zotero-entries" class="table-list"></div>
+      </section>
+
+      <section class="panel wide page-section" data-page="ontology" id="ontology-section">
+        <h2>Existing PPO Ontology</h2>
+        <p class="description">
+          Read the already existing local ontology so new candidates can be compared against current PPO terms before proposing additions.
+        </p>
+        <form id="ontology-path-form" class="compact-form">
+          <input name="path" placeholder="C:\Users\ge47vob\ontology-development-kit\target\ppo" />
+          <button type="submit">Save Path</button>
+          <button id="scan-ontology" type="button">Scan Folder</button>
+        </form>
+        <p id="ontology-message" class="message"></p>
+        <div id="ontology-files" class="table-list"></div>
+        <div class="button-row">
+          <button id="index-ontology" type="button">Index Selected Ontology</button>
+        </div>
+        <input id="ontology-search" placeholder="Search existing ontology terms" />
+        <div class="graph-card">
+          <h2>Ontology Graph</h2>
+          <p class="description">
+            Graph view of indexed ontology terms and parent/subclass relationships. Use wheel zoom, drag pan, and click nodes or edges for details.
+          </p>
+          <div id="ontology-graph" class="graph-panel"></div>
+          <div id="ontology-graph-details" class="graph-details">Select a node or edge for details.</div>
+        </div>
+        <div id="ontology-terms" class="table-list"></div>
+      </section>
+
+      <section class="panel page-section" data-page="curation" id="literature-section">
+        <h2>Literature / Document Ingestion</h2>
+        <p class="description">
+          Ingest local PDFs/text files or paste source text, then optionally link documents to Zotero records for traceable candidate evidence.
+        </p>
+        <div class="compact-form">
+          <select id="document-select"></select>
+          <button id="refresh-documents" type="button">Refresh</button>
+        </div>
+        <form id="literature-form" class="stack">
+          <input name="path" placeholder="Server file path, or leave blank and paste text below" />
+          <input name="filename" placeholder="Filename for pasted text" />
+          <textarea name="content" rows="6" placeholder="Paste abstract, notes, or extracted text"></textarea>
+          <button type="submit">Ingest Document</button>
+        </form>
+      </section>
+
+      <section class="panel page-section" data-page="curation" id="candidate-extraction-section">
+        <h2>Candidate Extraction</h2>
+        <p class="description">
+          Extract possible ontology candidate terms from the selected Zotero entry or document. Use mock extraction for deterministic local testing, or LLM extraction after configuration.
+        </p>
+        <form id="extract-form" class="stack">
+          <label>Selected Zotero entry<select id="source-select"></select></label>
+          <label>Selected document<select id="extract-document-select"></select></label>
+          <textarea name="guidance" rows="4" placeholder="Optional instruction or nudge for extraction"></textarea>
+          <label class="inline"><input name="use_llm" type="checkbox" /> Use configured LLM</label>
+          <button type="submit">Extract Candidates</button>
+        </form>
+        <form id="refine-form" class="stack">
+          <textarea name="guidance" rows="3" placeholder="Quickly propose or improve one candidate"></textarea>
+          <button type="submit" class="secondary">Generate From Nudge</button>
+        </form>
+        <p id="extract-message" class="message"></p>
+      </section>
+
+      <section class="panel wide page-section" data-page="curation" id="candidate-curation-section">
+        <div class="section-title">
+          <div>
+            <h2>Candidate Curation</h2>
+            <p class="description">
+              Human reviewers compare candidates against local PPO terms and external OLS matches, then edit, approve, reject, or mark a candidate as new.
+            </p>
+          </div>
+          <button id="new-candidate" type="button">Add Candidate</button>
+        </div>
+        <div class="button-row">
+          <button id="temp-reject-all" type="button" class="secondary">Temporarily Reject All Visible Candidates</button>
+        </div>
+        <div id="candidate-list" class="candidate-list"></div>
+      </section>
+
+      <section class="panel wide page-section" data-page="curation" id="rejected-candidates-section">
+        <h2>Permanently Rejected Candidates</h2>
+        <p class="description">
+          Persisted rejection list. Rejected candidates stay out of the active queue but can be restored or curated later.
+        </p>
+        <div id="rejected-candidate-list" class="candidate-list"></div>
+      </section>
+
+      <section class="panel page-section" data-page="curation" id="ols-section">
+        <h2>OLS and Local Matching</h2>
+        <p class="description">
+          Run external OLS matching and local PPO ontology matching. Nothing is selected by default; curators must intentionally choose a match or mark a new term.
+        </p>
+        <div class="button-row">
+          <button id="ols-all" type="button">Run OLS For Draft Candidates</button>
+        </div>
+        <p id="ols-message" class="message"></p>
+      </section>
+
+      <section class="panel wide page-section" data-page="export" id="export-section">
+        <h2>Export / Visualization</h2>
+        <p class="description">
+          Export approved candidates with selected OLS matches, selected local PPO matches, curator decisions, source evidence, and ontology context for Protégé, ROBOT, ODK, or related tooling.
+        </p>
+        <div class="button-row">
+          <a href="/api/exports/approved.robot.tsv">Download ROBOT Template TSV</a>
+          <a href="/api/exports/approved.candidates.tsv">Download Candidate TSV</a>
+        </div>
+      </section>
+    </main>
+
+    <template id="candidate-template">
+      <article class="candidate">
+        <div class="candidate-head">
+          <input class="label" />
+          <select class="status">
+            <option value="new">draft</option>
+            <option value="in_review">needs_review</option>
+            <option value="needs_more_evidence">needs more evidence</option>
+            <option value="approved">approved</option>
+            <option value="approved_with_edits">approved with edits</option>
+            <option value="rejected">rejected</option>
+            <option value="deferred">deferred</option>
+          </select>
+        </div>
+        <p class="candidate-source"></p>
+        <div class="candidate-grid">
+          <label>Definition<textarea class="definition" rows="4"></textarea></label>
+          <label>Rationale<textarea class="rationale" rows="4"></textarea></label>
+          <label>Evidence<textarea class="source-evidence" rows="4"></textarea></label>
+          <label>Mappings<input class="mappings" /></label>
+          <label>Synonyms<input class="synonyms" /></label>
+          <label>Parent / ontology context<input class="parent" /></label>
+          <label>Curator decision
+            <select class="decision">
+              <option value="needs_review">needs_review</option>
+              <option value="use_existing_local_term">use_existing_local_term</option>
+              <option value="use_existing_ols_term">use_existing_ols_term</option>
+              <option value="propose_new_term">propose_new_term</option>
+              <option value="rejected">rejected</option>
+            </select>
+          </label>
+        </div>
+        <div class="candidate-actions">
+          <button class="save" type="button">Save</button>
+          <button class="approve" type="button">Approve</button>
+          <button class="reject danger" type="button">Reject</button>
+          <button class="permanent-reject danger" type="button">Permanently Reject</button>
+          <button class="ols" type="button">Check OLS</button>
+          <button class="local-match" type="button">Check Local PPO</button>
+          <button class="new-term secondary" type="button">Mark New Term</button>
+        </div>
+        <div class="match-panel">
+          <h3>Local PPO matches</h3>
+          <div class="local-matches"></div>
+          <h3>External OLS matches</h3>
+          <div class="ols-matches"></div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/static/app.js?v=20260529-2"></script>
+  </body>
+</html>

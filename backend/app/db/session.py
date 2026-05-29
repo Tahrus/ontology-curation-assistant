@@ -35,6 +35,8 @@ def get_session() -> Generator[Session, None, None]:
 
 def ensure_runtime_schema() -> None:
     """Apply tiny SQLite-compatible schema additions until migrations exist."""
+    from backend.app.models import db as _models  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
 
     if not settings.database_url.startswith("sqlite"):
@@ -63,3 +65,30 @@ def ensure_runtime_schema() -> None:
             connection.execute(text("ALTER TABLE literature_sources ADD COLUMN item_type VARCHAR(100)"))
         if "synced_at" not in source_columns:
             connection.execute(text("ALTER TABLE literature_sources ADD COLUMN synced_at DATETIME"))
+
+        if "candidate_terms" not in inspector.get_table_names():
+            return
+
+        candidate_columns = {
+            column["name"] for column in inspector.get_columns("candidate_terms")
+        }
+        candidate_additions = {
+            "curator_rationale": "TEXT",
+            "source_evidence": "TEXT",
+            "mappings_json": "TEXT DEFAULT '[]' NOT NULL",
+            "ols_matches_json": "TEXT DEFAULT '[]' NOT NULL",
+            "selected_ols_json": "TEXT",
+            "ols_lookup_status": "VARCHAR(50) DEFAULT 'not_run' NOT NULL",
+            "local_matches_json": "TEXT DEFAULT '[]' NOT NULL",
+            "selected_local_json": "TEXT",
+            "local_lookup_status": "VARCHAR(50) DEFAULT 'not_run' NOT NULL",
+            "curator_decision": "VARCHAR(50) DEFAULT 'needs_review' NOT NULL",
+            "refinement_guidance": "TEXT",
+            "rejection_reason": "TEXT",
+            "permanently_rejected_at": "DATETIME",
+        }
+        for column_name, definition in candidate_additions.items():
+            if column_name not in candidate_columns:
+                connection.execute(
+                    text(f"ALTER TABLE candidate_terms ADD COLUMN {column_name} {definition}")
+                )

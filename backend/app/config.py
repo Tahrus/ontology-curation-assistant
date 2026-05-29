@@ -14,12 +14,15 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./oca.sqlite3"
     odk_home: Path = Field(default=Path(r"C:\Users\ge47vob\ontology-development-kit"))
     ontology_repo: Path | None = None
+    local_ontology_path: Path = Path(r"C:\Users\ge47vob\ontology-development-kit\target\ppo")
     template_dir: str = "src/ontology/templates"
     default_template_file: str = "ai_approved_terms.tsv"
     git_branch_prefix: str = "ai-curation/"
     require_human_approval: bool = True
     llm_provider: str | None = None
+    llm_api_key: str | None = None
     llm_model: str | None = None
+    llm_base_url: str | None = None
     zotero_library_type: str | None = None
     zotero_library_id: str | None = None
     zotero_api_key: str | None = None

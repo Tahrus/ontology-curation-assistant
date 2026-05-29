@@ -11,6 +11,7 @@ class ReviewStatus(StrEnum):
     APPROVED = "approved"
     APPROVED_WITH_EDITS = "approved_with_edits"
     REJECTED = "rejected"
+    PERMANENTLY_REJECTED = "permanently_rejected"
     DEFERRED = "deferred"
     EXPORTED_TO_ODK = "exported_to_odk"
     ODK_VALIDATION_FAILED = "odk_validation_failed"

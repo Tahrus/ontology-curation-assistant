@@ -13,6 +13,8 @@ Requires-Dist: typer>=0.12
 Requires-Dist: rich>=13.7
 Requires-Dist: python-dotenv>=1.0
 Requires-Dist: pypdf[crypto]>=6.12.0
+Requires-Dist: httpx>=0.27
+Requires-Dist: rdflib>=7.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.2; extra == "dev"
 Requires-Dist: ruff>=0.5; extra == "dev"
@@ -39,6 +41,8 @@ This is a project scaffold with:
 - ODK integration configuration pointing to `C:\Users\ge47vob\ontology-development-kit`
 - documentation for architecture, workflow, and ODK integration
 - starter tests
+
+See [docs/current-state.md](docs/current-state.md) for a snapshot of what is implemented now versus what is still planned.
 
 AI suggestions are intentionally separated from approved ontology exports.
 
@@ -70,13 +74,114 @@ ontology-curation-assistant/
 ## Quick Start
 
 ```powershell
-cd ontology-curation-assistant
+cd "C:\Users\ge47vob\.antigravity\ontology-curation-assistant"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 oca --help
 uvicorn backend.app.main:app --reload
 ```
+
+Open <http://127.0.0.1:8000/> after the server starts. The root page is the main browser workflow; routine curation should not require more PowerShell commands after launch.
+
+## Browser Workflow
+
+The browser UI supports the current human-in-the-loop workflow:
+
+- review backend, database, Zotero, and LLM readiness in Application Status
+- save Zotero credentials and LLM/chatbot credentials in API Key Configuration
+- test Zotero credentials, sync a small Zotero batch, or load local test Zotero entries
+- view and select synced/imported Zotero records as source material
+- ingest a server-side literature file path or paste extracted text/notes into the Literature panel
+- select a Zotero entry or ingested document for candidate extraction
+- run deterministic mock extraction, or use an OpenAI-compatible LLM when configured
+- create candidates manually or generate a draft candidate from a curator nudge
+- edit labels, definitions, rationales, source evidence, synonyms, parents, and mappings
+- approve, reject, defer, or mark candidates as needing more evidence
+- check each candidate against EMBL-EBI OLS and choose an existing term when one is a better fit
+- export approved candidates as `approved_candidates.robot.tsv` or `approved_candidates.tsv`
+
+The UI calls JSON endpoints under `/api/...`, so CLI-created candidates and browser-edited candidates use the same SQLite database.
+Credentials entered in the UI are stored in the local SQLite database for development use and are masked in API responses.
+
+### Zotero from the Browser
+
+In API Key Configuration, enter:
+
+- Zotero library type: `user` or `group`
+- Zotero user ID or group ID
+- Zotero API key, if needed for the target library
+- optional collection key
+
+Use Zotero Connection to test the credentials, then sync a small batch. If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
+
+### LLM / Chatbot Configuration
+
+In API Key Configuration, enter:
+
+- provider: `openai` or `openai-compatible`
+- API key
+- optional model name, such as `gpt-4o-mini`
+- optional OpenAI-compatible base URL
+
+If no LLM key is configured, Candidate Extraction still works through a deterministic mock extractor. Select `Use configured LLM` only when you want the backend to call the configured OpenAI-compatible chat completions endpoint.
+
+### Candidate Extraction and Curation
+
+Select a Zotero entry or ingested document, add optional guidance, then click `Extract Candidates`. Candidates appear in Candidate Curation, where you can edit all curator-facing fields, add a manual candidate, approve/reject candidates, and run OLS checks. Use `Run OLS For Draft Candidates` to batch-check draft candidates.
+
+Useful endpoints include:
+
+```text
+GET    /api/config/status
+POST   /api/config/zotero
+POST   /api/config/llm
+POST   /api/config/test-zotero
+POST   /api/zotero/sync
+GET    /api/zotero/entries
+GET    /api/zotero/entries/{id}
+POST   /api/zotero/import-test
+GET    /api/literature
+POST   /api/literature
+POST   /api/extraction/candidates
+GET    /api/candidates
+POST   /api/candidates
+PATCH  /api/candidates/{id}
+POST   /api/candidates/{id}/review
+POST   /api/candidates/{id}/ols
+POST   /api/candidates/ols
+POST   /api/refine
+GET    /api/exports/approved.robot.tsv
+GET    /api/exports/approved.candidates.tsv
+```
+
+## OLS Matching
+
+The OLS check uses `httpx` against the public EMBL-EBI OLS4 search API at `https://www.ebi.ac.uk/ols4/api/search`. Matches are stored with the candidate as local JSON metadata:
+
+- matched label
+- ontology/source ID
+- IRI and short term ID when available
+- description
+- simple label-similarity confidence score
+- a `should_map_existing` recommendation
+
+Curators can select an OLS match in the browser. Selected matches are included in exports so new ontology terms are not proposed when an existing term is suitable.
+
+## Protégé, ROBOT, and ODK Export
+
+Approved candidates can be downloaded from the browser:
+
+- `ROBOT TSV` downloads a ROBOT template-style TSV for ODK workflows.
+- `Candidate TSV` downloads a simpler review/export table.
+
+For an ODK-managed ontology repository, copy or move the ROBOT TSV into the configured template directory, typically:
+
+```text
+src/ontology/templates/ai_approved_terms.tsv
+```
+
+Then process it with the ontology project's normal ODK/ROBOT workflow. For Protégé-oriented review, use the TSV as a curator handoff file or convert it through ROBOT into an ontology module according to the target ontology project's template conventions.
 
 ## ODK Configuration
 
@@ -94,7 +199,27 @@ OCA_ONTOLOGY_REPO=C:\path\to\your\odk-managed-ontology
 
 The assistant should generate reviewed templates into the ontology repository, then run configured ODK or Make targets.
 
+## Zotero Metadata
+
+Offline metadata import:
+
+```powershell
+oca zotero-import .\zotero-export.json
+oca zotero-list
+oca zotero-show 1
+oca zotero-link-documents .\literature
+```
+
+Zotero Web API metadata sync:
+
+```powershell
+oca zotero-config
+oca zotero-sync --library-type user --library-id 123456 --dry-run
+oca zotero-sync --library-type group --library-id 123456 --collection COLLECTIONKEY
+```
+
+Configure API sync with `OCA_ZOTERO_LIBRARY_TYPE`, `OCA_ZOTERO_LIBRARY_ID`, optional `OCA_ZOTERO_API_KEY`, optional `OCA_ZOTERO_COLLECTION_KEY`, and `OCA_ZOTERO_API_BASE_URL`. Sync imports metadata only; it does not download attachments or write to Zotero.
+
 ## Safety Rule
 
 The AI layer may create candidates. It may not create ontology changes. Only human-approved records are eligible for ODK export.
-

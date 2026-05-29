@@ -125,8 +125,34 @@ class CandidateTermRecord(Base):
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
     review_status: Mapped[str] = mapped_column(String(50), nullable=False, default="new")
     evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    curator_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mappings_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    ols_matches_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    selected_ols_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ols_lookup_status: Mapped[str] = mapped_column(String(50), nullable=False, default="not_run")
+    local_matches_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    selected_local_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_lookup_status: Mapped[str] = mapped_column(String(50), nullable=False, default="not_run")
+    curator_decision: Mapped[str] = mapped_column(String(50), nullable=False, default="needs_review")
+    refinement_guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    permanently_rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
