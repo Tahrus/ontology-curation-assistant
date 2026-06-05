@@ -64,6 +64,14 @@ class ZoteroApiClient:
             path += "items"
         return urljoin(self.config.base_url.rstrip("/") + "/", path)
 
+    def build_item_url(self, item_key: str) -> str:
+        library_segment = "users" if self.config.library_type == "user" else "groups"
+        path = f"{library_segment}/{self.config.library_id}/items/{item_key}"
+        return urljoin(self.config.base_url.rstrip("/") + "/", path)
+
+    def build_item_children_url(self, item_key: str) -> str:
+        return f"{self.build_item_url(item_key).rstrip('/')}/children"
+
     def build_headers(self) -> dict[str, str]:
         headers = {"Zotero-API-Version": "3"}
         if self.config.api_key:
@@ -90,6 +98,20 @@ class ZoteroApiClient:
             params = None
 
         return items
+
+    def fetch_item(self, item_key: str) -> dict:
+        response = self._get(self.build_item_url(item_key), params=None)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ZoteroInvalidResponseError("Zotero API returned invalid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise ZoteroInvalidResponseError("Zotero item response must be a JSON object.")
+        return payload
+
+    def fetch_child_items(self, item_key: str) -> list[dict]:
+        response = self._get(self.build_item_children_url(item_key), params=None)
+        return self._decode_page(response)
 
     def _get(self, url: str, *, params: dict[str, int] | None) -> httpx.Response:
         try:

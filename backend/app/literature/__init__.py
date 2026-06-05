@@ -1,1 +1,1 @@
-"""Literature library export helpers."""
+"""Literature Markdown repository and pipeline helpers."""

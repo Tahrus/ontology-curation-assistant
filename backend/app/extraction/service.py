@@ -4,6 +4,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.audit.logging import write_audit_event
 from backend.app.extraction.parser import CandidateExtractionResponse, CandidatePayload
 from backend.app.extraction.prompts import PROMPT_NAME, PROMPT_VERSION
 from backend.app.models.core import ReviewStatus
@@ -97,14 +98,25 @@ def persist_candidates(
             skipped += 1
             continue
 
-        session.add(
-            candidate_to_record(
-                candidate,
-                document_id=document_id,
-                extraction_run_id=run.id,
-            )
+        record = candidate_to_record(
+            candidate,
+            document_id=document_id,
+            extraction_run_id=run.id,
         )
+        session.add(record)
         session.flush()
+        write_audit_event(
+            "candidate_proposed",
+            entity_type="candidate",
+            entity_id=record.candidate_id,
+            details={
+                "document_id": document_id,
+                "provider": provider,
+                "model": model,
+                "label": record.label,
+                "review_status": record.review_status,
+            },
+        )
         inserted += 1
 
     session.commit()

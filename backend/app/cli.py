@@ -8,6 +8,8 @@ from backend.app.odk.integration import OdkProjectConfig, preview_export_path
 
 
 app = typer.Typer(help="Ontology Curation Assistant command line tools.")
+literature_app = typer.Typer(help="Literature repository commands.")
+app.add_typer(literature_app, name="literature")
 console = Console()
 
 
@@ -40,6 +42,71 @@ def odk_preview(
     console.print(preview_export_path(config))
 
 
+@app.command("odk-apply-approved")
+def odk_apply_approved(
+    dry_run: bool = typer.Option(True, help="Plan the workflow without writing, validating, or uploading."),
+    production: bool = typer.Option(False, help="Allow real implementation, validation, and upload."),
+    suggestion_file: Path | None = typer.Option(
+        None,
+        help="Optional ontology-suggestion JSON file to reference in the ODK workflow audit.",
+    ),
+) -> None:
+    """Implement approved candidates, validate ODK output, then upload only after success."""
+    from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.odk.workflow import config_from_settings, run_approved_candidate_workflow
+
+    if not dry_run and not production:
+        raise typer.BadParameter("Pass --production to disable dry-run and allow validation/upload.")
+    ensure_runtime_schema()
+    config = config_from_settings(dry_run=dry_run or not production, suggestion_file=suggestion_file)
+    with SessionLocal() as session:
+        result = run_approved_candidate_workflow(session, config=config)
+    console.print(f"[bold]Dry run:[/bold] {'yes' if result.dry_run else 'no'}")
+    console.print(f"[bold]Accepted candidates:[/bold] {len(result.accepted_candidate_ids)}")
+    console.print(f"[bold]Skipped candidates:[/bold] {len(result.skipped_candidate_ids)}")
+    if result.implemented_path:
+        console.print(f"[bold]Implemented path:[/bold] {result.implemented_path}")
+    if result.validation:
+        console.print(f"[bold]Validation exit code:[/bold] {result.validation.returncode}")
+    if result.upload and result.upload.commit_url:
+        console.print(f"[bold]Upload commit:[/bold] {result.upload.commit_url}")
+    if result.suggestion_file:
+        console.print(f"[bold]Suggestion file:[/bold] {result.suggestion_file}")
+    console.print(result.message)
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("llm-ontology-suggestions")
+def llm_ontology_suggestions(
+    dry_run: bool = typer.Option(True, help="Write a traceable prompt/export without calling the LLM."),
+    output: Path | None = typer.Option(None, help="Output JSON trace path."),
+    repository_path: Path | None = typer.Option(None, help="Override the literature Markdown repository path."),
+) -> None:
+    """Run or dry-run the ontology suggestion prompt against the literature repository."""
+    from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.llm.ontology_suggestions import run_ontology_suggestion_test
+    from backend.app.services.runtime_config import llm_config
+
+    ensure_runtime_schema()
+    with SessionLocal() as session:
+        config = llm_config(session)
+        try:
+            result = run_ontology_suggestion_test(
+                config=config,
+                repository_path=repository_path,
+                output_path=output,
+                dry_run=dry_run,
+            )
+        except Exception as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]{result.message}[/green]")
+    console.print(f"[bold]Dry run:[/bold] {'yes' if result.dry_run else 'no'}")
+    console.print(f"[bold]Literature records:[/bold] {result.literature_count}")
+    console.print(f"[bold]Suggestions:[/bold] {result.suggestion_count}")
+    console.print(f"[bold]Trace output:[/bold] {result.output_path}")
+
+
 @app.command()
 def ingest(
     literature_dir: Path = typer.Argument(..., help="Directory containing literature files to ingest."),
@@ -49,7 +116,7 @@ def ingest(
     from sqlalchemy.exc import IntegrityError
 
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
-    from backend.app.literature.exporter import export_literature_json
+    from backend.app.literature.exporter import refresh_literature_markdown_repository
     from backend.app.models.db import LiteratureDocument
 
     if not literature_dir.exists():
@@ -95,11 +162,11 @@ def ingest(
                 skipped += 1
                 console.print(f"[yellow]skipped duplicate[/yellow] {path}")
 
-        export_path = export_literature_json(session)
+        markdown_paths = refresh_literature_markdown_repository(session)
 
     console.print(f"[bold]Inserted:[/bold] {inserted}")
     console.print(f"[bold]Skipped:[/bold] {skipped}")
-    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
+    console.print(f"[bold]Markdown files refreshed:[/bold] {len(markdown_paths)}")
     
 
 @app.command("literature-list")
@@ -175,7 +242,84 @@ def literature_show(
 
     console.print(document.content[:chars])
     
-    
+
+@literature_app.command("pipeline")
+def literature_pipeline(
+    zotero_literature_storage_path: Path | None = typer.Option(
+        None,
+        "--zotero-literature-storage-path",
+        "--zotero-storage-dir",
+        help="Override configured Zotero literature storage path.",
+    ),
+    base_dir: Path | None = typer.Option(None, help="Override configured literature base directory."),
+    pdf_dir: Path | None = typer.Option(None, help="Override configured imported-PDF directory."),
+    generated_md_dir: Path | None = typer.Option(None, help="Override configured generated Markdown directory."),
+    papers_dir: Path | None = typer.Option(None, help="Override configured per-paper Markdown directory."),
+    combined_output_file: Path | None = typer.Option(None, help="Override configured combined Markdown output file."),
+    fuzzy_min_score: float | None = typer.Option(None, help="Override generated/paper title fuzzy-match threshold."),
+) -> None:
+    """Run the configured Zotero PDF-to-combined-Markdown literature pipeline."""
+    from backend.app.literature.pipeline import LiteraturePipelineConfig, literature_pipeline_config_from_settings
+    from backend.app.literature.pipeline import run_literature_pipeline
+
+    configured = literature_pipeline_config_from_settings()
+    effective_base_dir = base_dir or configured.base_dir
+    config = LiteraturePipelineConfig(
+        zotero_literature_storage_path=(
+            zotero_literature_storage_path or configured.zotero_literature_storage_path
+        ),
+        base_dir=effective_base_dir,
+        pdf_dir=pdf_dir or (effective_base_dir / "Paper-PDF" if base_dir else configured.pdf_dir),
+        generated_md_dir=generated_md_dir or (
+            effective_base_dir / "Markdown" if base_dir else configured.generated_md_dir
+        ),
+        papers_dir=papers_dir or (effective_base_dir / "papers" if base_dir else configured.papers_dir),
+        combined_output_file=combined_output_file or (
+            effective_base_dir / "combined_literature.md"
+            if base_dir
+            else configured.combined_output_file
+        ),
+        fuzzy_min_score=fuzzy_min_score if fuzzy_min_score is not None else configured.fuzzy_min_score,
+    )
+    try:
+        result = run_literature_pipeline(config)
+    except (FileNotFoundError, ImportError, OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]Combined literature Markdown:[/green] {result.combined_output_file}")
+    console.print(f"[bold]Copied PDFs:[/bold] {result.copied_pdf_count}")
+    console.print(f"[bold]Generated Markdown files:[/bold] {result.converted_markdown_count}")
+    console.print(f"[bold]Combined literature records:[/bold] {result.combined_markdown_count}")
+
+
+@literature_app.command("reset-repository")
+def literature_reset_repository(
+    yes: bool = typer.Option(False, "--yes", help="Confirm the literature repository reset."),
+) -> None:
+    """Reset the per-paper LLM-ready Markdown literature repository."""
+    from sqlalchemy import delete
+
+    from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.literature.repository import reset_literature_repository
+    from backend.app.models.db import CandidateTermRecord, ExtractionRun, LiteratureDocument, LiteratureSource
+
+    if not yes:
+        raise typer.BadParameter("Pass --yes to confirm the literature repository reset.")
+    result = reset_literature_repository()
+    if not result.ok:
+        console.print(f"[red]{result.message}[/red]")
+        raise typer.Exit(code=1)
+    ensure_runtime_schema()
+    with SessionLocal() as session:
+        session.execute(delete(CandidateTermRecord))
+        session.execute(delete(ExtractionRun))
+        session.execute(delete(LiteratureDocument))
+        session.execute(delete(LiteratureSource))
+        session.commit()
+    console.print(f"[green]{result.message}[/green]")
+    for item in result.deleted:
+        console.print(f"deleted {item}")
+
+
 @app.command("extract-candidates")
 def extract_candidates(
     document_id: int = typer.Argument(..., help="ID of the literature document to extract from."),
@@ -366,7 +510,7 @@ def zotero_import(
 ) -> None:
     """Import offline Zotero-style metadata into the local workflow database."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
-    from backend.app.literature.exporter import export_literature_json
+    from backend.app.literature.exporter import refresh_literature_markdown_repository
     from backend.app.models.db import LiteratureSource
     from backend.app.zotero.importer import import_sources
 
@@ -379,7 +523,7 @@ def zotero_import(
             result = import_sources(session, metadata_file)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
-        export_path = export_literature_json(session)
+        markdown_paths = refresh_literature_markdown_repository(session)
 
     # Keep the import above from looking unused to future readers: importing the model
     # registers it with SQLAlchemy metadata before ensure_runtime_schema().
@@ -387,7 +531,7 @@ def zotero_import(
     console.print(f"[bold]Inserted:[/bold] {result.inserted}")
     console.print(f"[bold]Updated:[/bold] {result.updated}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
-    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
+    console.print(f"[bold]Markdown files refreshed:[/bold] {len(markdown_paths)}")
 
 
 @app.command("zotero-list")
@@ -460,7 +604,7 @@ def zotero_link_documents(
 ) -> None:
     """Conservatively link ingested local documents to imported Zotero records."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
-    from backend.app.literature.exporter import export_literature_json
+    from backend.app.literature.exporter import refresh_literature_markdown_repository
     from backend.app.models.db import LiteratureDocument, LiteratureSource
     from backend.app.zotero.importer import link_documents_to_sources
 
@@ -473,13 +617,13 @@ def zotero_link_documents(
     ensure_runtime_schema()
     with SessionLocal() as session:
         result = link_documents_to_sources(session, literature_dir, force=force)
-        export_path = export_literature_json(session)
+        markdown_paths = refresh_literature_markdown_repository(session)
 
     _ = (LiteratureDocument, LiteratureSource)
     console.print(f"[bold]Linked:[/bold] {result.linked}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
     console.print(f"[bold]Ambiguous:[/bold] {result.ambiguous}")
-    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
+    console.print(f"[bold]Markdown files refreshed:[/bold] {len(markdown_paths)}")
 
 
 @app.command("zotero-config")
@@ -522,7 +666,7 @@ def zotero_sync(
 ) -> None:
     """Sync Zotero Web API metadata into the local workflow database."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
-    from backend.app.literature.exporter import export_literature_json
+    from backend.app.literature.exporter import refresh_literature_markdown_repository
     from backend.app.zotero.client import (
         ZoteroApiClient,
         ZoteroApiConfig,
@@ -573,9 +717,27 @@ def zotero_sync(
     ensure_runtime_schema()
     with SessionLocal() as session:
         result = import_parsed_sources(session, sources, skipped=skipped, synced=True)
-        export_path = export_literature_json(session)
+        markdown_paths = refresh_literature_markdown_repository(session)
+
+        # Trigger literature pipeline automatically
+        from backend.app.services.runtime_config import literature_pipeline_config
+        from backend.app.literature.pipeline import run_literature_pipeline
+
+        pipeline_config = literature_pipeline_config(session)
+        try:
+            console.print("[bold]Running Zotero PDF literature pipeline...[/bold]")
+            pipeline_res = run_literature_pipeline(pipeline_config)
+            console.print(
+                f"[green]Pipeline complete:[/green] Copied {pipeline_res.copied_pdf_count} PDF(s), "
+                f"generated {pipeline_res.converted_markdown_count} Markdown file(s), "
+                f"combined {pipeline_res.combined_markdown_count} literature record(s)."
+            )
+        except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
+            console.print(f"[yellow]Warning: Zotero PDF pipeline skipped: {exc}[/yellow]")
+        except Exception as exc:
+            console.print(f"[red]Error running Zotero PDF pipeline: {exc}[/red]")
 
     console.print(f"[bold]Inserted:[/bold] {result.inserted}")
     console.print(f"[bold]Updated:[/bold] {result.updated}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
-    console.print(f"[bold]Literature JSON:[/bold] {export_path}")
+    console.print(f"[bold]Markdown files refreshed:[/bold] {len(markdown_paths)}")

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ontology Curation Assistant</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260529-3" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260602-md" />
   </head>
   <body>
     <header class="topbar">
@@ -12,13 +12,14 @@
         <a href="/" class="logo-link" aria-label="Ontology Curation Assistant dashboard">
           <img src="/assets/Logo-Ontology-Curation-Assistant.png" alt="Ontology Curation Assistant dashboard" class="logo" />
         </a>
-        <p id="app-status">Loading local workspace...</p>
+        <p id="app-status" role="status" aria-live="polite">Loading local workspace...</p>
       </div>
       <nav class="nav">
         <a href="/" data-nav="dashboard">Dashboard</a>
         <a href="/config" data-nav="config">Configuration</a>
         <a href="/zotero" data-nav="zotero">Literature</a>
         <a href="/ontology" data-nav="ontology">Existing Ontology</a>
+        <a href="/curation-prompt" data-nav="curation-prompt">Curation Prompt</a>
         <a href="/curation" data-nav="curation">Curation</a>
         <a href="/export" data-nav="export">Export</a>
       </nav>
@@ -27,6 +28,7 @@
         <button id="theme-dark" type="button">Dark</button>
       </div>
     </header>
+    <div id="action-toast" class="action-toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <main class="layout">
       <section class="panel wide page-section" data-page="dashboard" id="dashboard-section">
@@ -39,6 +41,7 @@
           <a href="/config" data-route>Configure APIs and Sync Zotero</a>
           <a href="/zotero" data-route>Open Literature</a>
           <a href="/ontology" data-route>Open Existing Ontology</a>
+          <a href="/curation-prompt" data-route>Review Curation Prompt</a>
           <a href="/curation" data-route>Open Candidate Curation</a>
           <a href="/export" data-route>Export Approved Candidates</a>
         </div>
@@ -48,25 +51,41 @@
             Compact graph of the curation meta-ontology: sources, evidence, candidates, matching, decisions, and export.
           </p>
           <div id="meta-graph" class="graph-panel"></div>
+          <div class="graph-controls" data-graph-controls="meta"></div>
           <div id="meta-graph-details" class="graph-details">Select a node or edge for details.</div>
         </div>
       </section>
 
       <section class="panel page-section" data-page="config" id="api-key-section">
-        <h2>Zotero API Configuration</h2>
+        <h2>Zotero Metadata Sync</h2>
         <p class="description">
-          Enter the Zotero API key, user or group ID, library type, and optional collection key used for local metadata sync.
+          Configure the Zotero library used for bibliography metadata sync.
         </p>
         <p class="warning">Development warning: credentials are stored locally in this project database and are masked in API responses.</p>
         <form id="zotero-config-form" class="stack">
-          <select name="library_type" required>
-            <option value="user">user</option>
-            <option value="group">group</option>
-          </select>
-          <input name="library_id" placeholder="Zotero user ID or group ID" required />
-          <input name="api_key" type="password" placeholder="Zotero API key" />
-          <input name="collection_key" placeholder="Optional collection key" />
-          <input name="base_url" placeholder="https://api.zotero.org" />
+          <label>Library type
+            <select name="library_type" required>
+              <option value="user">user</option>
+              <option value="group">group</option>
+            </select>
+            <span class="helper">Use `user` for a personal library or `group` for a Zotero group library.</span>
+          </label>
+          <label>Library ID
+            <input name="library_id" placeholder="Zotero user ID or group ID" required />
+            <span class="helper">Numeric user ID or group ID for API metadata sync.</span>
+          </label>
+          <label>API key
+            <input name="api_key" type="password" placeholder="Zotero API key" />
+            <span class="helper">Required only for private libraries or collections.</span>
+          </label>
+          <label>Collection key
+            <input name="collection_key" placeholder="Optional collection key" />
+            <span class="helper">Leave blank to sync the whole configured library.</span>
+          </label>
+          <label>API base URL
+            <input name="base_url" placeholder="https://api.zotero.org" />
+            <span class="helper">Usually leave this as the Zotero default.</span>
+          </label>
           <button type="submit">Save Zotero Config</button>
         </form>
       </section>
@@ -77,10 +96,22 @@
           Enter the provider, API key, model name, and optional OpenAI-compatible base URL used for candidate extraction.
         </p>
         <form id="llm-config-form" class="stack">
-          <input name="provider" placeholder="Provider, e.g. openai" required />
-          <input name="api_key" type="password" placeholder="LLM API key" />
-          <input name="model" placeholder="Optional model, e.g. gpt-4o-mini" />
-          <input name="base_url" placeholder="Optional OpenAI-compatible base URL" />
+          <label>Provider
+            <input name="provider" placeholder="Provider, e.g. openai" required />
+            <span class="helper">Use `openai` or an OpenAI-compatible provider name.</span>
+          </label>
+          <label>API key
+            <input name="api_key" type="password" placeholder="LLM API key" />
+            <span class="helper">Leave blank to keep deterministic mock extraction available.</span>
+          </label>
+          <label>Model
+            <input name="model" placeholder="Optional model, e.g. gpt-4o-mini" />
+            <span class="helper">Optional model name passed to the configured provider.</span>
+          </label>
+          <label>Base URL
+            <input name="base_url" placeholder="Optional OpenAI-compatible base URL" />
+            <span class="helper">Only needed for non-default or local OpenAI-compatible endpoints.</span>
+          </label>
           <button type="submit">Save LLM Config</button>
         </form>
       </section>
@@ -91,7 +122,7 @@
           Check whether the saved Zotero credentials are valid before importing metadata.
         </p>
         <button id="test-zotero" type="button">Test Zotero</button>
-        <p id="zotero-message" class="message"></p>
+        <p id="zotero-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
       <section class="panel page-section" data-page="config" id="zotero-sync-section">
@@ -107,6 +138,25 @@
         <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
       </section>
 
+      <section class="panel page-section" data-page="config" id="literature-pipeline-config-section">
+        <h2>Literature Pipeline Configuration</h2>
+        <p class="description">
+          Configure the local Zotero `storage` folder used as the PDF source for the integrated import pipeline.
+        </p>
+        <form id="literature-config-form" class="stack">
+          <label>Zotero literature source
+            <input name="zotero_literature_storage_path" placeholder="C:\Users\<USER>\Zotero\storage" />
+            <span class="helper">Folder containing Zotero attachment subfolders. PDFs are copied from here before Markdown generation.</span>
+          </label>
+          <button type="submit">Save Literature Pipeline Config</button>
+        </form>
+        <div class="button-row">
+          <button id="run-literature-pipeline" type="button">Import Zotero PDFs</button>
+        </div>
+        <p id="literature-config-message" class="message" role="status" aria-live="polite"></p>
+        <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
+      </section>
+
       <section class="panel wide page-section" data-page="config" id="saved-config-section">
         <h2>Saved API Configurations</h2>
         <p class="description">
@@ -118,8 +168,12 @@
       <section class="panel wide page-section" data-page="zotero" id="zotero-entries-section">
         <h2>Literature Records</h2>
         <p class="description">
-          This page lists bibliography records imported or synced from Zotero. Titles are the primary label, with source links and record-level JSON for curator inspection.
+          This page lists bibliography records imported or synced from Zotero. Titles are the primary label, with source links and Markdown records for curator inspection.
         </p>
+        <div class="button-row">
+          <button id="reset-literature-repository" type="button" class="danger">Reset Literature Repository</button>
+        </div>
+        <p id="literature-repository-message" class="message" role="status" aria-live="polite"></p>
         <input id="zotero-filter" placeholder="Search title, author, DOI, key, or year" />
         <div id="zotero-entries" class="table-list"></div>
       </section>
@@ -134,7 +188,7 @@
           <button type="submit">Save Path</button>
           <button id="scan-ontology" type="button">Scan Folder</button>
         </form>
-        <p id="ontology-message" class="message"></p>
+        <p id="ontology-message" class="message" role="status" aria-live="polite"></p>
         <div id="ontology-files" class="table-list"></div>
         <div class="button-row">
           <button id="index-ontology" type="button">Index Selected Ontology</button>
@@ -146,20 +200,42 @@
             Graph view of indexed ontology terms and parent/subclass relationships. Use wheel zoom, drag pan, and click nodes or edges for details.
           </p>
           <div id="ontology-graph" class="graph-panel"></div>
+          <div class="graph-controls" data-graph-controls="ontology"></div>
           <div id="ontology-graph-details" class="graph-details">Select a node or edge for details.</div>
         </div>
         <div id="ontology-terms" class="table-list"></div>
       </section>
 
+      <section class="panel wide page-section" data-page="curation-prompt" id="curation-prompt-section">
+        <h2>Ontology Curation Prompt</h2>
+        <p class="description">
+          Review and edit the prompt used for ontology curation suggestions. The final LLM request also includes the selected existing ontology OBO file and `combined_literature.md`.
+        </p>
+        <form id="curation-prompt-form" class="stack">
+          <label>Curation prompt template
+            <textarea name="prompt" rows="22"></textarea>
+            <span class="helper">This prompt is saved locally and used when running ontology curation suggestions.</span>
+          </label>
+          <div class="button-row">
+            <button type="submit">Save Prompt</button>
+            <button id="reset-curation-prompt" type="button" class="secondary">Reset Prompt</button>
+          </div>
+        </form>
+        <div class="warning">
+          The LLM request is assembled as: saved prompt, selected existing ontology OBO content, `combined_literature.md`, and a JSON-only output requirement. API keys are not shown or written here.
+        </div>
+        <div class="button-row">
+          <button id="run-curation-suggestions" type="button">Run Curation Suggestions</button>
+        </div>
+        <p id="curation-prompt-message" class="message" role="status" aria-live="polite"></p>
+        <pre id="curation-suggestion-preview" class="markdown-preview"></pre>
+      </section>
+
       <section class="panel page-section" data-page="curation" id="literature-section">
         <h2>Literature / Document Ingestion</h2>
         <p class="description">
-          Ingest local PDFs/text files or paste source text, then optionally link documents to Zotero records for traceable candidate evidence.
+          Ingest local PDFs/text files or paste source text. Entry generation uses all imported literature from the repository.
         </p>
-        <div class="compact-form">
-          <select id="document-select"></select>
-          <button id="refresh-documents" type="button">Refresh</button>
-        </div>
         <form id="literature-form" class="stack">
           <input name="path" placeholder="Server file path, or leave blank and paste text below" />
           <input name="filename" placeholder="Filename for pasted text" />
@@ -171,11 +247,9 @@
       <section class="panel page-section" data-page="curation" id="candidate-extraction-section">
         <h2>Candidate Extraction</h2>
         <p class="description">
-          Extract possible ontology candidate terms from the selected Zotero entry or document. Use mock extraction for deterministic local testing, or LLM extraction after configuration.
+          Using all imported literature from the repository. Use mock extraction for deterministic local testing, or LLM extraction after configuration.
         </p>
         <form id="extract-form" class="stack">
-          <label>Selected Zotero entry<select id="source-select"></select></label>
-          <label>Selected document<select id="extract-document-select"></select></label>
           <textarea name="guidance" rows="4" placeholder="Optional instruction or nudge for extraction"></textarea>
           <label class="inline"><input name="use_llm" type="checkbox" /> Use configured LLM</label>
           <button type="submit">Extract Candidates</button>
@@ -184,7 +258,7 @@
           <textarea name="guidance" rows="3" placeholder="Quickly propose or improve one candidate"></textarea>
           <button type="submit" class="secondary">Generate From Nudge</button>
         </form>
-        <p id="extract-message" class="message"></p>
+        <p id="extract-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
       <section class="panel wide page-section" data-page="curation" id="candidate-curation-section">
@@ -219,7 +293,7 @@
         <div class="button-row">
           <button id="ols-all" type="button">Run OLS For Draft Candidates</button>
         </div>
-        <p id="ols-message" class="message"></p>
+        <p id="ols-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
       <section class="panel wide page-section" data-page="export" id="export-section">
@@ -284,6 +358,6 @@
       </article>
     </template>
 
-    <script src="/static/app.js?v=20260529-3"></script>
+    <script src="/static/app.js?v=20260602-md"></script>
   </body>
 </html>

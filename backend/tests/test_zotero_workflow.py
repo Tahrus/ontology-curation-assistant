@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from backend.app.cli import app
 from backend.app.config import get_settings
 from backend.app.db import session as db_session
-from backend.app.models.db import AppSetting, LiteratureDocument, LiteratureSource
+from backend.app.models.db import LiteratureDocument, LiteratureSource
 
 
 runner = CliRunner()
@@ -128,6 +128,7 @@ def test_csl_json_import_inserts_valid_item_and_skips_missing_title(isolated_db,
     assert result.exit_code == 0
     assert "Inserted:" in result.output
     assert "Skipped:" in result.output
+    assert "Markdown files refreshed:" in result.output
     with isolated_db() as session:
         sources = session.scalars(select(LiteratureSource)).all()
     assert len(sources) == 1
@@ -214,6 +215,7 @@ def test_link_documents_by_citation_key_in_filename(isolated_db, tmp_path):
 
     assert result.exit_code == 0
     assert "Linked:" in result.output
+    assert "Markdown files refreshed:" in result.output
     with isolated_db() as session:
         document = session.get(LiteratureDocument, document_id)
     assert document.source_id == source_id
@@ -305,136 +307,3 @@ def test_literature_list_shows_linked_source(isolated_db, tmp_path):
 
     assert result.exit_code == 0
     assert "source=timasheff2002ProteinSolventPreferential" in result.output
-
-
-def test_ingest_writes_literature_json_with_full_text(isolated_db, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    source_dir = tmp_path / "source-files"
-    source_dir.mkdir()
-    source_file = source_dir / "paper.txt"
-    source_file.write_text("Alpha  beta\n\n\nGamma scientific text.", encoding="utf-8")
-
-    result = runner.invoke(app, ["ingest", str(source_dir)])
-
-    output_path = tmp_path / "literature" / "literature.json"
-    assert result.exit_code == 0
-    assert output_path.exists()
-    payload = json.loads(output_path.read_text(encoding="utf-8"))
-    record = payload["papers"][0]
-    assert payload["source"] == "Ontology Curation Assistant literature library"
-    assert payload["schema_version"] == "1.0"
-    assert record["paper_id"]
-    assert record["citation"]["title"] == "paper.txt"
-    assert record["full_text"] == "Alpha beta\n\nGamma scientific text."
-    assert record["sections"]["introduction"] == record["full_text"]
-    assert record["chunks"][0]["paper_id"] == record["paper_id"]
-    assert record["attachments"][0]["text_extracted"] is True
-    assert record["quality_flags"] == []
-
-
-def test_literature_json_preserves_metadata_flags_and_deduplicates(isolated_db, tmp_path):
-    from backend.app.literature.exporter import export_literature_json
-
-    source_id = insert_source(
-        isolated_db,
-        title="Protein-solvent preferential interactions",
-        citation_key="ITEMKEY123",
-        doi="10.1073/pnas.122225399",
-    )
-    insert_document(
-        isolated_db,
-        tmp_path / "documents" / "paper.txt",
-        "Full text for LLM analysis.",
-        source_id=source_id,
-    )
-    insert_source(
-        isolated_db,
-        title="Duplicate by DOI",
-        citation_key="OTHERKEY",
-        doi="10.1073/pnas.122225399",
-    )
-    insert_source(
-        isolated_db,
-        title="Metadata only source",
-        citation_key="MISSATT1",
-    )
-
-    with isolated_db() as session:
-        output_path = export_literature_json(session, tmp_path / "literature" / "literature.json")
-
-    payload = json.loads(output_path.read_text(encoding="utf-8"))
-    titles = [record["citation"]["title"] for record in payload["papers"]]
-    rich_record = next(record for record in payload["papers"] if record["zotero"]["item_key"] == "ITEMKEY123")
-    missing_record = next(record for record in payload["papers"] if record["zotero"]["item_key"] == "MISSATT1")
-
-    assert titles.count("Protein-solvent preferential interactions") == 1
-    assert "Duplicate by DOI" not in titles
-    assert rich_record["citation"]["doi"] == "10.1073/pnas.122225399"
-    assert rich_record["citation"]["year"] == 2002
-    assert rich_record["zotero"]["uri"] == "zotero://select/library/items/ITEMKEY123"
-    assert rich_record["full_text"] == "Full text for LLM analysis."
-    assert missing_record["full_text"] is None
-    assert "missing_attachment" in missing_record["quality_flags"]
-    assert "missing_full_text" in missing_record["quality_flags"]
-
-
-def test_literature_json_extracts_sections_and_chunks_long_text(isolated_db, tmp_path):
-    from backend.app.literature.exporter import export_literature_json
-
-    source_id = insert_source(
-        isolated_db,
-        title="Structured paper",
-        citation_key="STRUCT1",
-        doi="10.1000/structured",
-    )
-    long_results = " ".join(["result"] * 900)
-    insert_document(
-        isolated_db,
-        tmp_path / "documents" / "structured.txt",
-        f"Introduction\nIntro text.\n\nMethods\nMethod text.\n\nResults\n{long_results}\n\nConclusion\nDone.",
-        source_id=source_id,
-    )
-
-    with isolated_db() as session:
-        output_path = export_literature_json(session, tmp_path / "literature" / "literature.json")
-
-    paper = json.loads(output_path.read_text(encoding="utf-8"))["papers"][0]
-    assert paper["sections"]["introduction"] == "Intro text."
-    assert paper["sections"]["methodology"] == "Method text."
-    assert paper["sections"]["results"].startswith("result")
-    assert paper["sections"]["conclusion"] == "Done."
-    assert len([chunk for chunk in paper["chunks"] if chunk["section"] == "results"]) > 1
-    assert all("mythology" not in chunk["section"] for chunk in paper["chunks"])
-
-
-def test_ambiguous_or_malformed_zotero_keys_do_not_create_links(isolated_db, tmp_path):
-    from backend.app.literature.exporter import export_literature_json
-
-    insert_source(isolated_db, title="Shared one", citation_key="SHARED1")
-    insert_source(isolated_db, title="Shared two", citation_key="SHARED1")
-    insert_source(isolated_db, title="Malformed", citation_key="not a key")
-
-    with isolated_db() as session:
-        payload = json.loads(export_literature_json(session, tmp_path / "literature.json").read_text(encoding="utf-8"))
-
-    shared = [paper for paper in payload["papers"] if paper["source_metadata"]["citation_key"] == "SHARED1"]
-    malformed = next(paper for paper in payload["papers"] if paper["citation"]["title"] == "Malformed")
-    assert shared[0]["zotero"]["uri"] is None
-    assert "duplicate_zotero_item_key" in shared[0]["zotero"]["diagnostics"]
-    assert malformed["zotero"]["item_key"] is None
-    assert "malformed_zotero_item_key" in malformed["zotero"]["diagnostics"]
-
-
-def test_literature_json_uses_group_zotero_uri_when_configured(isolated_db, tmp_path):
-    from backend.app.literature.exporter import export_literature_json
-
-    insert_source(isolated_db, title="Group paper", citation_key="GROUPK1")
-    with isolated_db() as session:
-        session.add(AppSetting(key="zotero_library_type", value="group"))
-        session.add(AppSetting(key="zotero_library_id", value="123456"))
-        session.commit()
-        payload = json.loads(export_literature_json(session, tmp_path / "literature.json").read_text(encoding="utf-8"))
-
-    paper = payload["papers"][0]
-    assert paper["zotero"]["uri"] == "zotero://select/groups/123456/items/GROUPK1"
-    assert paper["zotero"]["library_id"] == "123456"

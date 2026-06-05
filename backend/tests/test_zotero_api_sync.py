@@ -293,3 +293,38 @@ def test_zotero_api_pagination() -> None:
 
     assert len(items) == 2
     assert len(requests) == 2
+
+
+def test_zotero_sync_triggers_pipeline_automatically(isolated_db, monkeypatch, tmp_path):
+    from backend.app.zotero.client import ZoteroApiClient
+    import backend.app.literature.pipeline as pipeline
+
+    calls = []
+
+    def fake_run(config):
+        calls.append(config)
+        from backend.app.literature.pipeline import LiteraturePipelineResult
+        return LiteraturePipelineResult(
+            combined_output_file=tmp_path / "combined.md",
+            copied_pdf_count=5,
+            converted_markdown_count=5,
+            failed_pdf_count=0,
+            created_paper_markdown_count=5,
+            structured_markdown_count=5,
+            combined_markdown_count=5,
+        )
+
+    monkeypatch.setattr(pipeline, "run_literature_pipeline", fake_run)
+    monkeypatch.setenv("OCA_ZOTERO_LIBRARY_TYPE", "user")
+    monkeypatch.setenv("OCA_ZOTERO_LIBRARY_ID", "123")
+    monkeypatch.setenv("OCA_ZOTERO_LITERATURE_STORAGE_PATH", str(tmp_path / "storage"))
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(ZoteroApiClient, "fetch_items", lambda self, **kwargs: [zotero_item()])
+
+    result = runner.invoke(app, ["zotero-sync"])
+
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    assert calls[0].zotero_literature_storage_path == tmp_path / "storage"
+

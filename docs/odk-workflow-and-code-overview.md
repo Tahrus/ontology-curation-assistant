@@ -164,6 +164,22 @@ The expected PPO export target is:
 C:\Users\ge47vob\ontology-development-kit\target\ppo\src\ontology\templates\ai_approved_terms.tsv
 ```
 
+Existing ontology inputs should be treated according to their role in the ODK project. Edit the maintained project ontology only for terms that belong in that ontology; place external ontology sources, extracted imports, mappings, or templates under the project's `src/ontology` tree and wire them through the project's ROBOT commands and Makefile targets. Common input locations are:
+
+```text
+src/ontology/imports/
+src/ontology/templates/
+src/ontology/mappings/
+```
+
+After a PPO ODK build, the generated simplified ontology should be inspected at a path similar to:
+
+```text
+target/ppo/src/ontology/ppo-simple.obo
+```
+
+This file is the built ontology output after imports, templates, ROBOT steps, and Make targets have been applied. Validate it with the project `make test` target and inspect it with ROBOT, Protégé, or OBO tooling before upload or GitHub submission.
+
 `oca odk-preview` constructs this path by combining:
 
 ```text

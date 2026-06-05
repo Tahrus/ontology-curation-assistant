@@ -1,1 +1,3 @@
 backend
+ontology_curation_assistant
+zotero_lit_md

@@ -14,6 +14,8 @@ Requires-Dist: rich>=13.7
 Requires-Dist: python-dotenv>=1.0
 Requires-Dist: pypdf[crypto]>=6.12.0
 Requires-Dist: httpx>=0.27
+Requires-Dist: requests>=2.32
+Requires-Dist: PyMuPDF>=1.24
 Requires-Dist: rdflib>=7.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.2; extra == "dev"
@@ -35,6 +37,7 @@ This is a project scaffold with:
 
 - FastAPI backend structure
 - Typer CLI entrypoint
+- standalone `zotero_lit_md` CLI package for Zotero Desktop local-PDF Markdown export
 - SQLite/PostgreSQL-ready settings
 - JSON schemas for candidate terms and relations
 - prompt templates for reproducible extraction
@@ -82,27 +85,140 @@ oca --help
 uvicorn backend.app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000/> after the server starts. The root page is the main browser workflow; routine curation should not require more PowerShell commands after launch.
+Open <http://127.0.0.1:8000/> after the server starts. Routine curation should not require more PowerShell commands after launch.
+
+## Zotero Local PDF Markdown Export
+
+The repository also includes a standalone command-line exporter for creating full-text, LLM/RAG-ready Markdown from Zotero Desktop's local API and locally stored PDF attachments:
+
+```powershell
+python -m zotero_lit_md --collection "Protein precipitation" --output .\literature_md
+python -m zotero_lit_md --item-keys ABCD1234 EFGH5678 --output .\literature_md --json-sidecar
+python -m zotero_lit_md --all-with-pdfs --output .\literature_md --combined-corpus
+```
+
+The exporter uses `http://127.0.0.1:23119/api/`, so Zotero Desktop must be running with the local API enabled. It does not require Zotero cloud credentials and does not call publisher websites. It writes one Markdown file per paper, can write structured JSON sidecars, can write a combined corpus file, and writes a failure report without stopping the whole run when one paper fails. See [zotero_lit_md/README.md](zotero_lit_md/README.md) for the detailed output contract and limitations.
 
 ## Browser Workflow
 
-The browser UI supports the current human-in-the-loop workflow:
+The browser UI is split into small pages:
+
+- Dashboard: local status and links to the main workflows.
+- Configuration: Zotero API settings, LLM/chatbot settings, Zotero connection testing, and Zotero sync.
+- Literature: searchable list of imported or synced Zotero records with titles, Zotero links, and per-record Markdown inspection.
+- Existing Ontology: local PPO ontology path, detected ontology files, indexing, and term search.
+- Curation: document ingestion, candidate extraction, candidate editing, local PPO matching, and external OLS matching.
+- Export: approved candidate downloads for ROBOT/ODK/Protégé-oriented workflows.
+
+The header includes a consistent logo link back to the Dashboard and a Light/Dark theme toggle. Theme choice is stored in browser local storage; if no choice exists, the UI follows the system color-scheme preference. Header and dashboard navigation use the static app's current client-side route map, so switching pages updates the visible workflow immediately without requiring a browser refresh.
+Startup loads the dashboard status first and then only the current page's data, so an optional workflow error such as an unparsable selected ontology file is shown as a visible message instead of leaving the local workspace loading indicator in place.
+
+The workflow supports:
 
 - review backend, database, Zotero, and LLM readiness in Application Status
-- save Zotero credentials and LLM/chatbot credentials in API Key Configuration
-- test Zotero credentials, sync a small Zotero batch, or load local test Zotero entries
-- view and select synced/imported Zotero records as source material
+- save Zotero credentials and LLM/chatbot credentials in Configuration
+- test Zotero credentials, sync all configured Zotero records, or load local test Zotero entries
+- view synced/imported Zotero records, open them in Zotero when an item key is available, and inspect the Markdown record used by the UI
+- scan and index a local PPO ontology folder, defaulting to `C:\Users\ge47vob\ontology-development-kit\target\ppo`
+- inspect ontology and curation meta-model graphs with pan, zoom, node selection, and edge selection
 - ingest a server-side literature file path or paste extracted text/notes into the Literature panel
-- select a Zotero entry or ingested document for candidate extraction
+- extract candidates from all valid LLM-ready literature Markdown files in the repository without selecting an individual paper
 - run deterministic mock extraction, or use an OpenAI-compatible LLM when configured
 - create candidates manually or generate a draft candidate from a curator nudge
 - edit labels, definitions, rationales, source evidence, synonyms, parents, and mappings
+- compare candidates against local PPO terms and external EMBL-EBI OLS terms
 - approve, reject, defer, or mark candidates as needing more evidence
-- check each candidate against EMBL-EBI OLS and choose an existing term when one is a better fit
+- intentionally select an existing local/OLS match or leave `Nothing selected`
 - export approved candidates as `approved_candidates.robot.tsv` or `approved_candidates.tsv`
 
 The UI calls JSON endpoints under `/api/...`, so CLI-created candidates and browser-edited candidates use the same SQLite database.
 Credentials entered in the UI are stored in the local SQLite database for development use and are masked in API responses.
+Saved API configurations are listed on the Configuration page with provider/library/model metadata, masked secrets, timestamps, and active-state controls.
+
+Literature import, ingestion, linking, and Zotero sync workflows refresh the LLM-ready literature repository at:
+
+```text
+literature/papers
+```
+
+The folder is created automatically when needed. Each imported paper is saved as a separate `.md` file with YAML front matter for stable metadata (`id`, title, authors, year, DOI/PMID, source, URL, and import time), followed by human-readable Markdown sections for abstract, notes, and ontology-relevant extracted content. Filenames are deterministic and filesystem-safe, preferring DOI, PMID, stable literature ID, or a title-derived slug with a short digest.
+
+The SQLite tables are runtime cache and workflow state. Literature content handed to an LLM is loaded from the Markdown repository, combined into a single Markdown corpus headed `# Literature Corpus`, and separated by literature entry ID and source filename. The Literature page shows Markdown-oriented records and metadata for human review instead of exposing raw JSON.
+
+The app also writes one compact LLM-ready Markdown file per paper under:
+
+```text
+literature/papers/*.md
+```
+
+Each per-paper file uses this shape:
+
+```markdown
+---
+id: "literature-id"
+title: "Article title"
+authors:
+  - "Author One"
+year: 2024
+doi: "10.xxxx/example"
+source: "Ontology Curation Assistant"
+imported_at: "2026-06-02T12:00:00+00:00"
+---
+
+# Article title
+
+## Abstract
+
+...
+
+## Notes
+
+...
+
+## Extracted ontology-relevant information
+
+### Introduction
+
+...
+```
+
+The per-paper repository omits page-wise chunks, running headers/footers, page numbers, references, and publisher boilerplate where the local deterministic cleaner can identify them. Candidate extraction uses all valid Markdown files in this repository automatically. Malformed Markdown files are reported and skipped when at least one valid file is available; if none are valid, the UI asks you to import literature first. Reset the repository from the Literature page with explicit confirmation, or from the CLI:
+
+```powershell
+oca literature reset-repository --yes
+```
+
+Refresh the section-based literature JSON export from deposited Zotero PDF attachments:
+
+```powershell
+oca literature sync-from-zotero --all
+oca literature sync-from-zotero-local-pdf --all
+python -m ontology_curation_assistant literature sync-from-zotero --title "Cosolvent effects in protein folding assays" --force
+python -m ontology_curation_assistant literature sync-from-zotero --all --dry-run
+python -m ontology_curation_assistant literature sync-from-zotero --all --include-web-comparison
+oca literature extract-zotero-pdf --all
+python -m ontology_curation_assistant literature extract-zotero-pdf --all --structure sections
+python -m ontology_curation_assistant literature extract-zotero-pdf --all --include-pages
+python -m ontology_curation_assistant literature extract-zotero-pdf --title "Cosolvent effects in protein folding assays" --force
+python -m ontology_curation_assistant literature extract-zotero-pdf --all --dry-run
+```
+
+These commands resolve each literature entry to a Zotero parent item, read its child PDF attachment from local Zotero storage or a linked local file, extract PDF text with `pypdf`, deduplicate repeated sections, and write canonical section/subsection text under `content.sections`. They do not use DOI URLs, publisher URLs, Zotero web links, or browser downloads as extraction sources. Existing successful deposited-PDF extraction is skipped unless `--force` is passed. Web extraction is never canonical; `--include-web-comparison` is diagnostic-only and does not store full duplicate web text.
+
+Inspect what the application reads from the authoritative JSON:
+
+```powershell
+oca literature inspect-json --title "Protein-solvent preferential interactions and protein hydration"
+python -m ontology_curation_assistant literature inspect-json --id "zotero-ITEMKEY" --debug
+python -m ontology_curation_assistant literature inspect-json --title "Cosolvent effects in protein folding assays" --raw
+python -m ontology_curation_assistant literature inspect --title "Cosolvent effects in protein folding assays" --section introduction
+python -m ontology_curation_assistant literature canonicalize
+python -m ontology_curation_assistant literature validate-schema
+python -m ontology_curation_assistant literature validate-sync
+python -m ontology_curation_assistant literature find-duplicates
+```
+
+The inspection and validation commands print the resolved absolute JSON path, entry count, file cache status, selected paper ID/title/Zotero key, content hash, canonical source, extraction status, section count/headings, duplicate-section count, and failure diagnostics when present.
 
 ### Zotero from the Browser
 
@@ -113,7 +229,9 @@ In API Key Configuration, enter:
 - Zotero API key, if needed for the target library
 - optional collection key
 
-Use Zotero Connection to test the credentials, then sync a small batch. If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
+Use Zotero Connection to test the credentials, then click `Sync All Zotero Records`. The browser sync defaults to no limit and follows Zotero pagination until all records in the configured library or collection are retrieved. An advanced optional limit is available only for testing. Sync refreshes the Markdown files in `literature/papers`.
+
+If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
 
 ### LLM / Chatbot Configuration
 
@@ -128,7 +246,32 @@ If no LLM key is configured, Candidate Extraction still works through a determin
 
 ### Candidate Extraction and Curation
 
-Select a Zotero entry or ingested document, add optional guidance, then click `Extract Candidates`. Candidates appear in Candidate Curation, where you can edit all curator-facing fields, add a manual candidate, approve/reject candidates, and run OLS checks. Use `Run OLS For Draft Candidates` to batch-check draft candidates.
+Add optional guidance, then click `Extract Candidates`. The backend combines all valid LLM-ready Markdown files in the configured literature repository automatically. Draft, in-review, deferred, and needs-more-evidence candidates appear in Candidate Curation, where you can edit all curator-facing fields, add a manual candidate, approve/reject candidates, and run OLS checks. Approved and rejected candidates leave the active curation queue. Use `Run OLS For Draft Candidates` to batch-check draft candidates.
+
+### Existing PPO Ontology
+
+Open <http://127.0.0.1:8000/ontology> to configure and inspect the local ontology. The default/example path is:
+
+```text
+C:\Users\ge47vob\ontology-development-kit\target\ppo
+```
+
+The ontology page scans for supported files:
+
+- `.owl`, `.rdf`, `.ttl`
+- `.obo`
+- ROBOT/template `.tsv`
+
+After selecting a file, click `Index Selected Ontology`. The app extracts term IDs/IRIs, labels, definitions, synonyms, parent IDs when available, and source file metadata. This is local readout only; Protégé is not required.
+
+The ontology page also includes a graph view. Terms are nodes and parent/subclass relationships are edges. Use mouse wheel zoom, drag pan, and click nodes or edges for details. Graph controls can hide or show text labels, node labels, edge labels, descriptions, and simplified placeholder nodes; toggle state is stored in browser local storage. The Dashboard includes a compact meta-ontology graph showing how sources, evidence, candidates, matches, decisions, and exports relate.
+
+Local PPO matching differs from OLS matching:
+
+- Local PPO matching checks candidates against the ontology file selected on the Existing Ontology page.
+- OLS matching checks external EMBL-EBI OLS results.
+- Both default to `Nothing selected`; no first result is automatically selected.
+- Leaving `Nothing selected` means no existing term has been chosen yet, and the candidate still needs curator review or can be explicitly marked `propose_new_term`.
 
 Useful endpoints include:
 
@@ -136,11 +279,26 @@ Useful endpoints include:
 GET    /api/config/status
 POST   /api/config/zotero
 POST   /api/config/llm
+POST   /api/config/ontology-path
+GET    /api/config/saved
+POST   /api/config/saved
+POST   /api/config/saved/{id}/activate
+DELETE /api/config/saved/{id}
 POST   /api/config/test-zotero
+POST   /api/zotero/test
 POST   /api/zotero/sync
 GET    /api/zotero/entries
 GET    /api/zotero/entries/{id}
 POST   /api/zotero/import-test
+GET    /api/ontology/status
+POST   /api/ontology/scan
+POST   /api/ontology/select-file
+POST   /api/ontology/index
+GET    /api/ontology/terms
+GET    /api/ontology/terms/{term_id}
+GET    /api/ontology/search?q=...
+GET    /api/ontology/graph
+GET    /api/meta-ontology/graph
 GET    /api/literature
 POST   /api/literature
 POST   /api/extraction/candidates
@@ -150,7 +308,16 @@ PATCH  /api/candidates/{id}
 POST   /api/candidates/{id}/review
 POST   /api/candidates/{id}/ols
 POST   /api/candidates/ols
+POST   /api/candidates/{id}/match-ols
+POST   /api/candidates/{id}/match-local-ontology
+POST   /api/candidates/{id}/select-ols-match
+POST   /api/candidates/{id}/select-local-match
+POST   /api/candidates/{id}/decision
+GET    /api/candidates/rejected
+POST   /api/candidates/{id}/permanent-reject
+POST   /api/candidates/{id}/restore
 POST   /api/refine
+POST   /api/odk/workflow
 GET    /api/exports/approved.robot.tsv
 GET    /api/exports/approved.candidates.tsv
 ```
@@ -166,7 +333,16 @@ The OLS check uses `httpx` against the public EMBL-EBI OLS4 search API at `https
 - simple label-similarity confidence score
 - a `should_map_existing` recommendation
 
-Curators can select an OLS match in the browser. Selected matches are included in exports so new ontology terms are not proposed when an existing term is suitable.
+Curators can select an OLS match in the browser. `Nothing selected` is the default and remains valid; the first OLS result is never automatically selected. Selected matches are included in exports so new ontology terms are not proposed when an existing term is suitable.
+
+## Candidate Rejection
+
+Candidate Curation supports two rejection modes:
+
+- `Temporarily Reject All Visible Candidates` hides the current active queue in the browser session only. These candidates are not permanently rejected and can reappear after refresh or regeneration.
+- `Permanently Reject` persists a candidate with status `permanently_rejected`, rejection timestamp, and optional reason. Permanently rejected candidates are excluded from the active queue.
+
+The Permanently Rejected Candidates panel lists rejected records and provides a restore action so they can be curated later.
 
 ## Protégé, ROBOT, and ODK Export
 
@@ -175,13 +351,32 @@ Approved candidates can be downloaded from the browser:
 - `ROBOT TSV` downloads a ROBOT template-style TSV for ODK workflows.
 - `Candidate TSV` downloads a simpler review/export table.
 
-For an ODK-managed ontology repository, copy or move the ROBOT TSV into the configured template directory, typically:
+Exports include candidate label, definition, evidence, source document ID, selected OLS match, selected local ontology match, curator decision, and proposed parent/context when available.
 
-```text
-src/ontology/templates/ai_approved_terms.tsv
+For an ODK-managed ontology repository, the safe implementation workflow is:
+
+```powershell
+oca odk-apply-approved
+oca odk-apply-approved --no-dry-run --production
 ```
 
-Then process it with the ontology project's normal ODK/ROBOT workflow. For Protégé-oriented review, use the TSV as a curator handoff file or convert it through ROBOT into an ontology module according to the target ontology project's template conventions.
+The default command is a dry run: it plans the approved-candidate implementation and blocks validation and upload. The production command:
+
+1. selects only candidates with `approved` or `approved_with_edits` status,
+2. writes the ROBOT template under the configured PPO ODK ontology path,
+3. runs `OCA_ODK_VALIDATION_COMMAND`,
+4. stops without upload if validation fails,
+5. uploads through the configured upload mode only after validation succeeds.
+
+Rejected, deferred, new, in-review, and permanently rejected candidates are skipped. Every proposal, review decision, implementation, validation result, and upload attempt is written to `OCA_ODK_AUDIT_LOG_PATH`.
+
+The default template target is:
+
+```text
+templates/ai_approved_terms.tsv
+```
+
+For Protégé-oriented review, the downloadable TSV can still be used as a curator handoff file or converted through ROBOT into an ontology module according to the target ontology project's template conventions.
 
 ## ODK Configuration
 
@@ -219,6 +414,53 @@ oca zotero-sync --library-type group --library-id 123456 --collection COLLECTION
 ```
 
 Configure API sync with `OCA_ZOTERO_LIBRARY_TYPE`, `OCA_ZOTERO_LIBRARY_ID`, optional `OCA_ZOTERO_API_KEY`, optional `OCA_ZOTERO_COLLECTION_KEY`, and `OCA_ZOTERO_API_BASE_URL`. Sync imports metadata only; it does not download attachments or write to Zotero.
+
+Direct deposited-PDF extraction also uses:
+
+- `OCA_ZOTERO_STORAGE_DIR`: Zotero `storage` folder for imported attachments, where files are resolved as `<storage>/<attachment_key>/<filename>.pdf`.
+- `OCA_ZOTERO_LINKED_ATTACHMENT_BASE_DIR`: optional base folder for relative linked-file attachment paths.
+- `OCA_LITERATURE_REPOSITORY_PATH`: per-paper LLM-ready Markdown repository path, defaulting to `literature/papers`.
+
+For the Zotero local API, set `OCA_ZOTERO_API_BASE_URL=http://localhost:23119/api` with the relevant user or group library ID.
+
+## PPO ODK and GitHub Export Configuration
+
+Generated ontology entry artifacts can be staged under the configured PPO ODK ontology directory. The default is:
+
+```text
+C:\Users\ge47vob\ontology-development-kit\target\ppo\target\ppo\src\ontology
+```
+
+Override it with `PPO_ODK_ONTOLOGY_PATH` or `OCA_PPO_ODK_ONTOLOGY_PATH`. The path is validated before staging generated artifacts.
+
+ODK workflow settings:
+
+- `OCA_ODK_TEMPLATE_RELATIVE_PATH`, default `templates/ai_approved_terms.tsv`
+- `OCA_ODK_VALIDATION_COMMAND`, default `make test`
+- `OCA_ODK_WORKFLOW_DRY_RUN`, default `true`
+- `OCA_ODK_UPLOAD_MODE`, default `github`
+- `OCA_ODK_AUDIT_LOG_PATH`, default `logs/odk_workflow_audit.jsonl`
+
+GitHub export helpers read:
+
+- `GITHUB_TOKEN`
+- `GITHUB_REPOSITORY`, for example `owner/repo`
+- `GITHUB_BRANCH`
+- `GITHUB_BASE_PATH`, optional target folder inside the repository
+
+Run the entry-generation workflow test with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend\tests\test_entry_generation.py
+```
+
+To incorporate an existing ontology into an ODK-managed project, keep external ontologies as imports or source inputs rather than editing them directly in the project ontology. For PPO, place or reference import sources under the ODK ontology tree, configure ROBOT import/template commands and Makefile targets according to the project conventions, then run the ODK workflow validation before upload. The generated PPO build artifact should be inspected at:
+
+```text
+target/ppo/src/ontology/ppo-simple.obo
+```
+
+This file represents the ODK-built simplified ontology output after imports, templates, ROBOT commands, and Make targets have been applied. Inspect it with ROBOT, Protégé, or OBO tooling after `make`/ODK validation succeeds.
 
 ## Safety Rule
 

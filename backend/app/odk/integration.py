@@ -1,10 +1,15 @@
 from dataclasses import dataclass
 import csv
 import json
+import logging
 from pathlib import Path
 from typing import TextIO
 
+from backend.app.config import get_settings
 from backend.app.models.db import CandidateTermRecord
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -22,6 +27,39 @@ def preview_export_path(config: OdkProjectConfig) -> Path:
 def build_command_candidates() -> list[str]:
     """Project-specific ODK repos may expose different Make targets."""
     return ["make test", "make prepare_release"]
+
+
+def default_ppo_odk_ontology_path() -> Path:
+    """Return the configured PPO ODK ontology working directory."""
+    return get_settings().ppo_odk_ontology_path
+
+
+def validate_ppo_odk_ontology_path(path: Path | None = None) -> Path:
+    """Validate that the PPO ODK ontology path exists before generation work starts."""
+    target = Path(path or default_ppo_odk_ontology_path())
+    if not target.exists():
+        raise FileNotFoundError(f"PPO ODK ontology path does not exist: {target}")
+    if not target.is_dir():
+        raise NotADirectoryError(f"PPO ODK ontology path is not a directory: {target}")
+    return target
+
+
+def stage_generated_ontology_artifact(
+    relative_path: str,
+    content: str,
+    *,
+    ontology_path: Path | None = None,
+) -> Path:
+    """Write a generated ontology artifact under the configured PPO ODK ontology path."""
+    root = validate_ppo_odk_ontology_path(ontology_path)
+    output_path = (root / relative_path).resolve()
+    root_resolved = root.resolve()
+    if root_resolved not in output_path.parents and output_path != root_resolved:
+        raise ValueError("Generated ontology artifact must stay under the PPO ODK ontology path")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content, encoding="utf-8")
+    LOGGER.info("Staged generated ontology artifact at %s", output_path)
+    return output_path
 
 
 def write_robot_template(candidates: list[CandidateTermRecord], output: TextIO) -> None:

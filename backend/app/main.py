@@ -48,6 +48,6 @@ def health() -> dict[str, str]:
 
 @app.get("/{page_name}", include_in_schema=False)
 def browser_page(page_name: str) -> FileResponse:
-    if page_name not in {"config", "zotero", "literature", "ontology", "curation", "export"}:
+    if page_name not in {"config", "zotero", "literature", "ontology", "curation", "curation-prompt", "export"}:
         return FileResponse(static_dir / "index.html", status_code=404)
     return FileResponse(static_dir / "index.html")

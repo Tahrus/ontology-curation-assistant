@@ -7,7 +7,9 @@ const state = {
   ontologyFiles: [],
   ontologyTerms: [],
   savedConfigs: [],
+  curationPrompt: null,
   temporaryRejectedIds: new Set(JSON.parse(sessionStorage.getItem("oca-temp-rejected") || "[]")),
+  graphPreferences: JSON.parse(localStorage.getItem("oca-graph-preferences") || "{}"),
 };
 
 const APP_ROUTES = {
@@ -16,6 +18,7 @@ const APP_ROUTES = {
   "/zotero": "zotero",
   "/literature": "zotero",
   "/ontology": "ontology",
+  "/curation-prompt": "curation-prompt",
   "/curation": "curation",
   "/export": "export",
 };
@@ -38,6 +41,50 @@ function searchableText(value) {
   } catch {
     return normalizeText(value);
   }
+}
+
+function flattenSections(sections = []) {
+  const flattened = [];
+  (Array.isArray(sections) ? sections : []).forEach((section) => {
+    flattened.push(section);
+    flattened.push(...flattenSections(section?.subsections || []));
+  });
+  return flattened;
+}
+
+function sectionPreviewText(entry) {
+  if (entry.literature_markdown) {
+    return entry.literature_markdown.replace(/^---[\s\S]*?---\s*/m, "").slice(0, 700);
+  }
+  const content = entry.content || {};
+  const pdfText = {};
+  const sections = flattenSections(content.sections || pdfText.sections || []);
+  if (sections.length) {
+    return sections.map((section) => section.text || "").filter(Boolean).join("\n\n").slice(0, 700);
+  }
+  if (content.full_text) return safeText(content.full_text).slice(0, 700);
+  if (pdfText.text) return safeText(pdfText.text).slice(0, 700);
+  const pageText = (Array.isArray(pdfText.pages) ? pdfText.pages : [])
+    .map((page) => page?.text || "")
+    .filter(Boolean)
+    .join("\n\n");
+  return pageText ? pageText.slice(0, 700) : safeText(entry.abstract, "No extracted text available.");
+}
+
+function graphPreference(name) {
+  return {
+    showText: true,
+    showNodeLabels: true,
+    showEdgeLabels: true,
+    showDescriptions: true,
+    simplify: false,
+    ...(state.graphPreferences[name] || {}),
+  };
+}
+
+function setGraphPreference(name, key, value) {
+  state.graphPreferences[name] = { ...graphPreference(name), [key]: value };
+  localStorage.setItem("oca-graph-preferences", JSON.stringify(state.graphPreferences));
 }
 
 async function api(path, options = {}) {
@@ -64,16 +111,6 @@ function parseCsv(value) {
   return value.split(";").map((item) => item.trim()).filter(Boolean);
 }
 
-function selectedDocumentId(selector = "#document-select") {
-  const value = document.querySelector(selector).value;
-  return value ? Number(value) : null;
-}
-
-function selectedSourceId() {
-  const selected = document.querySelector(".entry-row input:checked");
-  return selected ? Number(selected.value) : null;
-}
-
 function currentPage() {
   return APP_ROUTES[window.location.pathname] || "dashboard";
 }
@@ -98,8 +135,10 @@ async function refreshCurrentPageData() {
     await loadEntries();
   } else if (page === "ontology") {
     await loadOntologyStatus();
+  } else if (page === "curation-prompt") {
+    await Promise.all([loadStatus(), loadCurationPrompt()]);
   } else if (page === "curation") {
-    await Promise.all([loadDocuments(), loadEntries(), loadCandidates()]);
+    await Promise.all([loadEntries(), loadCandidates()]);
   }
 }
 
@@ -110,7 +149,7 @@ function navigateTo(path) {
   }
   showCurrentPage();
   refreshCurrentPageData().catch((error) => {
-    document.querySelector("#app-status").textContent = error.message;
+    setAppStatus(`Could not load ${currentPage()} data: ${error.message}`, "error");
   });
   window.scrollTo({ top: 0, behavior: "auto" });
 }
@@ -130,12 +169,14 @@ function applyTheme(theme) {
 
 function setMessage(selector, message) {
   const node = document.querySelector(selector);
+  if (!node) return;
   node.textContent = message;
   node.classList.remove("success", "error");
 }
 
 function setSuccess(selector, message) {
   const node = document.querySelector(selector);
+  if (!node) return;
   node.textContent = message;
   node.classList.remove("error");
   node.classList.add("success");
@@ -143,29 +184,71 @@ function setSuccess(selector, message) {
 
 function setError(selector, message) {
   const node = document.querySelector(selector);
+  if (!node) return;
   node.textContent = message;
   node.classList.remove("success");
   node.classList.add("error");
+}
+
+function setAppStatus(message, kind = "") {
+  const node = document.querySelector("#app-status");
+  node.textContent = message;
+  node.classList.remove("success", "error");
+  if (kind) node.classList.add(kind);
+}
+
+let toastTimer = null;
+
+function showActionToast(message, kind = "") {
+  const toast = document.querySelector("#action-toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.remove("error");
+  if (kind === "error") toast.classList.add("error");
+  toast.classList.add("is-visible");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2800);
+}
+
+function actionLabel(element) {
+  const label = element?.getAttribute?.("aria-label") || element?.textContent || element?.value || "Action";
+  return safeText(label).replace(/\s+/g, " ").trim().slice(0, 80) || "Action";
+}
+
+function acknowledgeAction(element, message = null) {
+  if (!element || element.getAttribute?.("aria-disabled") === "true" || element.disabled) return;
+  element.classList?.add("is-clicked");
+  window.setTimeout(() => element.classList?.remove("is-clicked"), 260);
+  showActionToast(message || `${actionLabel(element)} selected.`);
 }
 
 async function withButtonFeedback(button, busyText, action) {
   const originalText = button.textContent;
   button.disabled = true;
   button.classList.add("is-busy");
+  button.setAttribute("aria-busy", "true");
   button.textContent = busyText;
+  showActionToast(`${busyText}...`);
   try {
-    return await action();
+    const result = await action();
+    showActionToast(`${originalText} complete.`);
+    return result;
+  } catch (error) {
+    showActionToast(`Error: ${error.message}`, "error");
+    throw error;
   } finally {
     button.textContent = originalText;
     button.classList.remove("is-busy");
+    button.removeAttribute("aria-busy");
     button.disabled = false;
   }
 }
 
 async function loadStatus() {
   state.status = await api("/api/config/status");
-  document.querySelector("#app-status").textContent =
-    `${state.status.backend.app_name} | Zotero ${state.status.zotero.configured ? "configured" : "not configured"} | LLM ${state.status.llm.configured ? "configured" : "mock only"}`;
+  setAppStatus(
+    `${state.status.backend.app_name} | Zotero ${state.status.zotero.configured ? "configured" : "not configured"} | LLM ${state.status.llm.configured ? "configured" : "mock only"}`
+  );
 
   const grid = document.querySelector("#status-grid");
   grid.innerHTML = "";
@@ -174,6 +257,7 @@ async function loadStatus() {
     ["Database", state.status.database.ok ? "Ready" : "Unavailable"],
     ["Zotero", state.status.zotero.configured ? `Ready (${state.status.zotero.library_type})` : "Missing library settings"],
     ["LLM", state.status.llm.configured ? `Ready (${state.status.llm.provider})` : "Mock extraction available"],
+    ["Zotero literature storage", state.status.literature.zotero_literature_storage_path_exists ? "Ready" : "Missing path"],
     ["Ontology", state.status.ontology.selected_file || state.status.ontology.path || "Not configured"],
   ].forEach(([label, value]) => {
     const card = document.createElement("div");
@@ -181,21 +265,24 @@ async function loadStatus() {
     card.innerHTML = `<strong>${label}</strong><span>${value}</span>`;
     grid.append(card);
   });
+  populateLiteratureConfigForm();
   await renderMetaGraph();
+}
+
+function populateLiteratureConfigForm() {
+  const form = document.querySelector("#literature-config-form");
+  if (!form || !state.status?.literature) return;
+  const literature = state.status.literature;
+  [
+    ["zotero_literature_storage_path", literature.zotero_literature_storage_path],
+  ].forEach(([name, value]) => {
+    const input = form.querySelector(`[name="${name}"]`);
+    if (input && value !== undefined && value !== null) input.value = value;
+  });
 }
 
 async function loadDocuments() {
   state.documents = await api("/api/literature");
-  ["#document-select", "#extract-document-select"].forEach((selector) => {
-    const select = document.querySelector(selector);
-    select.innerHTML = '<option value="">No document selected</option>';
-    state.documents.forEach((doc) => {
-      const option = document.createElement("option");
-      option.value = doc.id;
-      option.textContent = `${doc.id} | ${doc.filename}`;
-      select.append(option);
-    });
-  });
 }
 
 async function loadEntries() {
@@ -205,20 +292,13 @@ async function loadEntries() {
 
 function renderEntries() {
   const list = document.querySelector("#zotero-entries");
-  const sourceSelect = document.querySelector("#source-select");
   list.innerHTML = "";
-  sourceSelect.innerHTML = '<option value="">No Zotero entry selected</option>';
 
   const query = normalizeText(document.querySelector("#zotero-filter")?.value);
   state.entries.filter((entry) => {
     if (!query) return true;
     return searchableText(entry).includes(query);
   }).forEach((entry) => {
-    const option = document.createElement("option");
-    option.value = entry.id;
-    option.textContent = `${entry.id} | ${entry.title || entry.citation_key || "Untitled Zotero record"}`;
-    sourceSelect.append(option);
-
     const authors = (Array.isArray(entry.creators) ? entry.creators : [])
       .map((creator) => [creator?.given, creator?.family].filter(Boolean).map(safeText).join(" "))
       .filter(Boolean)
@@ -241,21 +321,11 @@ function renderEntries() {
       entry.provider_item_key ? `Zotero key ${entry.provider_item_key}` : "",
     ].filter(Boolean).map(safeText).join(" | ") || "No bibliographic metadata available.";
     const abstract = document.createElement("p");
-    abstract.textContent = safeText(entry.abstract, "No abstract available.");
+    abstract.textContent = sectionPreviewText(entry);
     text.append(title, meta, abstract);
 
     const actions = document.createElement("div");
     actions.className = "button-row";
-    const radioLabel = document.createElement("label");
-    radioLabel.className = "inline";
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "source-entry";
-    radio.value = entry.id;
-    radio.addEventListener("change", () => {
-      sourceSelect.value = entry.id;
-    });
-    radioLabel.append(radio, document.createTextNode(" Select"));
 
     const zoteroLink = document.createElement("a");
     zoteroLink.textContent = entry.zotero_select_uri ? "Open in Zotero" : "Zotero link unavailable";
@@ -271,20 +341,45 @@ function renderEntries() {
       });
     }
 
-    const useLink = document.createElement("a");
-    useLink.href = "/curation";
-    useLink.textContent = "Use for extraction";
-    useLink.dataset.route = "";
-    actions.append(radioLabel, zoteroLink, useLink);
+    actions.append(zoteroLink);
     header.append(text, actions);
 
     const details = document.createElement("details");
-    details.className = "json-details";
+    details.className = "markdown-details";
     const summary = document.createElement("summary");
-    summary.textContent = "Show JSON section";
+    const content = entry.content || {};
+    const pdfText = {};
+    const sectionList = flattenSections(content.sections || pdfText.sections || []);
+    const markdownText = entry.literature_markdown || sectionPreviewText(entry);
+    summary.textContent = `Show Markdown record (${sectionList.length || entry.literature_status?.section_count || 0} extracted sections)`;
+    const diagnostics = document.createElement("div");
+    diagnostics.className = "json-diagnostics";
+    diagnostics.innerHTML = "";
+    [
+      ["Markdown file", entry.literature_status?.markdown_source_file],
+      ["Extraction status", content.extraction_status || pdfText.status],
+      ["Canonical source", content.canonical_source || pdfText.source],
+      ["Structure", "Markdown sections"],
+      ["Diagnostics", content.diagnostics?.errors?.[0]?.message || pdfText.diagnostics?.error_code || pdfText.diagnostics?.message],
+    ].filter(([, value]) => value).forEach(([label, value]) => {
+      const line = document.createElement("p");
+      line.textContent = `${label}: ${safeText(value)}`;
+      diagnostics.append(line);
+    });
+    if (sectionList.length) {
+      const headingList = document.createElement("ul");
+      headingList.className = "section-heading-list";
+      sectionList.slice(0, 20).forEach((section) => {
+        const item = document.createElement("li");
+        item.textContent = `${section.heading || "Untitled section"} (${section.page_start || "?"}-${section.page_end || "?"})`;
+        headingList.append(item);
+      });
+      diagnostics.append(headingList);
+    }
     const pre = document.createElement("pre");
-    pre.textContent = JSON.stringify(entry, null, 2);
-    details.append(summary, pre);
+    pre.className = "markdown-preview";
+    pre.textContent = markdownText;
+    details.append(summary, diagnostics, pre);
 
     record.append(header, details);
     list.append(record);
@@ -312,6 +407,19 @@ async function loadCandidates() {
     list.innerHTML = '<p class="message">No active candidates need curation.</p>';
   }
   renderRejectedCandidates();
+}
+
+async function loadCurationPrompt() {
+  state.curationPrompt = await api("/api/curation/prompt");
+  const form = document.querySelector("#curation-prompt-form");
+  if (!form) return;
+  form.querySelector('[name="prompt"]').value = state.curationPrompt.prompt || "";
+  const literaturePath = state.status?.literature?.combined_output_file || "literature/combined_literature.md";
+  const ontologyPath = state.status?.ontology?.selected_file || "No existing ontology OBO selected";
+  setMessage(
+    "#curation-prompt-message",
+    `Inputs for curation: prompt template, ontology ${ontologyPath}, literature ${literaturePath}.`
+  );
 }
 
 function fillCandidate(node, candidate) {
@@ -397,10 +505,17 @@ async function permanentlyRejectCandidate(node) {
 }
 
 async function restoreCandidate(candidateId) {
-  await api(`/api/candidates/${candidateId}/restore`, { method: "POST", body: "{}" });
-  state.temporaryRejectedIds.delete(candidateId);
-  sessionStorage.setItem("oca-temp-rejected", JSON.stringify([...state.temporaryRejectedIds]));
-  await loadCandidates();
+  try {
+    await api(`/api/candidates/${candidateId}/restore`, { method: "POST", body: "{}" });
+    state.temporaryRejectedIds.delete(candidateId);
+    sessionStorage.setItem("oca-temp-rejected", JSON.stringify([...state.temporaryRejectedIds]));
+    await loadCandidates();
+    setSuccess("#ols-message", "Candidate restored to active review.");
+  } catch (error) {
+    setError("#ols-message", error.message);
+    showActionToast(`Error: ${error.message}`, "error");
+    throw error;
+  }
 }
 
 function renderRejectedCandidates() {
@@ -418,7 +533,9 @@ function renderRejectedCandidates() {
         <button type="button" class="restore">Restore to active review</button>
         <a href="/curation">Curate</a>
       </div>`;
-    row.querySelector(".restore").addEventListener("click", () => restoreCandidate(candidate.id));
+    row.querySelector(".restore").addEventListener("click", (event) =>
+      withButtonFeedback(event.currentTarget, "Restoring", () => restoreCandidate(candidate.id))
+    );
     list.append(row);
   });
   if (!state.rejectedCandidates.length) {
@@ -439,21 +556,31 @@ async function checkLocal(node) {
 }
 
 async function selectOls(candidateId, match) {
-  await api(`/api/candidates/${candidateId}/ols-selection`, {
-    method: "POST",
-    body: JSON.stringify({ match }),
-  });
-  await loadCandidates();
-  setSuccess("#ols-message", match ? "OLS mapping selected." : "Candidate marked as a new proposed term.");
+  try {
+    await api(`/api/candidates/${candidateId}/ols-selection`, {
+      method: "POST",
+      body: JSON.stringify({ match }),
+    });
+    await loadCandidates();
+    setSuccess("#ols-message", match ? "OLS mapping selected." : "Candidate marked as a new proposed term.");
+  } catch (error) {
+    setError("#ols-message", error.message);
+    showActionToast(`Error: ${error.message}`, "error");
+  }
 }
 
 async function selectLocal(candidateId, match) {
-  await api(`/api/candidates/${candidateId}/select-local-match`, {
-    method: "POST",
-    body: JSON.stringify({ match }),
-  });
-  await loadCandidates();
-  setSuccess("#ols-message", match ? "Local PPO match selected." : "No local PPO match selected.");
+  try {
+    await api(`/api/candidates/${candidateId}/select-local-match`, {
+      method: "POST",
+      body: JSON.stringify({ match }),
+    });
+    await loadCandidates();
+    setSuccess("#ols-message", match ? "Local PPO match selected." : "No local PPO match selected.");
+  } catch (error) {
+    setError("#ols-message", error.message);
+    showActionToast(`Error: ${error.message}`, "error");
+  }
 }
 
 async function markNewTerm(candidateId) {
@@ -537,43 +664,88 @@ document.querySelector("#zotero-config-form").addEventListener("submit", async (
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"]');
   const payload = formPayload(event.currentTarget);
-  await withButtonFeedback(button, "Saving", async () => {
-    await api("/api/config/zotero", {
-      method: "POST",
-      body: JSON.stringify({
-        library_type: payload.library_type,
-        library_id: payload.library_id,
-        api_key: payload.api_key || null,
-        collection_key: payload.collection_key || null,
-        base_url: payload.base_url || null,
-      }),
+  try {
+    await withButtonFeedback(button, "Saving", async () => {
+      await api("/api/config/zotero", {
+        method: "POST",
+        body: JSON.stringify({
+          library_type: payload.library_type,
+          library_id: payload.library_id,
+          api_key: payload.api_key || null,
+          collection_key: payload.collection_key || null,
+          base_url: payload.base_url || null,
+        }),
+      });
+      event.currentTarget.querySelector('[name="api_key"]').value = "";
+      await loadStatus();
+      await loadSavedConfigs();
+      setSuccess("#zotero-message", "Zotero configuration saved.");
     });
-    event.currentTarget.querySelector('[name="api_key"]').value = "";
-    await loadStatus();
-    await loadSavedConfigs();
-    setSuccess("#zotero-message", "Zotero configuration saved.");
-  });
+  } catch (error) {
+    setError("#zotero-message", error.message);
+  }
 });
 
 document.querySelector("#llm-config-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"]');
   const payload = formPayload(event.currentTarget);
-  await withButtonFeedback(button, "Saving", async () => {
-    await api("/api/config/llm", {
-      method: "POST",
-      body: JSON.stringify({
-        provider: payload.provider,
-        api_key: payload.api_key || null,
-        model: payload.model || null,
-        base_url: payload.base_url || null,
-      }),
+  try {
+    await withButtonFeedback(button, "Saving", async () => {
+      await api("/api/config/llm", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: payload.provider,
+          api_key: payload.api_key || null,
+          model: payload.model || null,
+          base_url: payload.base_url || null,
+        }),
+      });
+      event.currentTarget.querySelector('[name="api_key"]').value = "";
+      await loadStatus();
+      await loadSavedConfigs();
+      setSuccess("#extract-message", "LLM configuration saved.");
     });
-    event.currentTarget.querySelector('[name="api_key"]').value = "";
-    await loadStatus();
-    await loadSavedConfigs();
-    setSuccess("#extract-message", "LLM configuration saved.");
-  });
+  } catch (error) {
+    setError("#extract-message", error.message);
+  }
+});
+
+document.querySelector("#literature-config-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const payload = formPayload(event.currentTarget);
+  try {
+    await withButtonFeedback(button, "Saving", async () => {
+      await api("/api/config/literature", {
+        method: "POST",
+        body: JSON.stringify({
+          zotero_literature_storage_path: payload.zotero_literature_storage_path || null,
+        }),
+      });
+      await loadStatus();
+      setSuccess("#literature-config-message", "Literature pipeline configuration saved.");
+    });
+  } catch (error) {
+    setError("#literature-config-message", error.message);
+  }
+});
+
+document.querySelector("#run-literature-pipeline").addEventListener("click", async (event) => {
+  try {
+    setMessage("#literature-import-message", "Importing Zotero PDFs and generating Markdown...");
+    await withButtonFeedback(event.currentTarget, "Importing", async () => {
+      const result = await api("/api/literature/pipeline/run", { method: "POST", body: "{}" });
+      setSuccess(
+        "#literature-import-message",
+        `Import complete. Copied ${result.copied_pdf_count} PDF(s), generated ${result.converted_markdown_count} Markdown file(s), combined ${result.combined_markdown_count} literature record(s).`
+      );
+      await loadStatus();
+      await loadEntries();
+    });
+  } catch (error) {
+    setError("#literature-import-message", error.message);
+  }
 });
 
 async function loadSavedConfigs() {
@@ -592,13 +764,27 @@ async function loadSavedConfigs() {
         <button type="button" class="delete danger">Delete</button>
       </div>`;
     row.querySelector(".activate").addEventListener("click", async () => {
-      await api(`/api/config/saved/${config.id}/activate`, { method: "POST", body: "{}" });
-      await loadStatus();
-      await loadSavedConfigs();
+      try {
+        await withButtonFeedback(row.querySelector(".activate"), "Activating", async () => {
+          await api(`/api/config/saved/${config.id}/activate`, { method: "POST", body: "{}" });
+          await loadStatus();
+          await loadSavedConfigs();
+          setSuccess("#zotero-message", "Saved configuration activated.");
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
     });
     row.querySelector(".delete").addEventListener("click", async () => {
-      await api(`/api/config/saved/${config.id}`, { method: "DELETE" });
-      await loadSavedConfigs();
+      try {
+        await withButtonFeedback(row.querySelector(".delete"), "Deleting", async () => {
+          await api(`/api/config/saved/${config.id}`, { method: "DELETE" });
+          await loadSavedConfigs();
+          setSuccess("#zotero-message", "Saved configuration deleted.");
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
     });
     list.append(row);
   });
@@ -636,12 +822,21 @@ document.querySelector("#sync-zotero").addEventListener("click", async (event) =
 });
 
 async function loadOntologyStatus() {
-  const status = await api("/api/ontology/status");
-  const input = document.querySelector('#ontology-path-form [name="path"]');
-  input.value = status.path || "";
-  renderOntologyFiles(status.scan?.files || [], status.selected_file);
-  setMessage("#ontology-message", `${status.scan?.message || "Ontology status loaded."} Parsed terms: ${status.term_count}.`);
-  await loadOntologyTerms();
+  try {
+    const status = await api("/api/ontology/status");
+    const input = document.querySelector('#ontology-path-form [name="path"]');
+    input.value = status.path || "";
+    renderOntologyFiles(status.scan?.files || [], status.selected_file);
+    const statusError = status.error ? ` Selected file error: ${status.error}` : "";
+    setMessage("#ontology-message", `${status.scan?.message || "Ontology status loaded."} Parsed terms: ${status.term_count}.${statusError}`);
+    await loadOntologyTerms();
+  } catch (error) {
+    state.ontologyTerms = [];
+    document.querySelector("#ontology-terms").innerHTML = '<p class="message">Ontology terms are unavailable.</p>';
+    renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", { nodes: [], edges: [] });
+    setError("#ontology-message", `Could not load ontology data: ${error.message}`);
+    throw error;
+  }
 }
 
 function renderOntologyFiles(files, selectedFile) {
@@ -699,9 +894,34 @@ function layoutGraph(graph, width, height) {
   return { nodes, edges };
 }
 
+function renderGraphControls(name, render) {
+  const container = document.querySelector(`[data-graph-controls="${name}"]`);
+  if (!container) return graphPreference(name);
+  const prefs = graphPreference(name);
+  container.innerHTML = "";
+  [
+    ["showText", "Text labels"],
+    ["showNodeLabels", "Node labels"],
+    ["showEdgeLabels", "Edge labels"],
+    ["showDescriptions", "Descriptions"],
+    ["simplify", "Simplify"],
+  ].forEach(([key, label]) => {
+    const row = document.createElement("label");
+    row.className = "inline graph-toggle";
+    row.innerHTML = `<input type="checkbox" ${prefs[key] ? "checked" : ""} /> ${label}`;
+    row.querySelector("input").addEventListener("change", (event) => {
+      setGraphPreference(name, key, event.currentTarget.checked);
+      render();
+    });
+    container.append(row);
+  });
+  return prefs;
+}
+
 function renderKnowledgeGraph(containerSelector, detailsSelector, graph, options = {}) {
   const container = document.querySelector(containerSelector);
   const details = document.querySelector(detailsSelector);
+  const prefs = graphPreference(options.name || "graph");
   container.innerHTML = "";
   if (!graph?.nodes?.length) {
     container.innerHTML = '<p class="message">No graph data available.</p>';
@@ -709,7 +929,10 @@ function renderKnowledgeGraph(containerSelector, detailsSelector, graph, options
   }
   const width = container.clientWidth || 900;
   const height = 360;
-  const { nodes, edges } = layoutGraph(graph, width, height);
+  const graphData = prefs.simplify
+    ? { nodes: (graph.nodes || []).filter((node) => node.type !== "parent_placeholder"), edges: graph.edges || [] }
+    : graph;
+  const { nodes, edges } = layoutGraph(graphData, width, height);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -760,8 +983,10 @@ function renderKnowledgeGraph(containerSelector, detailsSelector, graph, options
     label.setAttribute("x", (source.x + target.x) / 2);
     label.setAttribute("y", (source.y + target.y) / 2);
     label.setAttribute("class", "graph-edge-label");
-    label.textContent = edge.label || "";
-    viewport.append(label);
+    if (prefs.showText && prefs.showEdgeLabels) {
+      label.textContent = edge.label || "";
+      viewport.append(label);
+    }
   });
   nodes.forEach((node) => {
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -773,10 +998,14 @@ function renderKnowledgeGraph(containerSelector, detailsSelector, graph, options
     label.setAttribute("x", "24");
     label.setAttribute("y", "4");
     label.textContent = node.label || node.id;
-    group.append(circle, label);
+    group.append(circle);
+    if (prefs.showText && prefs.showNodeLabels) {
+      group.append(label);
+    }
     group.addEventListener("click", (event) => {
       event.stopPropagation();
-      details.textContent = `Node: ${node.label || node.id} | ${node.definition || node.iri || node.type || ""}`;
+      const description = prefs.showDescriptions ? ` | ${node.definition || node.iri || node.type || ""}` : "";
+      details.textContent = `Node: ${node.label || node.id}${description}`;
     });
     viewport.append(group);
   });
@@ -785,12 +1014,14 @@ function renderKnowledgeGraph(containerSelector, detailsSelector, graph, options
 
 async function renderOntologyGraph() {
   const graph = await api("/api/ontology/graph");
-  renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", graph);
+  renderGraphControls("ontology", () => renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", graph, { name: "ontology" }));
+  renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", graph, { name: "ontology" });
 }
 
 async function renderMetaGraph() {
   const graph = await api("/api/meta-ontology/graph");
-  renderKnowledgeGraph("#meta-graph", "#meta-graph-details", graph, { meta: true });
+  renderGraphControls("meta", () => renderKnowledgeGraph("#meta-graph", "#meta-graph-details", graph, { meta: true, name: "meta" }));
+  renderKnowledgeGraph("#meta-graph", "#meta-graph-details", graph, { meta: true, name: "meta" });
 }
 
 document.querySelector("#ontology-path-form").addEventListener("submit", async (event) => {
@@ -830,52 +1061,128 @@ document.querySelector("#ontology-search").addEventListener("input", () => {
 
 document.querySelector("#zotero-filter").addEventListener("input", renderEntries);
 
+document.querySelector("#curation-prompt-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const payload = formPayload(event.currentTarget);
+  try {
+    await withButtonFeedback(button, "Saving", async () => {
+      await api("/api/curation/prompt", {
+        method: "POST",
+        body: JSON.stringify({ prompt: payload.prompt }),
+      });
+      await loadCurationPrompt();
+      setSuccess("#curation-prompt-message", "Curation prompt saved.");
+    });
+  } catch (error) {
+    setError("#curation-prompt-message", error.message);
+  }
+});
+
+document.querySelector("#reset-curation-prompt").addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Resetting", async () => {
+      await api("/api/curation/prompt", { method: "DELETE", body: "{}" });
+      await loadCurationPrompt();
+      setSuccess("#curation-prompt-message", "Curation prompt reset to the default.");
+    });
+  } catch (error) {
+    setError("#curation-prompt-message", error.message);
+  }
+});
+
+document.querySelector("#run-curation-suggestions").addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Running curation", async () => {
+      const result = await api("/api/curation/suggestions/run", { method: "POST", body: "{}" });
+      setSuccess(
+        "#curation-prompt-message",
+        `Curation complete. Suggestions: ${result.suggestion_count}; warnings: ${result.warning_count}; chunks: ${result.chunk_count}.`
+      );
+      document.querySelector("#curation-suggestion-preview").textContent = JSON.stringify(
+        {
+          response_path: result.response_path,
+          request_path: result.request_path,
+          suggestions: result.suggestions,
+          warnings: result.warnings,
+        },
+        null,
+        2
+      );
+    });
+  } catch (error) {
+    setError("#curation-prompt-message", error.message);
+  }
+});
+
+document.querySelector("#reset-literature-repository").addEventListener("click", async (event) => {
+  const confirmed = window.confirm("Reset the local LLM-ready literature repository?");
+  if (!confirmed) return;
+  try {
+    await withButtonFeedback(event.currentTarget, "Resetting", async () => {
+      const result = await api("/api/literature/repository/reset", {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      });
+      setSuccess("#literature-repository-message", result.message);
+      await loadEntries();
+    });
+  } catch (error) {
+    setError("#literature-repository-message", error.message);
+  }
+});
+
 document.querySelector("#import-test-zotero").addEventListener("click", async (event) => {
-  await withButtonFeedback(event.currentTarget, "Loading", async () => {
-    const result = await api("/api/zotero/import-test", { method: "POST", body: "{}" });
-    setSuccess("#zotero-message", `Test entries loaded. Inserted ${result.inserted}; updated ${result.updated}.`);
-    await loadEntries();
-  });
+  try {
+    await withButtonFeedback(event.currentTarget, "Loading", async () => {
+      const result = await api("/api/zotero/import-test", { method: "POST", body: "{}" });
+      setSuccess("#zotero-message", `Test entries loaded. Inserted ${result.inserted}; updated ${result.updated}.`);
+      await loadEntries();
+    });
+  } catch (error) {
+    setError("#zotero-message", error.message);
+  }
 });
 
 document.querySelector("#literature-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"]');
   const payload = formPayload(event.currentTarget);
-  await withButtonFeedback(button, "Ingesting", async () => {
-    await api("/api/literature", {
-      method: "POST",
-      body: JSON.stringify({
-        path: payload.path || null,
-        filename: payload.filename || null,
-        content: payload.content || null,
-      }),
+  try {
+    await withButtonFeedback(button, "Ingesting", async () => {
+      await api("/api/literature", {
+        method: "POST",
+        body: JSON.stringify({
+          path: payload.path || null,
+          filename: payload.filename || null,
+          content: payload.content || null,
+        }),
+      });
+      event.currentTarget.reset();
+      setSuccess("#extract-message", "Document ingested.");
     });
-    event.currentTarget.reset();
-    await loadDocuments();
-    setSuccess("#extract-message", "Document ingested.");
-  });
+  } catch (error) {
+    setError("#extract-message", error.message);
+  }
 });
 
 document.querySelector("#extract-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"]');
   const payload = formPayload(event.currentTarget);
-  const sourceId = Number(document.querySelector("#source-select").value || selectedSourceId() || 0) || null;
-  const documentId = selectedDocumentId("#extract-document-select");
   try {
     await withButtonFeedback(button, "Extracting", async () => {
       const result = await api("/api/extraction/candidates", {
         method: "POST",
         body: JSON.stringify({
-          source_id: sourceId,
-          document_id: documentId,
           guidance: payload.guidance || null,
           use_llm: Boolean(payload.use_llm),
         }),
       });
-      setSuccess("#extract-message", `${result.message} Inserted ${result.inserted}; skipped ${result.skipped}.`);
-      await loadDocuments();
+      const warning = result.literature_warnings?.length
+        ? ` Skipped ${result.literature_warnings.length} malformed literature file(s).`
+        : "";
+      setSuccess("#extract-message", `${result.message} Inserted ${result.inserted}; skipped ${result.skipped}.${warning}`);
       await loadCandidates();
     });
   } catch (error) {
@@ -891,7 +1198,6 @@ document.querySelector("#refine-form").addEventListener("submit", async (event) 
     await api("/api/refine", {
       method: "POST",
       body: JSON.stringify({
-        document_id: selectedDocumentId("#extract-document-select") || selectedDocumentId(),
         guidance: payload.guidance,
       }),
     });
@@ -906,7 +1212,6 @@ document.querySelector("#new-candidate").addEventListener("click", async (event)
     await api("/api/candidates", {
       method: "POST",
       body: JSON.stringify({
-        document_id: selectedDocumentId("#extract-document-select") || selectedDocumentId(),
         label: "New candidate",
         confidence_score: 0.5,
         evidence: [],
@@ -934,9 +1239,10 @@ document.querySelector("#ols-all").addEventListener("click", async (event) => {
   });
 });
 
-document.querySelector("#refresh-documents").addEventListener("click", loadDocuments);
-
 document.addEventListener("click", (event) => {
+  const feedbackTarget = event.target.closest("button, a, summary, label, .graph-node, .graph-hit");
+  if (feedbackTarget) acknowledgeAction(feedbackTarget);
+
   const link = event.target.closest("a");
   if (!link) return;
   const url = new URL(link.href, window.location.origin);
@@ -948,16 +1254,34 @@ document.addEventListener("click", (event) => {
 window.addEventListener("popstate", () => {
   showCurrentPage();
   refreshCurrentPageData().catch((error) => {
-    document.querySelector("#app-status").textContent = error.message;
+    setAppStatus(`Could not load ${currentPage()} data: ${error.message}`, "error");
   });
 });
 
-document.querySelector("#theme-light").addEventListener("click", () => applyTheme("light"));
-document.querySelector("#theme-dark").addEventListener("click", () => applyTheme("dark"));
+document.querySelector("#theme-light").addEventListener("click", () => {
+  applyTheme("light");
+  setAppStatus("Theme set to light.", "success");
+});
+document.querySelector("#theme-dark").addEventListener("click", () => {
+  applyTheme("dark");
+  setAppStatus("Theme set to dark.", "success");
+});
 
 applyTheme();
 showCurrentPage();
 
-Promise.all([loadStatus(), loadDocuments(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()]).catch((error) => {
-  document.querySelector("#app-status").textContent = error.message;
-});
+async function initializeWorkspace() {
+  try {
+    await loadStatus();
+  } catch (error) {
+    setAppStatus(`Workspace status unavailable: ${error.message}`, "error");
+  }
+
+  try {
+    await refreshCurrentPageData();
+  } catch (error) {
+    setAppStatus(`Could not load ${currentPage()} data: ${error.message}`, "error");
+  }
+}
+
+initializeWorkspace();

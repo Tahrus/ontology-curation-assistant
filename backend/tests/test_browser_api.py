@@ -55,16 +55,35 @@ def test_root_serves_browser_ui(client):
 
 def test_browser_subpages_serve_html(client):
     for path, marker in [
-        ("/config", "Zotero API Configuration"),
+        ("/config", "Zotero Metadata Sync"),
         ("/zotero", "Literature Records"),
         ("/literature", "Literature Records"),
         ("/ontology", "Existing PPO Ontology"),
+        ("/curation-prompt", "Ontology Curation Prompt"),
         ("/curation", "Candidate Curation"),
         ("/export", "Export / Visualization"),
     ]:
         response = client.get(path)
         assert response.status_code == 200
         assert marker in response.text
+
+
+def test_curation_prompt_api_loads_saves_and_resets_default(client):
+    loaded = client.get("/api/curation/prompt")
+    assert loaded.status_code == 200
+    assert "You are assisting ontology curation." in loaded.json()["prompt"]
+    assert loaded.json()["is_custom"] is False
+
+    saved = client.post("/api/curation/prompt", json={"prompt": "Custom curation prompt"})
+    assert saved.status_code == 200
+    assert saved.json()["prompt"] == "Custom curation prompt"
+    assert saved.json()["is_custom"] is True
+    assert client.get("/api/curation/prompt").json()["prompt"] == "Custom curation prompt"
+
+    reset = client.delete("/api/curation/prompt")
+    assert reset.status_code == 200
+    assert reset.json()["is_custom"] is False
+    assert "You are assisting ontology curation." in reset.json()["prompt"]
 
 
 def test_config_status_masks_saved_secrets(client):
@@ -106,6 +125,37 @@ def test_config_status_masks_saved_secrets(client):
         assert session.get(AppSetting, "zotero_api_key").value == "zotero-secret"
 
 
+def test_literature_pipeline_config_and_run_validation(client, tmp_path):
+    storage = tmp_path / "zotero-storage"
+    with db_session.SessionLocal() as session:
+        session.add(AppSetting(key="literature_pdf_dir", value=str(tmp_path / "stale-pdf-dir")))
+        session.add(AppSetting(key="literature_generated_md_dir", value=str(tmp_path / "stale-md-dir")))
+        session.commit()
+
+    configured = client.post(
+        "/api/config/literature",
+        json={
+            "zotero_literature_storage_path": str(storage),
+        },
+    )
+
+    assert configured.status_code == 200
+    assert configured.json()["zotero_literature_storage_path"] == str(storage)
+    status = client.get("/api/config/status").json()
+    assert status["literature"]["zotero_literature_storage_path"] == str(storage)
+    assert status["literature"]["pdf_dir"].endswith(
+        "literature\\Paper-PDF"
+    ) or status["literature"]["pdf_dir"].endswith("literature/Paper-PDF")
+    with db_session.SessionLocal() as session:
+        assert session.get(AppSetting, "literature_pdf_dir") is None
+        assert session.get(AppSetting, "literature_generated_md_dir") is None
+
+    run = client.post("/api/literature/pipeline/run", json={})
+
+    assert run.status_code == 400
+    assert "Configured Zotero literature storage path was not found" in run.json()["detail"]
+
+
 def test_saved_api_config_activate_and_delete(client):
     created = client.post(
         "/api/config/saved",
@@ -136,11 +186,9 @@ def test_create_update_review_and_export_candidate(client):
     )
     assert document_response.status_code == 200
     document_id = document_response.json()["id"]
-    literature_json = Path("literature") / "literature.json"
-    assert literature_json.exists()
-    exported = json.loads(literature_json.read_text(encoding="utf-8"))
-    assert exported["schema_version"] == "1.0"
-    assert exported["papers"][0]["full_text"] == "Preferential hydration stabilizes proteins."
+    markdown_files = list((Path("literature") / "papers").glob("*.md"))
+    assert markdown_files
+    assert "Preferential hydration stabilizes proteins." in markdown_files[0].read_text(encoding="utf-8")
 
     created = client.post(
         "/api/candidates",
@@ -233,6 +281,69 @@ def test_import_test_zotero_entries_and_mock_extract(client):
     assert document is not None
 
 
+def test_extract_candidates_uses_repository_without_picker(client):
+    repository = Path("literature") / "papers"
+    repository.mkdir(parents=True)
+    (repository / "valid.md").write_text(
+        """---
+id: "repository-paper"
+title: "Repository paper"
+doi: "10.1000/repository"
+year: 2026
+---
+
+# Repository paper
+
+## Abstract
+
+Preferential hydration is relevant.
+
+## Extracted ontology-relevant information
+
+### Introduction
+
+Preferential hydration stabilizes proteins in solution.
+""",
+        encoding="utf-8",
+    )
+    (repository / "malformed.md").write_text("# no front matter", encoding="utf-8")
+
+    extracted = client.post(
+        "/api/extraction/candidates",
+        json={"guidance": "preferential hydration", "use_llm": False},
+    )
+
+    assert extracted.status_code == 200
+    payload = extracted.json()
+    assert payload["inserted"] >= 1
+    assert len(payload["literature_warnings"]) == 1
+    with db_session.SessionLocal() as session:
+        document = session.scalar(
+            select(LiteratureDocument).where(
+                LiteratureDocument.path == "__llm_ready_literature_repository__"
+            )
+        )
+    assert document is not None
+    assert document.suffix == ".md"
+    assert "# Literature Corpus" in document.content
+    assert "Repository paper" in document.content
+    assert "10.1000/repository" in document.content
+
+
+def test_extract_candidates_empty_repository_has_controlled_message(client):
+    response = client.post("/api/extraction/candidates", json={"use_llm": False})
+
+    assert response.status_code == 400
+    assert "Import literature first" in response.json()["detail"]
+
+
+def test_odk_workflow_api_requires_production_for_non_dry_run(client):
+    response = client.post("/api/odk/workflow", json={"dry_run": False})
+
+    assert response.status_code == 400
+    assert "production=true" in response.json()["detail"]
+
+
 def test_zotero_sync_uses_saved_config_and_imports_entries(client, monkeypatch):
     class FakeZoteroClient:
         def __init__(self, config):
@@ -306,6 +417,201 @@ def test_zotero_sync_handles_incomplete_non_string_fields(client, monkeypatch):
     assert entry["zotero"]["diagnostics"] == []
 
 
+def test_zotero_entries_display_literature_markdown_sections(client):
+    from backend.app.zotero.importer import normalize_title
+
+    with db_session.SessionLocal() as session:
+        source = LiteratureSource(
+            provider="zotero",
+            provider_item_key="MARKDOWNKEY1",
+            citation_key="markdownkey",
+            title="Markdown-backed paper",
+            normalized_title=normalize_title("Markdown-backed paper"),
+            creators_json="[]",
+            year="2026",
+            doi="10.1000/markdown",
+            normalized_doi="10.1000/markdown",
+            tags_json="[]",
+            collections_json="[]",
+        )
+        session.add(source)
+        session.commit()
+
+    literature_dir = Path("literature") / "papers"
+    literature_dir.mkdir(parents=True)
+    markdown_path = literature_dir / "markdown-backed-paper.md"
+    markdown_path.write_text(
+        """---
+id: "zotero-MARKDOWNKEY1"
+title: "Markdown-backed paper"
+authors:
+  - "Curator"
+year: 2026
+doi: "10.1000/markdown"
+---
+
+# Markdown-backed paper
+
+## Abstract
+
+Abstract.
+
+## Extracted ontology-relevant information
+
+### Introduction
+
+Authoritative section text.
+""",
+        encoding="utf-8",
+    )
+
+    entry = client.get("/api/zotero/entries").json()[0]
+
+    assert entry["literature_markdown"].startswith("---")
+    assert entry["literature_metadata"]["title"] == "Markdown-backed paper"
+    assert entry["sections"][0]["heading"] == "Introduction"
+    assert entry["markdown_file"] == str(markdown_path)
+    assert entry["literature_status"]["markdown_source_file"] == str(markdown_path)
+    assert "raw_json" not in entry
+
+    extracted = client.post("/api/extraction/candidates", json={"source_id": entry["id"], "use_llm": False})
+    assert extracted.status_code == 200
+    with db_session.SessionLocal() as session:
+        document = session.scalar(select(LiteratureDocument).where(LiteratureDocument.source_id == entry["id"]))
+    assert "Authoritative section text." in document.content
+
+
+def test_repository_only_literature_markdown_entries_are_displayed(client):
+    literature_dir = Path("literature") / "papers"
+    literature_dir.mkdir(parents=True)
+    markdown_path = literature_dir / "pipeline-paper.md"
+    markdown_path.write_text(
+        """---
+id: "zotero-pdf-fixture"
+title: "Pipeline imported paper"
+source: "Zotero literature pipeline"
+imported_at: "2026-06-03T00:00:00+00:00"
+---
+
+# Pipeline imported paper
+
+## LLM-ready full-text Markdown
+
+Preferential hydration imported from a copied PDF.
+""",
+        encoding="utf-8",
+    )
+
+    entries = client.get("/api/zotero/entries")
+
+    assert entries.status_code == 200
+    entry = entries.json()[0]
+    assert entry["provider"] == "markdown_repository"
+    assert entry["title"] == "Pipeline imported paper"
+    assert entry["markdown_file"] == str(markdown_path)
+    assert entry["literature_status"]["markdown_source_file"] == str(markdown_path)
+    assert "Preferential hydration imported" in entry["literature_markdown"]
+
+
+def test_api_literature_pipeline_import_displays_processed_markdown_entry(client, tmp_path):
+    import fitz  # type: ignore[import-untyped]
+
+    attachment_dir = tmp_path / "zotero-storage" / "ITEM WITH SPACES"
+    attachment_dir.mkdir(parents=True)
+    pdf_path = attachment_dir / "Protein Import.pdf"
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text(
+        (72, 72),
+        "Protein Import\nAbstract\nPreferential hydration imported from Zotero.\n1. Introduction\nPipeline text.",
+    )
+    document.save(pdf_path)
+    document.close()
+
+    configured = client.post(
+        "/api/config/literature",
+        json={"zotero_literature_storage_path": str(tmp_path / "zotero-storage")},
+    )
+    run = client.post("/api/literature/pipeline/run", json={})
+    entries = client.get("/api/zotero/entries")
+
+    assert configured.status_code == 200
+    assert run.status_code == 200
+    assert run.json()["copied_pdf_count"] == 1
+    assert run.json()["converted_markdown_count"] == 1
+    assert Path(run.json()["combined_output_file"]).exists()
+    copied = list((Path("literature") / "Paper-PDF").glob("*.pdf"))
+    generated = list((Path("literature") / "Markdown").glob("*.md"))
+    papers = list((Path("literature") / "papers").glob("*.md"))
+    assert copied and copied[0].name == "Protein Import.pdf"
+    assert generated
+    assert papers
+    assert entries.status_code == 200
+    entry = entries.json()[0]
+    assert entry["title"]
+    assert entry["markdown_file"] == str(papers[0])
+    assert "Preferential hydration imported" in entry["literature_markdown"]
+    assert not (Path("literature") / "literature.json").exists()
+
+
+def test_missing_markdown_record_falls_back_to_source_metadata_for_entries_and_extraction(client):
+    from backend.app.zotero.importer import normalize_title
+
+    with db_session.SessionLocal() as session:
+        source = LiteratureSource(
+            provider="zotero",
+            provider_item_key="NOMARKDOWN",
+            citation_key="nomarkdown",
+            title="Fallback source paper",
+            normalized_title=normalize_title("Fallback source paper"),
+            creators_json=json.dumps([{"given": "Ada", "family": "Curator"}]),
+            year="2026",
+            doi="10.1000/fallback",
+            normalized_doi="10.1000/fallback",
+            abstract="Preferential hydration fallback evidence.",
+            tags_json="[]",
+            collections_json="[]",
+        )
+        session.add(source)
+        session.commit()
+        source_id = source.id
+
+    entries = client.get("/api/zotero/entries")
+    extracted = client.post("/api/extraction/candidates", json={"source_id": source_id, "use_llm": False})
+
+    assert entries.status_code == 200
+    entry = entries.json()[0]
+    assert entry["title"] == "Fallback source paper"
+    assert entry["literature_status"]["has_markdown"] is False
+    assert entry["literature_status"]["markdown_source_file"] is None
+    assert "raw_json" not in entry
+    assert extracted.status_code == 200
+    assert extracted.json()["inserted"] >= 1
+
+
+def test_literature_repository_reset_removes_markdown_and_stored_literature(client):
+    created = client.post(
+        "/api/literature",
+        json={"filename": "reset-note.txt", "content": "Fresh markdown literature."},
+    )
+    assert created.status_code == 200
+    repository = Path("literature") / "papers"
+    assert list(repository.glob("*.md"))
+
+    reset = client.post("/api/literature/repository/reset", json={"confirm": True})
+
+    assert reset.status_code == 200
+    assert list(repository.glob("*.md")) == []
+    assert client.get("/api/literature").json() == []
+
+    fresh = client.post(
+        "/api/literature",
+        json={"filename": "fresh-note.txt", "content": "New repository content."},
+    )
+    assert fresh.status_code == 200
+    assert len(list(repository.glob("*.md"))) == 1
+
+
 def test_zotero_sync_accepts_optional_test_limit(client, monkeypatch):
     class FakeZoteroClient:
         def __init__(self, config):
@@ -333,13 +639,13 @@ def test_static_javascript_uses_safe_normalization():
     assert ".toLowerCase()" in script
 
 
-def test_static_ui_has_current_routes_theme_and_literature_json_controls():
+def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_controls():
     static_dir = Path(__file__).parents[1] / "app" / "static"
     html = (static_dir / "index.html").read_text(encoding="utf-8")
     script = (static_dir / "app.js").read_text(encoding="utf-8")
     styles = (static_dir / "styles.css").read_text(encoding="utf-8")
 
-    for route in ["/config", "/zotero", "/ontology", "/curation", "/export"]:
+    for route in ["/config", "/zotero", "/ontology", "/curation-prompt", "/curation", "/export"]:
         assert f'href="{route}"' in html
     assert 'class="logo"' in html
     assert "/static/app.js?v=" in html
@@ -348,12 +654,56 @@ def test_static_ui_has_current_routes_theme_and_literature_json_controls():
     assert "width: 224px" in styles
     assert "height: 68px" in styles
     assert "APP_ROUTES" in script
+    assert "curation-prompt" in script
+    assert "Ontology Curation Prompt" in html
+    assert "/api/curation/prompt" in script
+    assert "/api/curation/suggestions/run" in script
+    assert "combined_literature.md" in html
+    assert "selected existing ontology OBO" in html
     assert "ACTIVE_CANDIDATE_STATUSES" in script
     assert "No active candidates need curation." in script
     assert "history.pushState" in script
     assert "localStorage.setItem(\"oca-theme\"" in script
-    assert "Show JSON section" in script
+    assert "Show Markdown record" in script
+    assert "literature-config-form" in html
+    pipeline_section = html.split('id="literature-pipeline-config-section"', 1)[1].split('id="saved-config-section"', 1)[0]
+    assert 'name="zotero_literature_storage_path"' in pipeline_section
+    for removed_field in [
+        'name="base_dir"',
+        'name="pdf_dir"',
+        'name="generated_md_dir"',
+        'name="papers_dir"',
+        'name="combined_output_file"',
+        'name="fuzzy_min_score"',
+    ]:
+        assert removed_field not in pipeline_section
+    assert "Import Zotero PDFs" in pipeline_section
+    assert 'id="run-literature-pipeline"' in html
+    assert 'aria-live="polite"' in html
+    assert 'role="status"' in html
+    assert "zotero_literature_storage_path" in script
+    assert "/api/literature/pipeline/run" in script
+    assert "Importing Zotero PDFs and generating Markdown" in script
+    assert "button.disabled = true" in script
+    assert "aria-busy" in script
+    assert "action-toast" in html
+    assert "showActionToast" in script
+    assert "acknowledgeAction" in script
+    assert "is-clicked" in styles
+    assert "Error:" in script
+    assert "complete." in script
+    assert "copied_pdf_count" in script
+    assert "data-graph-controls" in html
+    assert "oca-graph-preferences" in script
+    assert "flattenSections" in script
+    assert "Extraction status" in script
+    assert "literature_markdown" in script
     assert "Open in Zotero" in script
+    assert "initializeWorkspace" in script
+    assert "Workspace status unavailable" in script
+    assert "Could not load ontology data" in script
+    assert "Promise.all([loadStatus(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()])" not in script
+    assert "20260602-md" in html
 
 
 def test_parse_ols_response_scores_and_flags_match():
@@ -488,6 +838,24 @@ def test_ontology_folder_scan_and_turtle_index(client, tmp_path):
     assert search.json()[0]["label"] == "preferential hydration"
 
 
+def test_bad_selected_ontology_file_returns_controlled_error(client, tmp_path):
+    ontology_dir = tmp_path / "ppo"
+    ontology_dir.mkdir()
+    ontology_file = ontology_dir / "bad_import.owl"
+    ontology_file.write_text("not rdf/xml", encoding="utf-8")
+    client.post("/api/config/ontology-path", json={"path": str(ontology_dir)})
+    selected = client.post("/api/ontology/select-file", json={"path": str(ontology_file)})
+
+    status = client.get("/api/ontology/status")
+    terms = client.get("/api/ontology/terms")
+
+    assert selected.status_code == 200
+    assert status.status_code == 200
+    assert status.json()["error"]
+    assert terms.status_code == 400
+    assert "Could not load ontology terms" in terms.json()["detail"]
+
+
 def test_ontology_and_meta_graph_endpoints(client, tmp_path):
     ontology_dir = tmp_path / "ppo"
     ontology_dir.mkdir()
@@ -584,3 +952,58 @@ def test_permanent_rejection_excludes_active_queue_and_can_restore(client):
     assert all(candidate["id"] != candidate_id for candidate in active)
     assert rejected_list[0]["rejection_reason"] == "duplicate"
     assert restored.json()["review_status"] == "in_review"
+
+
+def test_api_zotero_sync_triggers_pipeline_automatically(client, monkeypatch, tmp_path):
+    class FakeZoteroClient:
+        def __init__(self, config):
+            pass
+
+        def fetch_items(self, *, collection_key=None, limit=None):
+            return [
+                {
+                    "key": "LIVEKEY",
+                    "data": {
+                        "itemType": "journalArticle",
+                        "title": "Live Zotero test record",
+                        "date": "2026",
+                        "abstractNote": "Preferential interaction source text.",
+                    },
+                }
+            ]
+
+    import backend.app.api.routes as routes
+
+    monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
+    client.post(
+        "/api/config/zotero",
+        json={"library_type": "group", "library_id": "999", "api_key": "secret"},
+    )
+    client.post(
+        "/api/config/literature",
+        json={"zotero_literature_storage_path": str(tmp_path / "storage")},
+    )
+
+    calls = []
+
+    def fake_run(config):
+        calls.append(config)
+        from backend.app.literature.pipeline import LiteraturePipelineResult
+        return LiteraturePipelineResult(
+            combined_output_file=tmp_path / "combined.md",
+            copied_pdf_count=5,
+            converted_markdown_count=5,
+            failed_pdf_count=0,
+            created_paper_markdown_count=5,
+            structured_markdown_count=5,
+            combined_markdown_count=5,
+        )
+
+    (tmp_path / "storage").mkdir()
+    monkeypatch.setattr(routes, "run_literature_pipeline", fake_run)
+
+    synced = client.post("/api/zotero/sync", json={})
+
+    assert synced.status_code == 200
+    assert len(calls) == 1
+    assert calls[0].zotero_literature_storage_path == tmp_path / "storage"

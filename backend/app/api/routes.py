@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,23 +11,45 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.app.audit.logging import write_audit_event
 from backend.app.config import get_settings
 from backend.app.db.session import get_session
 from backend.app.extraction.prompts import build_candidate_extraction_prompt
 from backend.app.extraction.service import build_candidate_id, normalize_label, persist_candidates
+from backend.app.llm.curation import (
+    CURATION_PROMPT_SETTING_KEY,
+    DEFAULT_CURATION_PROMPT,
+    CurationInputError,
+    CurationResponseError,
+    run_curation_suggestion_workflow,
+)
 from backend.app.llm.service import LlmUnavailableError, extract_candidates_with_optional_llm
 from backend.app.literature.exporter import (
-    export_literature_json,
+    refresh_literature_markdown_repository,
     is_valid_zotero_item_key,
     zotero_select_uri,
 )
+from backend.app.literature.pipeline import run_literature_pipeline
+from backend.app.literature.repository import (
+    load_llm_ready_repository_with_diagnostics,
+    literature_context_for_entry_generation,
+    repository_status,
+    reset_literature_repository,
+)
 from backend.app.models.core import ReviewStatus
-from backend.app.models.db import AppSetting, CandidateTermRecord, LiteratureDocument, LiteratureSource
+from backend.app.models.db import (
+    AppSetting,
+    CandidateTermRecord,
+    ExtractionRun,
+    LiteratureDocument,
+    LiteratureSource,
+)
 from backend.app.odk.integration import write_candidate_tsv, write_robot_template
+from backend.app.odk.workflow import config_from_settings, run_approved_candidate_workflow
 from backend.app.ontology.local import (
     index_ontology_file,
     match_local_terms,
@@ -37,6 +60,8 @@ from backend.app.ontology.ols import OlsLookupService
 from backend.app.services.runtime_config import (
     config_status,
     display_value,
+    literature_pipeline_config,
+    literature_config,
     llm_config,
     set_runtime_values,
     zotero_config,
@@ -46,6 +71,7 @@ from backend.app.zotero.importer import ParsedSource, import_parsed_sources, par
 
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 
 class BrowserSetting(BaseModel):
@@ -101,6 +127,18 @@ class LiteratureCreate(BaseModel):
     path: str | None = None
     filename: str | None = None
     content: str | None = None
+
+
+class LiteratureResetPayload(BaseModel):
+    confirm: bool = False
+
+
+class LiteraturePipelineConfigPayload(BaseModel):
+    zotero_literature_storage_path: str | None = None
+
+
+class CurationPromptPayload(BaseModel):
+    prompt: str = Field(min_length=1)
 
 
 class CandidateCreate(BaseModel):
@@ -167,6 +205,12 @@ class CandidateDecisionPayload(BaseModel):
     ]
 
 
+class OdkWorkflowPayload(BaseModel):
+    dry_run: bool = True
+    production: bool = False
+    suggestion_file: str | None = None
+
+
 def _json_loads(value: str | None, default: Any) -> Any:
     if not value:
         return default
@@ -228,6 +272,28 @@ def _get_or_create_manual_document(session: Session) -> LiteratureDocument:
     return document
 
 
+def _get_or_create_repository_document(session: Session, content: str) -> LiteratureDocument:
+    document = session.scalar(
+        select(LiteratureDocument).where(LiteratureDocument.path == "__llm_ready_literature_repository__")
+    )
+    if document is None:
+        document = LiteratureDocument(
+            path="__llm_ready_literature_repository__",
+            filename="LLM-ready literature Markdown corpus",
+            suffix=".md",
+            size_bytes=len(content.encode("utf-8")),
+            content=content,
+        )
+        session.add(document)
+        session.flush()
+        return document
+
+    document.content = content
+    document.size_bytes = len(content.encode("utf-8"))
+    session.flush()
+    return document
+
+
 def _get_candidate(session: Session, candidate_id: int) -> CandidateTermRecord:
     candidate = session.get(CandidateTermRecord, candidate_id)
     if candidate is None:
@@ -244,6 +310,11 @@ def _configured_ontology_path(session: Session) -> Path:
 def _selected_ontology_file(session: Session) -> Path | None:
     setting = session.get(AppSetting, "local_ontology_file")
     return Path(setting.value) if setting is not None and setting.value else None
+
+
+def _curation_prompt(session: Session) -> str:
+    setting = session.get(AppSetting, CURATION_PROMPT_SETTING_KEY)
+    return setting.value if setting is not None and setting.value else DEFAULT_CURATION_PROMPT
 
 
 def _preferred_ontology_file(files: list[dict[str, Any]]) -> Path | None:
@@ -375,13 +446,17 @@ def _document_from_source(session: Session, source: LiteratureSource) -> Literat
     if document is not None:
         return document
 
+    markdown_paper = _repository_markdown_for_source(source)
     creators = _json_loads(source.creators_json, [])
     creator_text = "; ".join(
         " ".join(filter(None, [creator.get("given"), creator.get("family")]))
         for creator in creators
         if isinstance(creator, dict)
     )
-    content = "\n\n".join(
+    markdown_text = None
+    if markdown_paper is not None:
+        markdown_text = markdown_paper.get("markdown")
+    content = markdown_text or "\n\n".join(
         filter(
             None,
             [
@@ -404,6 +479,28 @@ def _document_from_source(session: Session, source: LiteratureSource) -> Literat
     session.add(document)
     session.flush()
     return document
+
+
+def _clear_stored_literature(session: Session) -> None:
+    """Clear literature storage rows and dependent extraction state after repository reset."""
+    session.execute(delete(CandidateTermRecord))
+    session.execute(delete(ExtractionRun))
+    session.execute(delete(LiteratureDocument))
+    session.execute(delete(LiteratureSource))
+    session.commit()
+
+
+def _repository_markdown_for_source(source: LiteratureSource) -> dict[str, Any] | None:
+    result = load_llm_ready_repository_with_diagnostics()
+    for paper in result.papers:
+        metadata = paper.get("metadata") or {}
+        if source.doi and str(metadata.get("doi") or paper.get("doi") or "").casefold() == source.doi.casefold():
+            return paper
+        if source.title and str(metadata.get("title") or paper.get("title") or "").casefold() == source.title.casefold():
+            return paper
+        if source.provider_item_key and source.provider_item_key.casefold() in str(metadata.get("id") or paper.get("id") or "").casefold():
+            return paper
+    return None
 
 
 @router.get("/config")
@@ -493,6 +590,48 @@ def save_llm_config(
     return config_status(session)["llm"]
 
 
+@router.get("/curation/prompt")
+def read_curation_prompt(session: Session = Depends(get_session)) -> dict[str, Any]:
+    setting = session.get(AppSetting, CURATION_PROMPT_SETTING_KEY)
+    prompt = setting.value if setting is not None and setting.value else DEFAULT_CURATION_PROMPT
+    return {
+        "prompt": prompt,
+        "default_prompt": DEFAULT_CURATION_PROMPT,
+        "is_custom": bool(setting is not None and setting.value),
+        "inputs": [
+            "saved editable curation prompt",
+            "selected existing ontology .obo file",
+            "combined_literature.md",
+        ],
+    }
+
+
+@router.post("/curation/prompt")
+def save_curation_prompt(
+    payload: CurationPromptPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    set_runtime_values(session, {CURATION_PROMPT_SETTING_KEY: payload.prompt})
+    return {
+        "prompt": payload.prompt,
+        "default_prompt": DEFAULT_CURATION_PROMPT,
+        "is_custom": payload.prompt != DEFAULT_CURATION_PROMPT,
+    }
+
+
+@router.delete("/curation/prompt")
+def reset_curation_prompt(session: Session = Depends(get_session)) -> dict[str, Any]:
+    setting = session.get(AppSetting, CURATION_PROMPT_SETTING_KEY)
+    if setting is not None:
+        session.delete(setting)
+        session.commit()
+    return {
+        "prompt": DEFAULT_CURATION_PROMPT,
+        "default_prompt": DEFAULT_CURATION_PROMPT,
+        "is_custom": False,
+    }
+
+
 @router.get("/config/saved")
 def list_saved_api_configs(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
     active_ids = {
@@ -570,6 +709,29 @@ def save_ontology_path(
     return config_status(session)["ontology"]
 
 
+@router.post("/config/literature")
+def save_literature_config(
+    payload: LiteraturePipelineConfigPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    values: dict[str, str | None] = {}
+    if payload.zotero_literature_storage_path is not None:
+        values["zotero_literature_storage_path"] = payload.zotero_literature_storage_path
+    hidden_path_overrides = [
+        "literature_base_dir",
+        "literature_pdf_dir",
+        "literature_generated_md_dir",
+        "literature_repository_path",
+        "literature_combined_output_file",
+        "literature_fuzzy_min_score",
+    ]
+    session.execute(delete(AppSetting).where(AppSetting.key.in_(hidden_path_overrides)))
+    session.commit()
+    set_runtime_values(session, values)
+    literature = config_status(session)["literature"]
+    return literature
+
+
 @router.post("/config/test-zotero")
 def test_zotero_config(session: Session = Depends(get_session)) -> dict[str, object]:
     config = zotero_config(session)
@@ -636,8 +798,53 @@ def create_literature(payload: LiteratureCreate, session: Session = Depends(get_
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="Literature document already exists") from exc
-    export_literature_json(session)
+    refresh_literature_markdown_repository(session)
     return {"id": document.id, "filename": document.filename}
+
+
+@router.get("/literature/repository/status")
+def literature_repository_status() -> dict[str, Any]:
+    return repository_status()
+
+
+@router.post("/literature/repository/reset")
+def reset_literature_repository_action(
+    payload: LiteratureResetPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required to reset literature.")
+    result = reset_literature_repository()
+    if not result.ok:
+        raise HTTPException(status_code=500, detail=result.message)
+    _clear_stored_literature(session)
+    return {
+        "ok": result.ok,
+        "path": str(result.path),
+        "deleted": result.deleted,
+        "message": result.message,
+    }
+
+
+@router.post("/literature/pipeline/run")
+def run_literature_pipeline_action(session: Session = Depends(get_session)) -> dict[str, Any]:
+    config = literature_pipeline_config(session)
+    try:
+        result = run_literature_pipeline(config)
+    except (FileNotFoundError, ImportError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "combined_output_file": str(result.combined_output_file),
+        "combined_output_exists": result.combined_output_file.exists(),
+        "copied_pdf_count": result.copied_pdf_count,
+        "converted_markdown_count": result.converted_markdown_count,
+        "failed_pdf_count": result.failed_pdf_count,
+        "created_paper_markdown_count": result.created_paper_markdown_count,
+        "structured_markdown_count": result.structured_markdown_count,
+        "combined_markdown_count": result.combined_markdown_count,
+        "repository_status": repository_status(config.papers_dir),
+    }
 
 
 def _zotero_link_payload(source: LiteratureSource, session: Session) -> dict[str, Any]:
@@ -721,39 +928,91 @@ def _source_text_payload(source: LiteratureSource, session: Session) -> dict[str
 def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any]:
     text_payload = _source_text_payload(source, session)
     zotero = _zotero_link_payload(source, session)
+    markdown_paper = _repository_markdown_for_source(source)
+    markdown_metadata = (markdown_paper or {}).get("metadata") or {}
+    markdown_file = (markdown_paper or {}).get("source_file")
+    content = {
+        "sections": (markdown_paper or {}).get("sections") or text_payload["sections"],
+        "canonical_source": "markdown_repository" if markdown_paper else "database_metadata",
+    }
     return {
         "id": source.id,
         "provider": source.provider,
         "provider_item_key": source.provider_item_key,
         "citation_key": source.citation_key,
-        "title": source.title,
+        "title": markdown_metadata.get("title") or source.title,
         "creators": _json_loads(source.creators_json, []),
-        "year": source.year,
-        "doi": source.doi,
-        "url": source.url,
-        "abstract": source.abstract,
+        "authors": markdown_metadata.get("authors") or [],
+        "year": markdown_metadata.get("year") or source.year,
+        "doi": markdown_metadata.get("doi") or source.doi,
+        "url": markdown_metadata.get("url") or source.url,
+        "abstract": (markdown_paper or {}).get("abstract") or source.abstract,
         "tags": _json_loads(source.tags_json, []),
         "collections": _json_loads(source.collections_json, []),
         "item_type": source.item_type,
         "publication_venue": source.item_type,
         "zotero": zotero,
-        "zotero_select_uri": zotero["uri"],
+        "zotero_select_uri": zotero.get("uri"),
         "synced_at": source.synced_at.isoformat() if source.synced_at else None,
-        "full_text": text_payload["full_text"],
-        "sections": text_payload["sections"],
+        "full_text": (markdown_paper or {}).get("markdown") or text_payload["full_text"],
+        "sections": content["sections"],
+        "content": content,
+        "content_preview": (markdown_paper or {}).get("markdown") or text_payload["full_text"],
         "attachments": text_payload["attachments"],
         "source_file": text_payload["source_file"],
         "quality_flags": text_payload["quality_flags"],
-        "raw_json": {
-            "provider": source.provider,
-            "provider_item_key": source.provider_item_key,
-            "citation_key": source.citation_key,
-            "zotero_version": source.zotero_version,
-            "item_type": source.item_type,
-            "tags": _json_loads(source.tags_json, []),
-            "collections": _json_loads(source.collections_json, []),
-            "url": source.url,
-            "synced_at": source.synced_at.isoformat() if source.synced_at else None,
+        "markdown_file": markdown_file,
+        "literature_markdown": (markdown_paper or {}).get("markdown"),
+        "literature_metadata": markdown_metadata or None,
+        "literature_status": {
+            "markdown_source_file": markdown_file,
+            "section_count": len(content["sections"] or []),
+            "has_markdown": markdown_paper is not None,
+        },
+    }
+
+
+def _repository_paper_payload(paper: dict[str, Any], index: int) -> dict[str, Any]:
+    metadata = paper.get("metadata") or {}
+    markdown_file = paper.get("source_file")
+    sections = paper.get("sections") or []
+    title = metadata.get("title") or paper.get("title") or Path(str(markdown_file or "")).stem
+    return {
+        "id": f"markdown-{index}",
+        "provider": "markdown_repository",
+        "provider_item_key": None,
+        "citation_key": None,
+        "title": title,
+        "creators": [],
+        "authors": metadata.get("authors") or [],
+        "year": metadata.get("year") or paper.get("year"),
+        "doi": metadata.get("doi") or paper.get("doi"),
+        "url": metadata.get("url") or paper.get("url"),
+        "abstract": paper.get("abstract"),
+        "tags": [],
+        "collections": [],
+        "item_type": "markdown",
+        "publication_venue": "Markdown repository",
+        "zotero": {"item_key": None, "uri": None, "library_id": None, "diagnostics": ["repository_only"]},
+        "zotero_select_uri": None,
+        "synced_at": None,
+        "full_text": paper.get("markdown"),
+        "sections": sections,
+        "content": {
+            "sections": sections,
+            "canonical_source": "markdown_repository",
+        },
+        "content_preview": paper.get("markdown"),
+        "attachments": [],
+        "source_file": markdown_file,
+        "quality_flags": [],
+        "markdown_file": markdown_file,
+        "literature_markdown": paper.get("markdown"),
+        "literature_metadata": metadata or None,
+        "literature_status": {
+            "markdown_source_file": markdown_file,
+            "section_count": len(sections),
+            "has_markdown": True,
         },
     }
 
@@ -765,7 +1024,18 @@ def list_zotero_entries(session: Session = Depends(get_session)) -> list[dict[st
         .where(LiteratureSource.provider == "zotero")
         .order_by(LiteratureSource.id)
     ).all()
-    return [_source_payload(source, session) for source in sources]
+    entries = [_source_payload(source, session) for source in sources]
+    matched_markdown_files = {
+        entry["markdown_file"]
+        for entry in entries
+        if entry.get("markdown_file")
+    }
+    repository_result = load_llm_ready_repository_with_diagnostics()
+    for index, paper in enumerate(repository_result.papers, start=1):
+        if paper.get("source_file") in matched_markdown_files:
+            continue
+        entries.append(_repository_paper_payload(paper, index))
+    return entries
 
 
 @router.get("/zotero/entries/{source_id}")
@@ -813,7 +1083,16 @@ def sync_zotero(
     except Exception as exc:
         session.rollback()
         raise HTTPException(status_code=400, detail=f"Zotero sync import failed: {exc}") from exc
-    export_literature_json(session)
+    refresh_literature_markdown_repository(session)
+
+    pipeline_config = literature_pipeline_config(session)
+    try:
+        run_literature_pipeline(pipeline_config)
+    except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
+        logger.warning(f"Zotero PDF pipeline skipped during sync: {exc}")
+    except Exception as exc:
+        logger.error(f"Zotero PDF pipeline failed during sync: {exc}")
+
     return {
         "fetched": len(items),
         "inserted": result.inserted,
@@ -854,7 +1133,7 @@ def import_test_zotero_entries(session: Session = Depends(get_session)) -> dict[
         ),
     ]
     result = import_parsed_sources(session, sources, synced=False)
-    export_literature_json(session)
+    refresh_literature_markdown_repository(session)
     return {"inserted": result.inserted, "updated": result.updated, "skipped": result.skipped}
 
 
@@ -922,7 +1201,10 @@ def ontology_terms(
     limit: int = 50,
     session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    terms = _indexed_terms(session)
+    try:
+        terms = _indexed_terms(session)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not load ontology terms: {exc}") from exc
     selected = search_terms(terms, q, limit=limit) if q else terms[:limit]
     return [term.to_dict() for term in selected]
 
@@ -933,7 +1215,11 @@ def ontology_search(
     limit: int = 50,
     session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    return [term.to_dict() for term in search_terms(_indexed_terms(session), q, limit=limit)]
+    try:
+        terms = _indexed_terms(session)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not search ontology terms: {exc}") from exc
+    return [term.to_dict() for term in search_terms(terms, q, limit=limit)]
 
 
 @router.get("/ontology/terms/{term_id}")
@@ -1002,6 +1288,7 @@ def extract_candidates(
     payload: ExtractionRequest,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    repository_skipped_files: list[dict[str, str]] = []
     if payload.document_id is not None:
         document = session.get(LiteratureDocument, payload.document_id)
     elif payload.source_id is not None:
@@ -1010,7 +1297,17 @@ def extract_candidates(
             raise HTTPException(status_code=404, detail="Zotero entry not found")
         document = _document_from_source(session, source)
     else:
-        raise HTTPException(status_code=400, detail="Select a Zotero entry or literature document")
+        text, repository_result = literature_context_for_entry_generation()
+        if not repository_result.papers:
+            detail = "No valid literature Markdown files are available. Import literature first."
+            if repository_result.skipped_files:
+                detail = (
+                    "No valid literature Markdown files are available. Import literature first "
+                    "or repair malformed repository Markdown files."
+                )
+            raise HTTPException(status_code=400, detail=detail)
+        repository_skipped_files = repository_result.skipped_files
+        document = _get_or_create_repository_document(session, text)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Literature document not found")
@@ -1050,7 +1347,39 @@ def extract_candidates(
         "skipped": skipped,
         "used_llm": result.used_llm,
         "message": result.message,
+        "literature_warnings": repository_skipped_files,
         "candidates": [_candidate_payload(candidate) for candidate in candidates],
+    }
+
+
+@router.post("/curation/suggestions/run")
+def run_curation_suggestions(session: Session = Depends(get_session)) -> dict[str, Any]:
+    lit_config = literature_config(session)
+    try:
+        result = run_curation_suggestion_workflow(
+            prompt=_curation_prompt(session),
+            ontology_path=_selected_ontology_file(session),
+            literature_path=lit_config.combined_output_file,
+            config=llm_config(session),
+        )
+    except (CurationInputError, CurationResponseError, LlmUnavailableError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ontology curation LLM request failed: {exc}") from exc
+
+    return {
+        "ok": result.ok,
+        "message": result.message,
+        "output_dir": str(result.output_dir),
+        "request_path": str(result.request_path),
+        "response_path": str(result.response_path) if result.response_path else None,
+        "raw_response_path": str(result.raw_response_path) if result.raw_response_path else None,
+        "suggestion_count": result.suggestion_count,
+        "warning_count": result.warning_count,
+        "chunk_count": result.chunk_count,
+        "oversized": result.oversized,
+        "suggestions": result.payload.get("suggestions", []),
+        "warnings": result.payload.get("warnings", []),
     }
 
 
@@ -1112,6 +1441,17 @@ def create_candidate(payload: CandidateCreate, session: Session = Depends(get_se
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="Candidate already exists for this document") from exc
+    write_audit_event(
+        "candidate_proposed",
+        entity_type="candidate",
+        entity_id=candidate.candidate_id,
+        details={
+            "document_id": candidate.document_id,
+            "label": candidate.label,
+            "review_status": candidate.review_status,
+            "source": "manual",
+        },
+    )
     return _candidate_payload(candidate)
 
 
@@ -1158,6 +1498,12 @@ def update_candidate(
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="Candidate label conflicts in this document") from exc
+    write_audit_event(
+        "candidate_modified",
+        entity_type="candidate",
+        entity_id=candidate.candidate_id,
+        details={"updates": sorted(updates), "review_status": candidate.review_status},
+    )
     return _candidate_payload(candidate)
 
 
@@ -1172,6 +1518,12 @@ def review_candidate(
     if payload.rationale is not None:
         candidate.curator_rationale = payload.rationale
     session.commit()
+    write_audit_event(
+        "candidate_reviewed",
+        entity_type="candidate",
+        entity_id=candidate.candidate_id,
+        details={"review_status": candidate.review_status, "rationale": payload.rationale},
+    )
     return _candidate_payload(candidate)
 
 
@@ -1267,6 +1619,12 @@ def set_candidate_decision(
     if payload.decision == "rejected":
         candidate.review_status = ReviewStatus.REJECTED.value
     session.commit()
+    write_audit_event(
+        "candidate_decision_set",
+        entity_type="candidate",
+        entity_id=candidate.candidate_id,
+        details={"curator_decision": candidate.curator_decision, "review_status": candidate.review_status},
+    )
     return _candidate_payload(candidate)
 
 
@@ -1289,6 +1647,12 @@ def permanently_reject_candidate(
     candidate.rejection_reason = payload.reason
     candidate.permanently_rejected_at = datetime.now(timezone.utc)
     session.commit()
+    write_audit_event(
+        "candidate_rejected",
+        entity_type="candidate",
+        entity_id=candidate.candidate_id,
+        details={"review_status": candidate.review_status, "reason": payload.reason},
+    )
     return _candidate_payload(candidate)
 
 
@@ -1376,6 +1740,54 @@ def refine_candidates(
             chars=4000,
         )
     return {"candidate": _candidate_payload(candidate), "prompt_preview": prompt_preview}
+
+
+@router.post("/odk/workflow")
+def run_odk_workflow(
+    payload: OdkWorkflowPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if not payload.dry_run and not payload.production:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass production=true with dry_run=false to allow implementation, validation, and upload.",
+        )
+    config = config_from_settings(
+        dry_run=payload.dry_run,
+        suggestion_file=Path(payload.suggestion_file) if payload.suggestion_file else None,
+    )
+    result = run_approved_candidate_workflow(session, config=config)
+    response = {
+        "ok": result.ok,
+        "message": result.message,
+        "dry_run": result.dry_run,
+        "accepted_candidate_ids": result.accepted_candidate_ids,
+        "skipped_candidate_ids": result.skipped_candidate_ids,
+        "implemented_path": result.implemented_path,
+        "audit_log_path": result.audit_log_path,
+        "suggestion_file": result.suggestion_file,
+        "validation": (
+            {
+                "returncode": result.validation.returncode,
+                "stdout": result.validation.stdout,
+                "stderr": result.validation.stderr,
+            }
+            if result.validation
+            else None
+        ),
+        "upload": (
+            {
+                "ok": result.upload.ok,
+                "message": result.upload.message,
+                "commit_url": result.upload.commit_url,
+            }
+            if result.upload
+            else None
+        ),
+    }
+    if not result.ok:
+        raise HTTPException(status_code=400, detail=response)
+    return response
 
 
 @router.get("/exports/approved.{export_format}")
