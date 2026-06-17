@@ -13,47 +13,153 @@
           <img src="/assets/Logo-Ontology-Curation-Assistant.png" alt="Ontology Curation Assistant dashboard" class="logo" />
         </a>
         <p id="app-status" role="status" aria-live="polite">Loading local workspace...</p>
+        <p id="active-project-pill" class="project-pill">Active project: none</p>
       </div>
       <nav class="nav">
-        <a href="/" data-nav="dashboard">Dashboard</a>
-        <a href="/config" data-nav="config">Configuration</a>
+        <a href="/" data-nav="dashboard">Project Dashboard</a>
+        <a href="/projects" data-nav="projects">Project Management</a>
         <a href="/zotero" data-nav="zotero">Literature</a>
-        <a href="/ontology" data-nav="ontology">Existing Ontology</a>
-        <a href="/curation-prompt" data-nav="curation-prompt">Curation Prompt</a>
+        <a href="/ontology" data-nav="ontology">Ontology</a>
         <a href="/curation" data-nav="curation">Curation</a>
-        <a href="/export" data-nav="export">Export</a>
+        <a href="/curation-prompt" data-nav="curation-prompt">Curation Prompt</a>
+        <a href="/suggestions" data-nav="suggestions">Suggestions</a>
+        <a href="/evaluation" data-nav="evaluation">Evaluation</a>
+        <a href="/config" data-nav="config">LLM Settings</a>
+        <a href="/export" data-nav="export">Export / ODK</a>
       </nav>
       <div class="theme-control" role="group" aria-label="Theme">
         <button id="theme-light" type="button">Light</button>
         <button id="theme-dark" type="button">Dark</button>
       </div>
     </header>
+    <section id="active-project-banner" class="active-project-banner" aria-live="polite">
+      <div>
+        <strong>No active project selected.</strong>
+        <span>Create or select a project to use ontology, literature, curation, and export workflows.</span>
+      </div>
+      <div class="button-row compact-actions">
+        <a href="/projects" data-route>Select or create project</a>
+      </div>
+    </section>
     <div id="action-toast" class="action-toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <main class="layout">
       <section class="panel wide page-section" data-page="dashboard" id="dashboard-section">
         <h2>Dashboard</h2>
         <p class="description">
-          Start here for a compact view of local readiness and links into the Zotero, PPO ontology, candidate curation, and export workflows.
+          Start here for local readiness and the active project used by literature, ontology, curation, and export workflows.
         </p>
         <div id="status-grid" class="status-grid"></div>
         <div class="button-row">
+          <a href="/projects" data-route>Manage projects and active selection</a>
           <a href="/config" data-route>Configure APIs and Sync Zotero</a>
           <a href="/zotero" data-route>Open Literature</a>
-          <a href="/ontology" data-route>Open Existing Ontology</a>
+          <a href="/ontology" data-route>Open ontology browser for active project</a>
           <a href="/curation-prompt" data-route>Review Curation Prompt</a>
           <a href="/curation" data-route>Open Candidate Curation</a>
           <a href="/export" data-route>Export Approved Candidates</a>
         </div>
-        <div class="graph-card">
-          <h2>Meta-Ontology Graph</h2>
-          <p class="description">
-            Compact graph of the curation meta-ontology: sources, evidence, candidates, matching, decisions, and export.
-          </p>
-          <div id="meta-graph" class="graph-panel"></div>
-          <div class="graph-controls" data-graph-controls="meta"></div>
-          <div id="meta-graph-details" class="graph-details">Select a node or edge for details.</div>
+        <section id="dashboard-project-hierarchy" class="project-hierarchy-panel">
+          <div class="section-title">
+            <div>
+              <h2>Project hierarchy</h2>
+              <p class="description">
+                Projects are ontology-development workspaces. This tree shows how projects are organized, for example an upper Bioprocess Ontology with child/domain ontology projects.
+              </p>
+            </div>
+            <a href="/projects" data-route>Create first project</a>
+          </div>
+          <p id="dashboard-project-message" class="message" role="status" aria-live="polite"></p>
+          <div id="dashboard-project-preview" class="project-preview-panel"></div>
+          <div id="dashboard-project-tree" class="project-tree"></div>
+        </section>
+      </section>
+
+      <section class="panel wide page-section" data-page="projects" id="project-management-section">
+        <h2>Projects</h2>
+        <p class="description">
+          Projects define ontology-development workspaces. Select an active project before using literature, ontology, curation, suggestions, evaluation, or export functions.
+        </p>
+        <div class="warning">
+          This page manages project hierarchy only. Ontology class hierarchy, ontology import/dependency handling, and external reference modeling are handled later during curation and ontology review.
         </div>
+        <label>Project idea for AI draft
+          <input id="project-ai-idea" placeholder="Upper-level bioprocess ontology" />
+          <span class="helper">Optional. AI suggestions fill the wizard fields only after you review them.</span>
+        </label>
+        <div class="button-row">
+          <button id="project-ai-suggest" type="button" class="secondary">Suggest project metadata with AI</button>
+          <button id="project-cancel-edit" type="button" class="secondary hidden">Cancel edit</button>
+        </div>
+        <form id="project-create-form" class="stack">
+          <input name="project_ref" type="hidden" />
+          <div id="project-wizard-steps" class="wizard-steps" role="tablist" aria-label="Project creation steps">
+            <button type="button" data-project-step="0" aria-pressed="true">1 Identity</button>
+            <button type="button" data-project-step="1">2 Paths</button>
+            <button type="button" data-project-step="2">3 Repository</button>
+            <button type="button" data-project-step="3">4 Review</button>
+          </div>
+          <section class="project-wizard-step" data-step="0">
+            <h3>Project identity</h3>
+            <div class="candidate-grid">
+              <label>Project name<input name="name" required /></label>
+              <label>Ontology ID / short name<input name="ontology_id" placeholder="ppo" required /></label>
+              <label>Project type
+                <select name="project_type" required>
+                  <option value="upper_bioprocess_ontology">upper_bioprocess_ontology</option>
+                  <option value="domain_ontology" selected>domain_ontology</option>
+                  <option value="module">module</option>
+                  <option value="application_ontology">application_ontology</option>
+                  <option value="existing_ontology_project">existing_ontology_project</option>
+                </select>
+              </label>
+              <label>Parent project
+                <select name="parent_project_id" id="project-parent-select">
+                  <option value="">No parent project</option>
+                </select>
+              </label>
+              <label>Ontology title<input name="ontology_title" /></label>
+              <label>Namespace / prefix<input name="ontology_namespace" placeholder="ppo" /></label>
+              <label>Base IRI<input name="base_iri" placeholder="http://purl.obolibrary.org/obo/ppo.owl" /></label>
+            </div>
+            <label>Short description<textarea name="description" rows="2"></textarea></label>
+            <label>Minimal scope notes<textarea name="minimal_scope_notes" rows="2"></textarea></label>
+            <p class="message">Detailed description and scope can be generated or refined later by the LLM based on the built ontology and curated content.</p>
+          </section>
+          <section class="project-wizard-step hidden" data-step="1">
+            <h3>Workspace paths</h3>
+            <div class="candidate-grid">
+              <label>Workspace/root folder path<input name="local_workspace_path" placeholder="C:\path\to\workspace" /></label>
+              <label>ODK repository path<input name="odk_repo_path" /></label>
+              <label>Editable ontology file path<input name="editable_ontology_path" /></label>
+              <label>Built/released ontology file path<input name="built_ontology_path" /></label>
+              <label>Literature repository path<input name="literature_repository_path" /></label>
+            </div>
+          </section>
+          <section class="project-wizard-step hidden" data-step="2">
+            <h3>Repository metadata</h3>
+            <div class="candidate-grid">
+              <label>Local Git repository path<input name="local_git_repository_path" /></label>
+              <label>GitHub repository URL/path<input name="github_url" /></label>
+            </div>
+            <p id="project-repository-status" class="message">Repository metadata is optional and does not create a GitHub repository.</p>
+          </section>
+          <section class="project-wizard-step hidden" data-step="3">
+            <h3>Review and create</h3>
+            <div id="project-wizard-review" class="status-grid"></div>
+            <p id="project-wizard-warnings" class="warning">Missing optional paths will be stored as warnings, not hard errors.</p>
+            <button type="submit" id="project-submit-button">Create project</button>
+          </section>
+          <div class="button-row">
+            <button id="project-wizard-prev" type="button" class="secondary">Previous</button>
+            <button id="project-wizard-next" type="button">Next</button>
+          </div>
+        </form>
+        <p id="project-message" class="message" role="status" aria-live="polite"></p>
+        <section id="project-detail" class="project-detail-panel"></section>
+        <div id="active-project-summary" class="status-grid"></div>
+        <h3>Existing projects</h3>
+        <div id="project-list" class="table-list"></div>
       </section>
 
       <section class="panel page-section" data-page="config" id="api-key-section">
@@ -86,34 +192,44 @@
             <input name="base_url" placeholder="https://api.zotero.org" />
             <span class="helper">Usually leave this as the Zotero default.</span>
           </label>
-          <button type="submit">Save Zotero Config</button>
+          <button type="submit">Save Zotero sync configuration</button>
         </form>
       </section>
 
       <section class="panel page-section" data-page="config" id="llm-key-section">
         <h2>LLM / Chatbot API Configuration</h2>
         <p class="description">
-          Enter the provider, API key, model name, and optional OpenAI-compatible base URL used for candidate extraction.
+          LLM settings are used for project metadata suggestions and later candidate generation. Test the saved provider before running LLM-backed curation.
         </p>
         <form id="llm-config-form" class="stack">
-          <label>Provider
-            <input name="provider" placeholder="Provider, e.g. openai" required />
-            <span class="helper">Use `openai` or an OpenAI-compatible provider name.</span>
-          </label>
+          <label>Provider<select name="provider" id="llm-provider-select" required></select></label>
+          <label>Model<select name="model_select" id="llm-model-select"></select></label>
+          <label>Manual model override<input name="model" placeholder="Optional custom model name" /></label>
           <label>API key
             <input name="api_key" type="password" placeholder="LLM API key" />
-            <span class="helper">Leave blank to keep deterministic mock extraction available.</span>
+            <span class="helper">Stored locally and masked in responses.</span>
           </label>
-          <label>Model
-            <input name="model" placeholder="Optional model, e.g. gpt-4o-mini" />
-            <span class="helper">Optional model name passed to the configured provider.</span>
-          </label>
-          <label>Base URL
-            <input name="base_url" placeholder="Optional OpenAI-compatible base URL" />
-            <span class="helper">Only needed for non-default or local OpenAI-compatible endpoints.</span>
-          </label>
-          <button type="submit">Save LLM Config</button>
+          <label>API key environment variable<input name="api_key_env_var" placeholder="GEMINI_API_KEY" /></label>
+          <label>Base URL<input name="base_url" placeholder="Optional custom/OpenAI-compatible base URL" /></label>
+          <div class="form-grid">
+            <label>Temperature<input name="temperature" type="number" min="0" max="2" step="0.1" value="0" /></label>
+            <label>Max output tokens<input name="max_output_tokens" type="number" min="1" step="1" value="1024" /></label>
+            <label>Timeout seconds<input name="timeout_seconds" type="number" min="1" step="1" value="30" /></label>
+            <label>Retries<input name="retry_count" type="number" min="0" step="1" value="1" /></label>
+          </div>
+          <label class="inline"><input name="stream" type="checkbox" /> Stream responses when supported</label>
+          <button type="submit">Save LLM provider settings</button>
+          <button id="test-llm" type="button">Test LLM connection</button>
         </form>
+        <p id="extract-message" class="message" role="status" aria-live="polite"></p>
+        <pre id="llm-test-result" class="json-preview"></pre>
+      </section>
+
+      <section class="panel page-section" data-page="config" id="docker-odk-diagnostics-section">
+        <h2>Docker / ODK Diagnostics</h2>
+        <button id="load-docker-odk-diagnostics" type="button">Check Docker and ODK tools</button>
+        <p id="docker-odk-message" class="message" role="status" aria-live="polite"></p>
+        <pre id="docker-odk-diagnostics" class="json-preview"></pre>
       </section>
 
       <section class="panel page-section" data-page="config" id="zotero-connection-section">
@@ -121,7 +237,7 @@
         <p class="description">
           Check whether the saved Zotero credentials are valid before importing metadata.
         </p>
-        <button id="test-zotero" type="button">Test Zotero</button>
+        <button id="test-zotero" type="button">Test Zotero connection</button>
         <p id="zotero-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
@@ -131,7 +247,7 @@
           Import metadata from Zotero into the local database. By default sync follows pagination until all configured records are retrieved.
         </p>
         <div class="button-row">
-          <button id="sync-zotero" type="button">Sync All Zotero Records</button>
+          <button id="sync-zotero" type="button">Sync all Zotero records</button>
           <button id="import-test-zotero" type="button" class="secondary">Load Test Entries</button>
         </div>
         <label class="inline"><input id="zotero-use-limit" type="checkbox" /> Advanced: limit records for testing</label>
@@ -148,10 +264,10 @@
             <input name="zotero_literature_storage_path" placeholder="C:\Users\<USER>\Zotero\storage" />
             <span class="helper">Folder containing Zotero attachment subfolders. PDFs are copied from here before Markdown generation.</span>
           </label>
-          <button type="submit">Save Literature Pipeline Config</button>
+          <button type="submit">Save literature pipeline configuration</button>
         </form>
         <div class="button-row">
-          <button id="run-literature-pipeline" type="button">Import Zotero PDFs</button>
+          <button id="run-literature-pipeline" type="button">Import Zotero PDFs and generate Markdown</button>
         </div>
         <p id="literature-config-message" class="message" role="status" aria-live="polite"></p>
         <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
@@ -168,8 +284,9 @@
       <section class="panel wide page-section" data-page="zotero" id="zotero-entries-section">
         <h2>Literature Records</h2>
         <p class="description">
-          This page lists bibliography records imported or synced from Zotero. Titles are the primary label, with source links and Markdown records for curator inspection.
+          Literature entries can be imported and tagged to one or more projects. Tagged literature is later used for candidate generation.
         </p>
+        <div id="literature-project-blocker" class="project-blocker warning"></div>
         <div class="button-row">
           <button id="reset-literature-repository" type="button" class="danger">Reset Literature Repository</button>
         </div>
@@ -179,27 +296,47 @@
       </section>
 
       <section class="panel wide page-section" data-page="ontology" id="ontology-section">
-        <h2>Existing PPO Ontology</h2>
+        <h2>Ontology</h2>
         <p class="description">
-          Read the already existing local ontology so new candidates can be compared against current PPO terms before proposing additions.
+          Ontology files are downstream of the active project. Configure editable or built ontology files in the project metadata.
         </p>
+        <div id="ontology-project-blocker" class="project-blocker warning"></div>
         <form id="ontology-path-form" class="compact-form">
           <input name="path" placeholder="C:\Users\ge47vob\ontology-development-kit\target\ppo" />
           <button type="submit">Save Path</button>
           <button id="scan-ontology" type="button">Scan Folder</button>
         </form>
         <p id="ontology-message" class="message" role="status" aria-live="polite"></p>
+        <div id="ontology-project-summary" class="status-grid"></div>
         <div id="ontology-files" class="table-list"></div>
         <div class="button-row">
           <button id="index-ontology" type="button">Index Selected Ontology</button>
         </div>
         <input id="ontology-search" placeholder="Search existing ontology terms" />
         <div class="graph-card">
-          <h2>Ontology Graph</h2>
+          <h2>Ontology Tree</h2>
           <p class="description">
-            Graph view of indexed ontology terms and parent/subclass relationships. Use wheel zoom, drag pan, and click nodes or edges for details.
+            Hierarchical view of indexed ontology terms and asserted parent/subclass relationships.
           </p>
-          <div id="ontology-graph" class="graph-panel"></div>
+          <div class="tree-toolbar">
+            <input id="ontology-tree-root" placeholder="Root ID or top-level filter" />
+            <input id="ontology-tree-search" list="ontology-tree-search-results" placeholder="Search class, ID, synonym, or relation" />
+            <datalist id="ontology-tree-search-results"></datalist>
+            <button id="ontology-tree-jump" type="button">Jump</button>
+            <button id="ontology-tree-focus" type="button">Focus on selected class</button>
+            <button id="ontology-tree-reset" type="button">Reset overview</button>
+            <label>Depth<input id="ontology-tree-depth" type="number" min="1" max="6" value="2" /></label>
+            <label class="inline"><input id="ontology-tree-relations" type="checkbox" /> Show lateral relations</label>
+            <label class="inline"><input id="ontology-tree-relation-labels" type="checkbox" checked /> Show relation labels</label>
+            <label class="inline"><input id="ontology-tree-node-labels" type="checkbox" checked /> Show node labels</label>
+            <button id="ontology-tree-zoom-in" type="button">Zoom In</button>
+            <button id="ontology-tree-zoom-out" type="button">Zoom Out</button>
+            <button id="ontology-tree-fit" type="button">Fit</button>
+            <button id="ontology-tree-center" type="button">Center selected</button>
+            <button id="refresh-ontology-tree" type="button">Refresh Tree</button>
+          </div>
+          <div id="ontology-tree" class="tree-panel"></div>
+          <div id="ontology-graph" class="graph-panel hidden"></div>
           <div class="graph-controls" data-graph-controls="ontology"></div>
           <div id="ontology-graph-details" class="graph-details">Select a node or edge for details.</div>
         </div>
@@ -225,38 +362,90 @@
           The LLM request is assembled as: saved prompt, selected existing ontology OBO content, `combined_literature.md`, and a JSON-only output requirement. API keys are not shown or written here.
         </div>
         <div class="button-row">
-          <button id="run-curation-suggestions" type="button">Run Curation Suggestions</button>
+          <button id="run-curation-suggestions" type="button">Run ontology curation suggestions</button>
         </div>
         <p id="curation-prompt-message" class="message" role="status" aria-live="polite"></p>
         <pre id="curation-suggestion-preview" class="markdown-preview"></pre>
       </section>
 
+      <section class="panel wide page-section" data-page="suggestions" id="suggestions-section">
+        <div class="section-title">
+          <div>
+            <h2>Project Suggestions Review</h2>
+            <p class="description">
+              Review structured suggestions with accepted, edited, rejected, duplicate, unsupported, and further_review decisions.
+            </p>
+          </div>
+          <button id="load-suggestions" type="button">Refresh project suggestions</button>
+        </div>
+        <form id="curation-run-form" class="stack">
+          <div class="candidate-grid">
+            <label>Run name<input name="name" /></label>
+            <label>Prompt strategy
+              <select name="strategy">
+                <option value="literature_plus_ontology">literature_plus_ontology</option>
+                <option value="literature_only">literature_only</option>
+                <option value="ontology_only">ontology_only</option>
+                <option value="structured_relation_extraction">structured_relation_extraction</option>
+              </select>
+            </label>
+            <label>Model<input name="model" /></label>
+          </div>
+          <label>Prompt text<textarea name="prompt_text" rows="5"></textarea></label>
+          <label>Raw LLM JSON output<textarea name="raw_output" rows="8" placeholder='{"suggestions":[...]}'></textarea></label>
+          <button type="submit">Create project curation run</button>
+        </form>
+        <p id="suggestions-message" class="message" role="status" aria-live="polite"></p>
+        <div id="curation-run-list" class="table-list"></div>
+        <div id="suggestion-list" class="candidate-list"></div>
+      </section>
+
+      <section class="panel wide page-section" data-page="evaluation" id="evaluation-section">
+        <div class="section-title">
+          <div>
+            <h2>Evaluation</h2>
+            <p class="description">
+              Compute metrics from stored review decisions and compare repeated curation runs.
+            </p>
+          </div>
+          <button id="compute-evaluation" type="button">Compute project evaluation metrics</button>
+        </div>
+        <form id="compare-runs-form" class="compact-form">
+          <input name="first_run_id" type="number" placeholder="First run ID" />
+          <input name="second_run_id" type="number" placeholder="Second run ID" />
+          <button type="submit">Compare selected curation runs</button>
+        </form>
+        <p id="evaluation-message" class="message" role="status" aria-live="polite"></p>
+        <pre id="evaluation-output" class="markdown-preview"></pre>
+      </section>
+
       <section class="panel page-section" data-page="curation" id="literature-section">
         <h2>Literature / Document Ingestion</h2>
         <p class="description">
-          Ingest local PDFs/text files or paste source text. Entry generation uses all imported literature from the repository.
+          Ingest local PDFs/text files or paste source text. Select an active project first so later tagging and candidate generation have explicit context.
         </p>
+        <div id="curation-project-blocker" class="project-blocker warning"></div>
         <form id="literature-form" class="stack">
           <input name="path" placeholder="Server file path, or leave blank and paste text below" />
           <input name="filename" placeholder="Filename for pasted text" />
           <textarea name="content" rows="6" placeholder="Paste abstract, notes, or extracted text"></textarea>
-          <button type="submit">Ingest Document</button>
+          <button type="submit">Ingest literature document</button>
         </form>
       </section>
 
       <section class="panel page-section" data-page="curation" id="candidate-extraction-section">
         <h2>Candidate Extraction</h2>
         <p class="description">
-          Using all imported literature from the repository. Use mock extraction for deterministic local testing, or LLM extraction after configuration.
+          Candidate generation and review are based on the active project, its ontology context, and selected literature.
         </p>
         <form id="extract-form" class="stack">
           <textarea name="guidance" rows="4" placeholder="Optional instruction or nudge for extraction"></textarea>
           <label class="inline"><input name="use_llm" type="checkbox" /> Use configured LLM</label>
-          <button type="submit">Extract Candidates</button>
+          <button type="submit">Extract candidate terms</button>
         </form>
         <form id="refine-form" class="stack">
           <textarea name="guidance" rows="3" placeholder="Quickly propose or improve one candidate"></textarea>
-          <button type="submit" class="secondary">Generate From Nudge</button>
+          <button type="submit" class="secondary">Generate candidate from nudge</button>
         </form>
         <p id="extract-message" class="message" role="status" aria-live="polite"></p>
       </section>
@@ -269,12 +458,37 @@
               Human reviewers compare candidates against local PPO terms and external OLS matches, then edit, approve, reject, or mark a candidate as new.
             </p>
           </div>
-          <button id="new-candidate" type="button">Add Candidate</button>
+          <button id="new-candidate" type="button">Add candidate manually</button>
         </div>
         <div class="button-row">
-          <button id="temp-reject-all" type="button" class="secondary">Temporarily Reject All Visible Candidates</button>
+          <button id="temp-reject-all" type="button" class="secondary">Temporarily reject all visible candidates</button>
         </div>
-        <div id="candidate-list" class="candidate-list"></div>
+        <div class="curation-workbench">
+          <div id="candidate-list" class="candidate-list"></div>
+          <aside class="graph-assisted-panel">
+            <h3>Ontology Context</h3>
+            <p id="graph-curation-active" class="message">Select a candidate and ontology node.</p>
+            <div class="button-row">
+              <button id="graph-set-parent" type="button">Set selected node as parent class</button>
+              <button id="graph-set-source" type="button">Set selected node as relation source</button>
+              <button id="graph-set-target" type="button">Set selected node as relation target</button>
+              <button id="graph-compare" type="button">Compare candidate with selected node</button>
+              <button id="graph-duplicate" type="button">Mark duplicate of selected node</button>
+              <button id="graph-open-details" type="button">Open selected node details</button>
+            </div>
+            <div class="relation-editor">
+              <h3>Proposed Relation</h3>
+              <label>Relation type<select id="graph-relation-type"></select></label>
+              <label>Target search<input id="graph-relation-target-search" placeholder="Search target class" /></label>
+              <div class="button-row">
+                <button id="graph-add-relation" type="button">Add relation</button>
+              </div>
+              <p id="graph-relation-warnings" class="message"></p>
+            </div>
+            <div id="curation-ontology-tree" class="tree-panel"></div>
+            <div id="curation-ontology-details" class="graph-details">Select an ontology node for curation details.</div>
+          </aside>
+        </div>
       </section>
 
       <section class="panel wide page-section" data-page="curation" id="rejected-candidates-section">
@@ -291,7 +505,7 @@
           Run external OLS matching and local PPO ontology matching. Nothing is selected by default; curators must intentionally choose a match or mark a new term.
         </p>
         <div class="button-row">
-          <button id="ols-all" type="button">Run OLS For Draft Candidates</button>
+          <button id="ols-all" type="button">Run OLS for draft candidates</button>
         </div>
         <p id="ols-message" class="message" role="status" aria-live="polite"></p>
       </section>
@@ -299,8 +513,9 @@
       <section class="panel wide page-section" data-page="export" id="export-section">
         <h2>Export / Visualization</h2>
         <p class="description">
-          Export approved candidates with selected OLS matches, selected local PPO matches, curator decisions, source evidence, and ontology context for Protégé, ROBOT, ODK, or related tooling.
+          Export writes accepted reviewed candidates into ODK/ROBOT-compatible template files. Project paths must be configured before production handoff.
         </p>
+        <div id="export-project-blocker" class="project-blocker warning"></div>
         <div class="button-row">
           <a href="/api/exports/approved.robot.tsv">Download ROBOT Template TSV</a>
           <a href="/api/exports/approved.candidates.tsv">Download Candidate TSV</a>
@@ -330,6 +545,9 @@
           <label>Mappings<input class="mappings" /></label>
           <label>Synonyms<input class="synonyms" /></label>
           <label>Parent / ontology context<input class="parent" /></label>
+          <label>Graph relation source<input class="relation-source" /></label>
+          <label>Graph relation target<input class="relation-target" /></label>
+          <label>Graph review proposals<textarea class="graph-review" rows="4"></textarea></label>
           <label>Curator decision
             <select class="decision">
               <option value="needs_review">needs_review</option>
@@ -341,13 +559,13 @@
           </label>
         </div>
         <div class="candidate-actions">
-          <button class="save" type="button">Save</button>
-          <button class="approve" type="button">Approve</button>
-          <button class="reject danger" type="button">Reject</button>
-          <button class="permanent-reject danger" type="button">Permanently Reject</button>
-          <button class="ols" type="button">Check OLS</button>
-          <button class="local-match" type="button">Check Local PPO</button>
-          <button class="new-term secondary" type="button">Mark New Term</button>
+          <button class="save" type="button">Save candidate changes</button>
+          <button class="approve" type="button">Approve candidate</button>
+          <button class="reject danger" type="button">Reject candidate</button>
+          <button class="permanent-reject danger" type="button">Permanently reject candidate</button>
+          <button class="ols" type="button">Check OLS matches</button>
+          <button class="local-match" type="button">Check local ontology matches</button>
+          <button class="new-term secondary" type="button">Mark as new term</button>
         </div>
         <div class="match-panel">
           <h3>Local PPO matches</h3>

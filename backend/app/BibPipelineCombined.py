@@ -249,7 +249,7 @@ def lines_to_markdown(lines: list[str]) -> list[str]:
 
 
 def pdf_to_section_markdown(pdf_path: Path, output_path: Path) -> None:
-    """Convert one PDF into a section-structured Markdown file."""
+    """Convert one PDF into a section-structured Markdown file with page markers and reading order recovery."""
     try:
         import fitz  # type: ignore
     except ImportError as error:
@@ -260,11 +260,22 @@ def pdf_to_section_markdown(pdf_path: Path, output_path: Path) -> None:
     doc = fitz.open(pdf_path)
     try:
         metadata = extract_pdf_metadata(doc, pdf_path)
+        body_parts = []
+        from backend.app.literature.cleanup import get_page_reading_order
+
+        for page_index, page in enumerate(doc, start=1):
+            body_parts.append(f"<!-- source_page: {page_index} -->")
+            try:
+                page_text = get_page_reading_order(page)
+            except Exception:
+                page_text = page.get_text("text") or ""
+            
+            if page_text.strip():
+                body_parts.append(page_text.strip())
     finally:
         doc.close()
 
-    lines = extract_structured_lines(pdf_path)
-    body_markdown = lines_to_markdown(lines)
+    body_markdown = "\n\n".join(body_parts)
 
     md: list[str] = [
         f"# {metadata['title']}",
@@ -294,7 +305,7 @@ def pdf_to_section_markdown(pdf_path: Path, output_path: Path) -> None:
 
     md.append("- **Images:** omitted")
     md.append("")
-    md.extend(body_markdown)
+    md.append(body_markdown)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(md), encoding="utf-8")
@@ -401,6 +412,10 @@ def build_generated_markdown_index(generated_md_dir: Path) -> dict[str, Path]:
 
 def find_imported_at_cutoff(lines: list[str]) -> int | None:
     """Return the index after keeping exactly two lines after imported_at:."""
+    if lines and lines[0].strip() == "---":
+        for index, line in enumerate(lines[1:], start=1):
+            if line.strip() == "---":
+                return index + 1
     for i, line in enumerate(lines):
         if line.strip().lower().startswith("imported_at:"):
             return min(i + 3, len(lines))
@@ -408,9 +423,9 @@ def find_imported_at_cutoff(lines: list[str]) -> int | None:
 
 
 def update_paper_markdown_file(paper_md_path: Path, generated_md_path: Path) -> None:
-    """Replace everything after two lines after imported_at: with generated content."""
+    """Replace everything after two lines after imported_at: with cleaned, page-marked content and run diagnostics."""
     paper_text = paper_md_path.read_text(encoding="utf-8", errors="replace")
-    generated_text = generated_md_path.read_text(encoding="utf-8", errors="replace")
+    raw_markdown = generated_md_path.read_text(encoding="utf-8", errors="replace")
 
     paper_lines = paper_text.splitlines()
     cutoff = find_imported_at_cutoff(paper_lines)
@@ -418,9 +433,181 @@ def update_paper_markdown_file(paper_md_path: Path, generated_md_path: Path) -> 
     if cutoff is None:
         raise ValueError("No line starting with 'imported_at:' found.")
 
+    # Apply cleanup and separate references
+    from backend.app.literature.cleanup import clean_page_text_with_report, separate_references, detect_formatting_anomalies
+    from backend.app.literature.diagnostics import generate_diagnostics, save_diagnostics_report
+    
+    cleanup_result = clean_page_text_with_report(raw_markdown)
+    cleaned_content = cleanup_result.cleaned_text
+    body_text, references_text = separate_references(cleaned_content)
+    
+    # Run formatting anomalies
+    cleanup_warnings = detect_formatting_anomalies(raw_markdown, cleaned_content)
+    
+    # Compute page count if available from raw_markdown (count occurrence of <!-- source_page: \d+ -->)
+    page_markers = re.findall(r"<!-- source_page:\s*(\d+)\s*-->", raw_markdown)
+    page_count = len(page_markers) if page_markers else None
+    
+    # Extract metadata properties from the paper file if possible
+    paper_id = paper_md_path.stem
+    # Match the paper ID from front matter if available
+    id_match = re.search(r"(?im)^(?:paper_id|id):\s*\"?([^\s\"]+)\"?", paper_text)
+    if id_match:
+        paper_id = id_match.group(1)
+    doi_match = re.search(r"(?im)^doi:\s*\"?([^\"\n]+)\"?\s*$", paper_text)
+    paper_doi = doi_match.group(1).strip() if doi_match else ""
+    
+    diagnostics = generate_diagnostics(
+        raw_text=raw_markdown,
+        cleaned_text=cleaned_content,
+        pdf_path=generated_md_path,
+        page_count=page_count,
+        cleanup_warnings=cleanup_warnings,
+        cleanup_rule_counts=cleanup_result.rule_counts,
+    )
+    
+    # Save diagnostics report
+    metadata_dir = paper_md_path.parent.parent / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    report_path = metadata_dir / "extraction_report.json"
+    
+    diag_dict = diagnostics.to_dict()
+    diag_dict["paper_id"] = paper_id
+    diag_dict["title"] = paper_id
+    save_diagnostics_report(report_path, diag_dict)
+    
+    # Save cleanup report
+    cleanup_report_path = metadata_dir / "cleanup_reports.json"
+    cleanup_reports = {}
+    if cleanup_report_path.exists():
+        try:
+            import json
+            cleanup_reports = json.loads(cleanup_report_path.read_text(encoding="utf-8"))
+        except Exception:
+            cleanup_reports = {}
+            
+    cleanup_reports[paper_id] = {
+        "raw_character_count": len(raw_markdown),
+        "cleaned_character_count": len(cleaned_content),
+        "removed_lines_count": len(cleanup_result.removed_lines),
+        "removed_lines": cleanup_result.removed_lines[:200],  # Cap log at 200 items
+        "rule_counts": cleanup_result.rule_counts,
+        "examples": cleanup_result.examples,
+        "warnings": cleanup_warnings,
+    }
+    
+    try:
+        import json
+        cleanup_report_path.write_text(json.dumps(cleanup_reports, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+    # Build the final document content for papers/
+    # Main scientific content is the body_text (which has references separated)
     kept_text = "\n".join(paper_lines[:cutoff]).rstrip()
-    new_text = kept_text + "\n\n" + generated_text.strip() + "\n"
+    new_text = kept_text + "\n\n" + body_text.strip() + "\n"
+    
+    # Append references at the end under its standard section if we found references
+    if references_text.strip():
+        new_text += "\n## References\n\n" + references_text.strip() + "\n"
+        
     paper_md_path.write_text(new_text, encoding="utf-8")
+    
+    # Local literature indexing in SQLite and JSON
+    json_entries = []
+    
+    # Index abstract
+    abstract_match = re.search(r"(?ims)^## Abstract\s*\n(.*?)(?=^## |\Z)", body_text)
+    if abstract_match:
+        json_entries.append({
+            "section": "Abstract",
+            "passage": abstract_match.group(1).strip(),
+            "page": None,
+        })
+        
+    # Index sections and passages
+    sections_split = re.split(r"(?m)^##{1,2}\s+(.+?)\s*$", body_text)
+    if len(sections_split) > 1:
+        for i in range(1, len(sections_split), 2):
+            heading = sections_split[i].strip()
+            content = sections_split[i+1].strip()
+            
+            # Split content into paragraphs
+            paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+            for paragraph in paragraphs:
+                page_num = None
+                page_marker_match = re.search(r"<!-- source_page:\s*(\d+)\s*-->", paragraph)
+                if page_marker_match:
+                    page_num = int(page_marker_match.group(1))
+                    
+                clean_paragraph = re.sub(r"<!--.*?-->", "", paragraph).strip()
+                if not clean_paragraph:
+                    continue
+                
+                json_entries.append({
+                    "section": heading,
+                    "passage": clean_paragraph,
+                    "page": page_num,
+                })
+                
+    # Save to literature_index.json
+    json_index_path = metadata_dir / "literature_index.json"
+    json_index = {}
+    if json_index_path.exists():
+        try:
+            import json
+            json_index = json.loads(json_index_path.read_text(encoding="utf-8"))
+        except Exception:
+            json_index = {}
+            
+    json_index[paper_id] = {
+        "title": paper_id,
+        "doi": paper_doi,
+        "entries": json_entries,
+    }
+    try:
+        import json
+        json_index_path.write_text(json.dumps(json_index, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+    try:
+        from backend.app.db.session import SessionLocal
+        from backend.app.models.db import LiteratureIndexEntry, LiteratureDocument
+        from sqlalchemy import select
+        
+        session = SessionLocal()
+        try:
+            # Find document_id
+            doc_id = None
+            doc = session.scalar(select(LiteratureDocument).where(LiteratureDocument.filename == paper_md_path.name))
+            if doc:
+                doc_id = doc.id
+                
+            # Clear old index entries for this paper
+            session.query(LiteratureIndexEntry).filter(LiteratureIndexEntry.paper_id == paper_id).delete()
+            
+            # Add entries to SQLite
+            for entry in json_entries:
+                session.add(
+                    LiteratureIndexEntry(
+                        document_id=doc_id,
+                        paper_id=paper_id,
+                        title=paper_id,
+                        section_heading=entry["section"],
+                        passage_text=entry["passage"],
+                        source_page=entry["page"],
+                        doi=paper_doi or None,
+                    )
+                )
+            session.commit()
+        except Exception as db_exc:
+            session.rollback()
+            print(f"Database indexing failed for {paper_id}: {db_exc}")
+        finally:
+            session.close()
+    except Exception as exc:
+        print(f"Failed to index {paper_id} into database: {exc}")
 
 
 def find_prefix_match(

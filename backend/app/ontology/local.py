@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ class LocalOntologyTerm:
     definition: str | None = None
     synonyms: list[str] = field(default_factory=list)
     parents: list[str] = field(default_factory=list)
+    relations: list[dict[str, str]] = field(default_factory=list)
     source_file: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -135,6 +137,122 @@ def match_local_terms(
     return sorted(matches, key=lambda item: item["score"], reverse=True)[:limit]
 
 
+def ontology_tree_payload(
+    terms: list[LocalOntologyTerm],
+    *,
+    root_id: str | None = None,
+    depth_limit: int = 4,
+    max_children: int = 80,
+    query: str | None = None,
+) -> dict[str, Any]:
+    """Build a collapsible parent-child hierarchy payload for the browser."""
+    by_id = {term.term_id or term.iri: term for term in terms}
+    children_by_parent: dict[str, list[str]] = {}
+    child_ids: set[str] = set()
+    hierarchy_edges: list[dict[str, Any]] = []
+    relation_edges: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for term in terms:
+        child_id = term.term_id or term.iri
+        for parent in term.parents or []:
+            parent_id = str(parent)
+            children_by_parent.setdefault(parent_id, []).append(child_id)
+            child_ids.add(child_id)
+            hierarchy_edges.append(
+                {
+                    "id": f"{parent_id}->{child_id}",
+                    "source": parent_id,
+                    "target": child_id,
+                    "relation": "is_a",
+                    "edgeType": "hierarchy",
+                    "relation_type": "subClassOf",
+                    "relation_label": "subClassOf",
+                    "hierarchical": True,
+                }
+            )
+        for relation in term.relations or []:
+            target = relation.get("target")
+            relation_type = relation.get("relation_type") or relation.get("type") or "related_to"
+            if not target:
+                warnings.append(f"Skipped relation from {child_id} without a target.")
+                continue
+            relation_edges.append(
+                {
+                    "id": f"{child_id}-{relation_type}->{target}",
+                    "source": child_id,
+                    "target": target,
+                    "relation": relation.get("relation_label") or relation_type,
+                    "edgeType": "semantic",
+                    "relation_type": relation_type,
+                    "relation_label": relation.get("relation_label") or relation_type,
+                    "hierarchical": False,
+                }
+            )
+
+    roots = [term.term_id or term.iri for term in terms if (term.term_id or term.iri) not in child_ids]
+    if not roots and terms:
+        roots = [terms[0].term_id or terms[0].iri]
+    if root_id:
+        roots = [root_id]
+    if query:
+        matched = search_terms(terms, query, limit=1)
+        if matched:
+            roots = [matched[0].term_id or matched[0].iri]
+
+    def node_for(term_id: str, depth: int, seen: set[str]) -> dict[str, Any]:
+        term = by_id.get(term_id)
+        children = sorted(children_by_parent.get(term_id, []), key=lambda item: by_id.get(item).label if by_id.get(item) else item)
+        visible_children = [] if depth >= depth_limit else [
+            node_for(child_id, depth + 1, seen | {term_id})
+            for child_id in children[:max_children]
+            if child_id not in seen
+        ]
+        return {
+            "id": term_id,
+            "label": term.label if term else term_id,
+            "definition": term.definition if term else None,
+            "parents": term.parents if term else [],
+            "children_ids": children,
+            "relations": term.relations if term else [],
+            "source_file": term.source_file if term else None,
+            "child_count": len(children),
+            "children_truncated": max(0, len(children) - len(visible_children)),
+            "children": visible_children,
+        }
+
+    roots_payload = [node_for(term_id, 0, set()) for term_id in roots[:max_children]]
+    return {
+        "nodes": [
+            {
+                "id": term.term_id or term.iri,
+                "label": term.label,
+                "definition": term.definition,
+                "synonyms": term.synonyms,
+                "parent_ids": term.parents,
+                "child_ids": sorted(children_by_parent.get(term.term_id or term.iri, [])),
+                "relations": term.relations,
+                "source_ontology": term.source_file,
+                "source_file": term.source_file,
+            }
+            for term in terms
+        ],
+        "hierarchy_edges": hierarchy_edges,
+        "relation_edges": relation_edges,
+        "roots": roots_payload,
+        "root_ids": roots,
+        "root_count": len(roots),
+        "term_count": len(terms),
+        "depth_limit": depth_limit,
+        "max_children": max_children,
+        "query": query,
+        "metadata": {
+            "source_files": sorted({term.source_file for term in terms if term.source_file}),
+            "parsed_at": datetime.now(timezone.utc).isoformat(),
+            "warnings": warnings,
+        },
+    }
+
+
 def _index_rdf(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
     from rdflib import Graph, Literal, OWL, RDF, RDFS, URIRef
 
@@ -149,6 +267,7 @@ def _index_rdf(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
         URIRef("http://www.geneontology.org/formats/oboInOwl#hasExactSynonym"),
         URIRef("http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym"),
     ]
+    ignored_relation_predicates = {RDF.type, RDFS.label, RDFS.subClassOf, *definition_predicates, *synonym_predicates}
     subjects = set(graph.subjects(RDF.type, OWL.Class)) | set(graph.subjects(RDFS.label, None))
     terms = []
     for subject in sorted(subjects, key=str):
@@ -168,6 +287,15 @@ def _index_rdf(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
             for parent in graph.objects(subject, RDFS.subClassOf)
             if isinstance(parent, URIRef)
         ]
+        relations = [
+            {
+                "relation_type": _term_id(str(predicate)),
+                "relation_label": _term_id(str(predicate)),
+                "target": _term_id(str(value)),
+            }
+            for predicate, value in graph.predicate_objects(subject)
+            if predicate not in ignored_relation_predicates and isinstance(value, URIRef)
+        ]
         terms.append(
             LocalOntologyTerm(
                 term_id=_term_id(str(subject)),
@@ -176,6 +304,7 @@ def _index_rdf(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
                 definition=definitions[0] if definitions else None,
                 synonyms=synonyms,
                 parents=parents,
+                relations=relations,
                 source_file=str(path),
             )
         )
@@ -194,7 +323,7 @@ def _index_obo(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
                 terms.append(_obo_term(current, path))
                 if max_terms is not None and len(terms) >= max_terms:
                     return terms
-            current = {"synonyms": [], "parents": []}
+            current = {"synonyms": [], "parents": [], "relations": []}
             continue
         if current is None or not line or line.startswith("!"):
             continue
@@ -208,6 +337,16 @@ def _index_obo(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
             current["synonyms"].append(line[9:].split('"')[1] if '"' in line else line[9:])
         elif line.startswith("is_a: "):
             current["parents"].append(line[6:].split()[0])
+        elif line.startswith("relationship: "):
+            parts = line[14:].split("!", 1)[0].split()
+            if len(parts) >= 2:
+                current["relations"].append(
+                    {
+                        "relation_type": parts[0],
+                        "relation_label": parts[0],
+                        "target": parts[1],
+                    }
+                )
     if current and current.get("id") and current.get("name"):
         terms.append(_obo_term(current, path))
     return terms
@@ -223,6 +362,7 @@ def _index_tsv(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
             continue
         term_id = _pick(row, ["ID", "id", "term_id"]) or label
         synonyms = _split_multi(_pick(row, ["synonyms", "SYNONYMS", "A oboInOwl:hasExactSynonym"]))
+        relations = _relations_from_tsv_row(row)
         terms.append(
             LocalOntologyTerm(
                 term_id=term_id,
@@ -231,6 +371,7 @@ def _index_tsv(path: Path, *, max_terms: int | None) -> list[LocalOntologyTerm]:
                 definition=_pick(row, ["definition", "DEFINITION", "A IAO:0000115"]),
                 synonyms=synonyms,
                 parents=_split_multi(_pick(row, ["parent", "PARENT", "SC %"])),
+                relations=relations,
                 source_file=str(path),
             )
         )
@@ -247,6 +388,7 @@ def _obo_term(values: dict[str, Any], path: Path) -> LocalOntologyTerm:
         definition=values.get("definition"),
         synonyms=values.get("synonyms", []),
         parents=values.get("parents", []),
+        relations=values.get("relations", []),
         source_file=str(path),
     )
 
@@ -278,3 +420,18 @@ def _split_multi(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.replace("|", ";").split(";") if item.strip()]
+
+
+def _relations_from_tsv_row(row: dict[str, str | None]) -> list[dict[str, str]]:
+    relations = []
+    relation_type = _pick(row, ["relation", "RELATION", "relationship", "RELATION_TYPE"])
+    target = _pick(row, ["target", "TARGET", "relation_target", "RELATION_TARGET"])
+    if relation_type and target:
+        relations.append(
+            {
+                "relation_type": relation_type,
+                "relation_label": relation_type,
+                "target": target,
+            }
+        )
+    return relations

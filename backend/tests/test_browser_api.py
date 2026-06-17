@@ -48,19 +48,23 @@ def test_root_serves_browser_ui(client):
     assert 'id="candidate-list"' in response.text
     assert "Dashboard" in response.text
     assert "theme-light" in response.text
-    assert "Meta-Ontology Graph" in response.text
-    assert "Existing PPO Ontology" in response.text
+    assert "Project hierarchy" in response.text
+    assert "Meta-Ontology Graph" not in response.text
+    assert "Ontology" in response.text
     assert "Export / Visualization" in response.text
 
 
 def test_browser_subpages_serve_html(client):
     for path, marker in [
         ("/config", "Zotero Metadata Sync"),
+        ("/projects", "Projects"),
         ("/zotero", "Literature Records"),
         ("/literature", "Literature Records"),
-        ("/ontology", "Existing PPO Ontology"),
+        ("/ontology", "Ontology"),
         ("/curation-prompt", "Ontology Curation Prompt"),
         ("/curation", "Candidate Curation"),
+        ("/suggestions", "Project Suggestions Review"),
+        ("/evaluation", "Evaluation"),
         ("/export", "Export / Visualization"),
     ]:
         response = client.get(path)
@@ -114,6 +118,7 @@ def test_config_status_masks_saved_secrets(client):
     assert status["zotero"]["api_key"] == "configured"
     assert status["llm"]["configured"] is True
     assert status["llm"]["api_key"] == "configured"
+    assert status["llm"]["temperature"] == 0.0
     assert "zotero-secret" not in json.dumps(status)
     assert "llm-secret" not in json.dumps(status)
     saved = client.get("/api/config/saved").json()
@@ -123,6 +128,138 @@ def test_config_status_masks_saved_secrets(client):
     assert saved[0]["api_key"]
     with db_session.SessionLocal() as session:
         assert session.get(AppSetting, "zotero_api_key").value == "zotero-secret"
+
+
+def test_llm_provider_catalog_and_missing_key_test(client):
+    providers = client.get("/api/config/llm/providers")
+    assert providers.status_code == 200
+    assert "gemini" in {item["id"] for item in providers.json()["providers"]}
+
+    configured = client.post("/api/config/llm", json={"provider": "Gemini API"})
+    tested = client.post("/api/config/llm/test")
+
+    assert configured.status_code == 200
+    assert configured.json()["provider"] == "gemini"
+    assert tested.status_code == 200
+    assert tested.json()["ok"] is False
+    assert tested.json()["status"] == "missing_api_key"
+    assert tested.json()["provider"] == "gemini"
+    assert tested.json()["provider_key"] == "gemini"
+    assert tested.json()["model"] == "gemini-2.5-flash"
+    assert tested.json()["api_key_source"] is None
+
+
+def test_llm_test_endpoint_reports_mocked_success(client, monkeypatch):
+    from backend.app.llm.clients import LlmConnectionTestResult
+    import backend.app.api.routes as routes
+
+    client.post(
+        "/api/config/llm",
+        json={"provider": "gemini", "api_key": "secret", "model": "gemini-2.5-flash"},
+    )
+    monkeypatch.setattr(
+        routes,
+        "test_llm_connection",
+        lambda config: LlmConnectionTestResult(
+            ok=True,
+            provider=config.provider,
+            provider_key=config.provider,
+            model=config.model,
+            api_key_found=True,
+            api_key_source=config.api_key_source,
+            latency_ms=12,
+            response_preview="ok",
+            status="ok",
+        ),
+    )
+
+    tested = client.post("/api/config/llm/test")
+
+    assert tested.status_code == 200
+    assert tested.json()["ok"] is True
+    assert tested.json()["latency_ms"] == 12
+    assert tested.json()["api_key_source"] == "stored"
+    assert "secret" not in json.dumps(tested.json())
+
+
+def test_project_metadata_ai_suggestion_uses_configured_llm(client, monkeypatch):
+    from backend.app.llm.clients import LlmTextResult
+    import backend.app.api.routes as routes
+
+    client.post(
+        "/api/config/llm",
+        json={"provider": "gemini", "api_key": "secret", "model": "gemini-2.5-flash"},
+    )
+
+    def fake_generate_text(prompt, *, system_prompt=None, config=None):
+        assert "Protein precipitation ontology" in prompt
+        return LlmTextResult(
+            text=json.dumps(
+                {
+                    "project_name": "Protein Precipitation Ontology",
+                    "ontology_id": "ppo",
+                    "project_type": "domain_ontology",
+                    "short_description": "Ontology for protein precipitation.",
+                    "minimal_scope_notes": "Downstream processing precipitation concepts.",
+                }
+            ),
+            provider="gemini",
+            model="gemini-2.5-flash",
+            latency_ms=8,
+            input_chars=len(prompt),
+        )
+
+    monkeypatch.setattr(routes, "generate_text", fake_generate_text)
+
+    suggested = client.post(
+        "/api/projects/suggest-metadata",
+        json={"idea": "Protein precipitation ontology"},
+    )
+
+    assert suggested.status_code == 200
+    assert suggested.json()["suggestion"]["ontology_id"] == "ppo"
+    assert suggested.json()["suggestion"]["base_iri"] == "http://purl.obolibrary.org/obo/ppo.owl"
+    assert "secret" not in json.dumps(suggested.json())
+
+
+def test_project_metadata_ai_suggestion_parses_fenced_json(client, monkeypatch):
+    from backend.app.llm.clients import LlmTextResult
+    import backend.app.api.routes as routes
+
+    client.post(
+        "/api/config/llm",
+        json={"provider": "gemini", "api_key": "secret", "model": "gemini-2.5-flash"},
+    )
+
+    def fake_generate_text(prompt, *, system_prompt=None, config=None):
+        return LlmTextResult(
+            text="""```json
+{"project_name":"Bioprocess Ontology","ontology_id":"bpo","project_type":"unexpected","short_description":"Draft metadata."}
+```""",
+            provider="gemini",
+            model="gemini-2.5-flash",
+            latency_ms=8,
+            input_chars=len(prompt),
+        )
+
+    monkeypatch.setattr(routes, "generate_text", fake_generate_text)
+
+    suggested = client.post("/api/projects/suggest-metadata", json={"idea": "Upper-level bioprocess ontology"})
+
+    assert suggested.status_code == 200
+    body = suggested.json()
+    assert body["suggestion"]["ontology_id"] == "bpo"
+    assert body["suggestion"]["project_type"] == "domain_ontology"
+    assert body["suggestion"]["base_iri"] == "http://purl.obolibrary.org/obo/bpo.owl"
+
+
+def test_ontology_relation_types_catalog(client):
+    response = client.get("/api/ontology/relation-types")
+
+    assert response.status_code == 200
+    relation_types = response.json()["relation_types"]
+    assert {item["label"] for item in relation_types} >= {"has input", "has output", "part of"}
+    assert all("id" in item and "description" in item for item in relation_types)
 
 
 def test_literature_pipeline_config_and_run_validation(client, tmp_path):
@@ -162,19 +299,21 @@ def test_saved_api_config_activate_and_delete(client):
         json={
             "kind": "llm",
             "alias": "Local model",
-            "provider": "openai-compatible",
+            "provider": "Gemini API",
             "api_key": "sk-test123456",
-            "model": "test-model",
-            "base_url": "http://localhost:8080/v1",
+            "model": "gemini-2.5-flash",
         },
     )
     config_id = created.json()["id"]
 
     activated = client.post(f"/api/config/saved/{config_id}/activate", json={})
+    status = client.get("/api/config/status").json()
     deleted = client.delete(f"/api/config/saved/{config_id}")
 
     assert activated.status_code == 200
     assert activated.json()["active"] is True
+    assert activated.json()["provider"] == "gemini"
+    assert status["llm"]["provider"] == "gemini"
     assert "sk-test123456" not in json.dumps(activated.json())
     assert deleted.status_code == 200
 
@@ -205,10 +344,26 @@ def test_create_update_review_and_export_candidate(client):
 
     updated = client.patch(
         f"/api/candidates/{candidate_id}",
-        json={"curator_rationale": "Supported by the source text.", "mappings": ["PMID:123"]},
+        json={
+            "curator_rationale": "Supported by the source text.",
+            "mappings": ["PMID:123"],
+            "graph_review": {
+                "parent_class": {"id": "PPO:0001", "label": "local parent"},
+                "proposed_relations": [
+                    {
+                        "source": "PPO:0001",
+                        "relation": "has output",
+                        "target": "PPO:0002",
+                        "status": "proposed_for_review",
+                    }
+                ],
+            },
+        },
     )
     assert updated.status_code == 200
     assert updated.json()["mappings"] == ["PMID:123"]
+    assert updated.json()["graph_review"]["parent_class"]["id"] == "PPO:0001"
+    assert updated.json()["graph_review"]["proposed_relations"][0]["relation"] == "has output"
 
     reviewed = client.post(
         f"/api/candidates/{candidate_id}/review",
@@ -279,6 +434,32 @@ def test_import_test_zotero_entries_and_mock_extract(client):
         document = session.scalar(select(LiteratureDocument).where(LiteratureDocument.source_id == source_id))
     assert source.title
     assert document is not None
+
+
+def test_literature_project_tags_update_and_project_count(client, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "Protein precipitation",
+            "ontology_id": "ppo",
+            "project_type": "domain_ontology",
+            "local_workspace_path": str(tmp_path),
+        },
+    ).json()
+    imported = client.post("/api/zotero/import-test", json={})
+    assert imported.status_code == 200
+    source_id = client.get("/api/zotero/entries").json()[0]["id"]
+
+    tagged = client.patch(
+        f"/api/zotero/entries/{source_id}/project-tags",
+        json={"project_tags": ["ppo", "ppo", " "]},
+    )
+
+    assert tagged.status_code == 200
+    assert tagged.json()["project_tags"] == ["ppo"]
+    projects = client.get("/api/projects").json()["projects"]
+    reloaded = next(item for item in projects if item["id"] == project["id"])
+    assert reloaded["literature_project_tag_count"] == 1
 
 
 def test_extract_candidates_uses_repository_without_picker(client):
@@ -694,14 +875,115 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "complete." in script
     assert "copied_pdf_count" in script
     assert "data-graph-controls" in html
+    assert 'id="dashboard-project-hierarchy"' in html
+    assert 'id="dashboard-project-tree"' in html
+    assert 'id="dashboard-project-preview"' in html
+    assert "Project hierarchy" in html
+    assert "No projects exist yet. Create a project to start ontology curation." in script
+    assert "No active project selected. Click a project tile to work on it." in script
+    assert "dashboard-project-tile" in script
+    assert "renderDashboardProjectHierarchy" in script
+    assert "renderDashboardProjectPreview" in script
+    assert "Project hierarchy could not be loaded" in script
+    assert "This is a project hierarchy overview, not an ontology class hierarchy or import/dependency graph." in script
+    assert "Meta-Ontology Graph" not in html
+    assert 'id="meta-graph"' not in html
+    assert "await renderMetaGraph" not in script
+    assert "project-hierarchy-panel" in styles
+    assert "dashboard-project-tile" in styles
     assert "oca-graph-preferences" in script
+    assert 'id="ontology-tree-node-labels"' in html
+    assert 'id="ontology-project-summary"' in html
+    assert "Select or create a project before working with ontology files." in script
+    assert "status.selected_file" in script
+    assert "project_id" in script
+    assert "fillIfEmpty" in script
+    assert "Suggestions for filled fields" in script
+    assert "Could not save project." in script
+    assert "resetProjectForm();" in script
+    assert "function layoutOntologyTree" in script
+    assert "function renderOntologyTreeSvg" in script
+    assert "function deriveVisibleOntologyTree" in script
+    assert "function selectedOntologyContextIds" in script
+    assert "node-detail-card" in script
+    assert "Selected Ontology Node" in script
+    assert "Source path" in script
+    assert "Selected:" in script
+    assert "is-dimmed" in script
+    assert "is-semantic-context" in script
+    assert "function searchOntologyNodes" in script
+    assert "function jumpToOntologySearch" in script
+    assert "function fitOntologyTree" in script
+    assert "function centerSelectedOntologyNode" in script
+    assert "function setSelectedNodeAsParent" in script
+    assert "function addGraphRelationProposal" in script
+    assert "function validateGraphRelationProposal" in script
+    assert "tree-proposed-edge" in script
+    assert "tree-proposed-edge" in styles
+    assert "/api/ontology/relation-types" in script
+    assert "tree-hierarchy-edge" in script
+    assert "tree-semantic-edge" in script
+    assert "collapsedOntologyNodes" in script
+    assert "ontologyFocusNodeId" in script
+    assert "selectedOntologyNodeId" in script
+    assert "ontologyViewport" in script
+    assert "node-detail-card" in styles
+    assert ".ontology-tree-node.is-dimmed" in styles
+    assert ".ontology-tree-node.is-semantic-context" in styles
+    assert 'id="ontology-tree-search"' in html
+    assert 'id="ontology-tree-focus"' in html
+    assert 'id="ontology-tree-reset"' in html
+    assert 'id="ontology-tree-zoom-in"' in html
+    assert 'id="ontology-tree-fit"' in html
+    assert 'id="curation-ontology-tree"' in html
+    assert 'id="graph-set-parent"' in html
+    assert 'id="graph-set-source"' in html
+    assert 'id="graph-set-target"' in html
+    assert 'id="graph-add-relation"' in html
+    assert 'class="graph-review"' in html
+    assert 'value="2"' in html
+    ontology_renderer = script.split("async function renderOntologyTree", 1)[1].split("function lateralRelationsFor", 1)[0]
+    assert "layoutGraph(" not in ontology_renderer
+    assert "renderKnowledgeGraph(" not in ontology_renderer
     assert "flattenSections" in script
     assert "Extraction status" in script
     assert "literature_markdown" in script
     assert "Open in Zotero" in script
     assert "initializeWorkspace" in script
     assert "Workspace status unavailable" in script
-    assert "Could not load ontology data" in script
+    assert "Load ontology section for active project" in script
+    assert "project-ai-suggest" in html
+    assert "Suggest project metadata with AI" in html
+    assert 'id="active-project-banner"' in html
+    assert 'id="project-detail"' in html
+    assert "View project details" in script
+    assert "Edit project metadata" in script
+    assert "Set this project as active" in script
+    assert "Create child project" in script
+    assert "What can I do next?" in script
+    assert "projectErrorMessage" in script
+    assert "Technical detail:" in script
+    assert "Open ontology browser after setting active" in script
+    assert "Open workspace path (not supported in browser)" in script
+    assert "Create or select a project to use ontology" in html
+    assert "Projects define ontology-development workspaces" in html
+    assert "LLM settings are used for project metadata suggestions" in html
+    assert "Ontology files are downstream of the active project" in html
+    assert "Export writes accepted reviewed candidates" in html
+    assert "active-project-banner" in styles
+    assert "project-card" in styles
+    assert "project-detail-panel" in styles
+    assert "project-wizard-steps" in html
+    assert "existing_ontology_project" in html
+    assert "function suggestedBaseIriFor" in script
+    assert "projectBaseIriEdited" in script
+    assert "dependency_projects" not in html
+    assert "external_references" not in html
+    assert "prefill-bpo-project" not in html
+    assert "prefill-ppo-project" not in html
+    assert "/api/projects/suggest-metadata" in script
+    assert "/api/zotero/entries/${encodeURIComponent(entry.id)}/project-tags" in script
+    assert "project_tags" in script
     assert "Promise.all([loadStatus(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()])" not in script
     assert "20260602-md" in html
 
@@ -846,7 +1128,7 @@ def test_bad_selected_ontology_file_returns_controlled_error(client, tmp_path):
     client.post("/api/config/ontology-path", json={"path": str(ontology_dir)})
     selected = client.post("/api/ontology/select-file", json={"path": str(ontology_file)})
 
-    status = client.get("/api/ontology/status")
+    status = client.get("/api/ontology/status", params={"global_fallback": "true"})
     terms = client.get("/api/ontology/terms")
 
     assert selected.status_code == 200
@@ -854,6 +1136,50 @@ def test_bad_selected_ontology_file_returns_controlled_error(client, tmp_path):
     assert status.json()["error"]
     assert terms.status_code == 400
     assert "Could not load ontology terms" in terms.json()["detail"]
+
+
+def test_ontology_status_requires_active_project_by_default(client):
+    status = client.get("/api/ontology/status")
+
+    assert status.status_code == 200
+    body = status.json()
+    assert body["status"] == "no_project"
+    assert body["selected_file"] is None
+    assert "Select or create a project" in body["message"]
+
+
+def test_ontology_status_uses_active_project_source(client, tmp_path):
+    ontology_file = tmp_path / "project-edit.ttl"
+    ontology_file.write_text(
+        """@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://example.org/BPO_0001> a owl:Class ; rdfs:label "bioprocess class" .
+""",
+        encoding="utf-8",
+    )
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "Bioprocess Ontology",
+            "ontology_id": "bpo",
+            "ontology_title": "Bioprocess Ontology",
+            "project_type": "domain_ontology",
+            "base_iri": "http://purl.obolibrary.org/obo/bpo.owl",
+            "local_workspace_path": str(tmp_path / "workspace"),
+            "editable_ontology_path": str(ontology_file),
+            "activate": True,
+        },
+    )
+
+    status = client.get("/api/ontology/status")
+
+    assert project.status_code == 200
+    assert status.status_code == 200
+    body = status.json()
+    assert body["project"]["ontology_id"] == "bpo"
+    assert body["selected_file"] == str(ontology_file)
+    assert body["selected_source"] == "editable_ontology_path"
+    assert body["term_count"] == 1
 
 
 def test_ontology_and_meta_graph_endpoints(client, tmp_path):
@@ -874,6 +1200,47 @@ def test_ontology_and_meta_graph_endpoints(client, tmp_path):
     assert ontology_graph["edges"][0]["label"] == "subClassOf"
     assert meta_graph["nodes"]
     assert meta_graph["edges"]
+
+
+def test_ontology_tree_endpoint_from_asserted_hierarchy(client, tmp_path):
+    ontology_dir = tmp_path / "ppo"
+    ontology_dir.mkdir()
+    ontology_file = ontology_dir / "ppo.obo"
+    ontology_file.write_text(
+        """format-version: 1.2
+
+[Term]
+id: PPO:0000
+name: root process
+
+[Term]
+id: PPO:0001
+name: preferential hydration
+def: "A hydration process."
+is_a: PPO:0000 ! root process
+relationship: part_of PPO:9999 ! lateral target
+""",
+        encoding="utf-8",
+    )
+    client.post("/api/config/ontology-path", json={"path": str(ontology_dir)})
+    client.post("/api/ontology/select-file", json={"path": str(ontology_file)})
+
+    tree = client.get("/api/ontology/tree", params={"depth_limit": 3}).json()
+
+    assert tree["term_count"] == 2
+    assert tree["nodes"]
+    assert tree["nodes"][0]["synonyms"] == []
+    assert tree["nodes"][0]["source_file"]
+    assert tree["hierarchy_edges"][0]["hierarchical"] is True
+    assert tree["hierarchy_edges"][0]["edgeType"] == "hierarchy"
+    assert tree["hierarchy_edges"][0]["relation"] == "is_a"
+    assert tree["relation_edges"][0]["relation_type"] == "part_of"
+    assert tree["relation_edges"][0]["edgeType"] == "semantic"
+    assert tree["relation_edges"][0]["relation"] == "part_of"
+    assert tree["relation_edges"][0]["hierarchical"] is False
+    assert tree["roots"][0]["id"] == "PPO:0000"
+    assert tree["roots"][0]["children"][0]["id"] == "PPO:0001"
+    assert tree["metadata"]["warnings"] == []
 
 
 def test_local_ontology_match_defaults_to_no_selection(client, tmp_path):

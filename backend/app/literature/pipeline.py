@@ -45,6 +45,9 @@ class LiteraturePipelineResult:
     created_paper_markdown_count: int
     structured_markdown_count: int
     combined_markdown_count: int
+    skipped_paper_count: int = 0
+    extraction_report_file: Path | None = None
+    cleanup_report_file: Path | None = None
 
 def literature_pipeline_config_from_settings(
     settings: Settings | None = None,
@@ -186,11 +189,23 @@ def create_paper_markdown_files_from_generated(generated_md_dir: Path, papers_di
         front_matter = "\n".join(
             [
                 "---",
+                f"paper_id: {_quote_yaml(f'zotero-pdf-{digest}')}",
+                "zotero_key: \"\"",
                 f"id: {_quote_yaml(f'zotero-pdf-{digest}')}",
                 f"title: {_quote_yaml(title)}",
+                "authors:",
+                "year: null",
+                "journal: \"\"",
+                "doi: \"\"",
+                "source_pdf: \"\"",
+                f"raw_markdown: {_quote_yaml(str(generated_path))}",
                 "source: \"Zotero literature pipeline\"",
                 f"source_pdf_markdown: {_quote_yaml(str(generated_path))}",
+                "extraction_method: \"PyMuPDF via BibPipelineCombined\"",
                 f"imported_at: {_quote_yaml(imported_at)}",
+                f"extraction_date: {_quote_yaml(imported_at)}",
+                "cleanup_version: \"phase2-cleanup-v1\"",
+                "extraction_quality: \"usable\"",
                 "---",
             ]
         )
@@ -271,11 +286,20 @@ def run_literature_pipeline(config: LiteraturePipelineConfig) -> LiteraturePipel
         except Exception:
             pass
 
-    combined_markdown_count = len(list(config.papers_dir.glob("*.md")))
+    from backend.app.literature.repository import (
+        combine_literature_markdown,
+        load_llm_ready_repository_with_diagnostics,
+    )
+
+    repository_result = load_llm_ready_repository_with_diagnostics(config.papers_dir)
+    combined_markdown_count = len(repository_result.papers)
     if combined_markdown_count == 0:
         raise ValueError(f"{PIPELINE_STAGE_ERROR['combine_failed']} Folder: {config.papers_dir}")
-    if not config.combined_output_file.exists():
-        raise ValueError(f"{PIPELINE_STAGE_ERROR['combine_failed']} File: {config.combined_output_file}")
+    config.combined_output_file.parent.mkdir(parents=True, exist_ok=True)
+    config.combined_output_file.write_text(
+        combine_literature_markdown(repository_result.papers),
+        encoding="utf-8",
+    )
 
     return LiteraturePipelineResult(
         combined_output_file=config.combined_output_file,
@@ -285,18 +309,39 @@ def run_literature_pipeline(config: LiteraturePipelineConfig) -> LiteraturePipel
         created_paper_markdown_count=created_paper_markdown_count,
         structured_markdown_count=structured_markdown_count,
         combined_markdown_count=combined_markdown_count,
+        skipped_paper_count=len(repository_result.skipped_files),
+        extraction_report_file=config.base_dir / "metadata" / "extraction_report.json",
+        cleanup_report_file=config.base_dir / "metadata" / "cleanup_reports.json",
     )
 
 
 def combine_markdown_files(papers_dir: Path, output_file: Path) -> int:
-    """Compatibility helper that delegates combining to BibPipelineCombined.run_pipeline."""
-    run_pipeline(
-        base_dir=papers_dir.parent,
-        zotero_storage_dir=papers_dir.parent,
-        papers_dir=papers_dir,
-        combined_output_file=output_file,
-        skip_import=True,
-        skip_convert=True,
-        skip_structure=True,
+    """Compatibility helper that combines canonical per-paper Markdown files."""
+    from backend.app.literature.repository import (
+        combine_literature_markdown,
+        load_llm_ready_repository_with_diagnostics,
     )
-    return _count_files(papers_dir, ".md")
+
+    result = load_llm_ready_repository_with_diagnostics(papers_dir)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if result.papers:
+        output_file.write_text(combine_literature_markdown(result.papers), encoding="utf-8")
+        return len(result.papers)
+
+    markdown_files = sorted(papers_dir.glob("*.md")) if papers_dir.exists() else []
+    blocks = ["# Combined Literature Markdown", "", f"- Source folder: `{papers_dir}`", f"- Number of files: {len(markdown_files)}", ""]
+    for index, path in enumerate(markdown_files, start=1):
+        blocks.extend(
+            [
+                "---",
+                "",
+                f"# Document {index}: {path.stem}",
+                "",
+                f"<!-- Source file: {path.name} -->",
+                "",
+                path.read_text(encoding="utf-8", errors="replace").strip(),
+                "",
+            ]
+        )
+    output_file.write_text("\n".join(blocks), encoding="utf-8")
+    return len(markdown_files)

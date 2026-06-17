@@ -17,6 +17,7 @@ Requires-Dist: httpx>=0.27
 Requires-Dist: requests>=2.32
 Requires-Dist: PyMuPDF>=1.24
 Requires-Dist: rdflib>=7.0
+Requires-Dist: google-genai>=1.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.2; extra == "dev"
 Requires-Dist: ruff>=0.5; extra == "dev"
@@ -37,6 +38,7 @@ This is a project scaffold with:
 
 - FastAPI backend structure
 - Typer CLI entrypoint
+- project management layer for multi-project ontology curation workflows
 - standalone `zotero_lit_md` CLI package for Zotero Desktop local-PDF Markdown export
 - SQLite/PostgreSQL-ready settings
 - JSON schemas for candidate terms and relations
@@ -92,35 +94,54 @@ Open <http://127.0.0.1:8000/> after the server starts. Routine curation should n
 The repository also includes a standalone command-line exporter for creating full-text, LLM/RAG-ready Markdown from Zotero Desktop's local API and locally stored PDF attachments:
 
 ```powershell
-python -m zotero_lit_md --collection "Protein precipitation" --output .\literature_md
-python -m zotero_lit_md --item-keys ABCD1234 EFGH5678 --output .\literature_md --json-sidecar
-python -m zotero_lit_md --all-with-pdfs --output .\literature_md --combined-corpus
+python -m zotero_lit_md extract-zotero --collection "Protein precipitation" --storage-path "C:\Users\<USER>\Zotero\storage" --output .\literature_md --verbose
+python -m zotero_lit_md extract-zotero --collection-key COLLECTIONKEY --storage-path "C:\Users\<USER>\Zotero\storage" --output .\literature_md
+python -m zotero_lit_md extract-zotero --item-keys ABCD1234 EFGH5678 --storage-path "C:\Users\<USER>\Zotero\storage" --output .\literature_md --json-sidecar
+python -m zotero_lit_md extract-storage --storage-path "C:\Users\<USER>\Zotero\storage" --output .\literature_md --all-pdfs
+python -m zotero_lit_md extract-storage --storage-path "C:\Users\<USER>\Zotero\storage" --output .\literature_md --query "protein precipitation"
+python -m zotero_lit_md pdf-to-md --pdf "C:\path\to\paper.pdf" --output .\literature_md --verbose
+python -m zotero_lit_md folder-to-md --folder "C:\Users\<USER>\Zotero\storage" --output .\literature_md --recursive --verbose
+python -m zotero_lit_md trace-item --item-key ABCD1234 --storage-path "C:\Users\<USER>\Zotero\storage" --output .\trace_out --verbose
+python -m zotero_lit_md doctor --storage-path "C:\Users\<USER>\Zotero\storage" --verbose
+python -m zotero_lit_md from-folder .\pdfs --output .\literature_md
 ```
 
-The exporter uses `http://127.0.0.1:23119/api/`, so Zotero Desktop must be running with the local API enabled. It does not require Zotero cloud credentials and does not call publisher websites. It writes one Markdown file per paper, can write structured JSON sidecars, can write a combined corpus file, and writes a failure report without stopping the whole run when one paper fails. See [zotero_lit_md/README.md](zotero_lit_md/README.md) for the detailed output contract and limitations.
+The API-free foundation commands are `pdf-to-md` and `folder-to-md`: they open local PDFs from disk with PyMuPDF, extract the PDF text layer, clean headings/captions lightly, and write LLM/RAG-ready Markdown without contacting Zotero. The exporter uses `http://127.0.0.1:23119/api/` only for Zotero-guided extraction. It does not require Zotero cloud credentials and does not call publisher websites. The Zotero local API is used as an indexing layer for parent items and child attachment keys only. Actual stored-PDF discovery is filesystem-first: the exporter inspects `{storage path}\{attachmentKey}\` and opens the discovered `.pdf` files from disk with PyMuPDF. `extract-storage` bypasses the API entirely for local storage fallback extraction.
 
 ## Browser Workflow
 
 The browser UI is split into small pages:
 
 - Dashboard: local status and links to the main workflows.
-- Configuration: Zotero API settings, LLM/chatbot settings, Zotero connection testing, and Zotero sync.
+- Projects: create/select ontology curation projects and inspect project paths.
+- Configuration: Zotero metadata sync settings, LLM/chatbot settings, Zotero connection testing, Zotero metadata sync, and the local Zotero literature source path used for PDF import.
 - Literature: searchable list of imported or synced Zotero records with titles, Zotero links, and per-record Markdown inspection.
 - Existing Ontology: local PPO ontology path, detected ontology files, indexing, and term search.
+- Curation Prompt: editable ontology-curation LLM prompt and run controls.
 - Curation: document ingestion, candidate extraction, candidate editing, local PPO matching, and external OLS matching.
+- Suggestions: project-scoped curation runs, structured suggestion import, and rich expert review decisions.
+- Evaluation: project-scoped metrics and curation-run comparison.
 - Export: approved candidate downloads for ROBOT/ODK/Protégé-oriented workflows.
 
 The header includes a consistent logo link back to the Dashboard and a Light/Dark theme toggle. Theme choice is stored in browser local storage; if no choice exists, the UI follows the system color-scheme preference. Header and dashboard navigation use the static app's current client-side route map, so switching pages updates the visible workflow immediately without requiring a browser refresh.
 Startup loads the dashboard status first and then only the current page's data, so an optional workflow error such as an unparsable selected ontology file is shown as a visible message instead of leaving the local workspace loading indicator in place.
+Buttons, links, and other clickable controls provide visible pressed feedback plus an accessible status toast. Long-running actions disable their button, show a running label immediately, and report completion or errors in text.
 
 The workflow supports:
 
+- create and select active ontology curation projects with project metadata, local folder layout, ODK path, and GitHub metadata
 - review backend, database, Zotero, and LLM readiness in Application Status
 - save Zotero credentials and LLM/chatbot credentials in Configuration
-- test Zotero credentials, sync all configured Zotero records, or load local test Zotero entries
+- test Zotero credentials, sync all configured Zotero records, load local test Zotero entries, or import local Zotero PDFs into Markdown
 - view synced/imported Zotero records, open them in Zotero when an item key is available, and inspect the Markdown record used by the UI
 - scan and index a local PPO ontology folder, defaulting to `C:\Users\ge47vob\ontology-development-kit\target\ppo`
 - inspect ontology and curation meta-model graphs with pan, zoom, node selection, and edge selection
+- review, edit, save, reset, and run the ontology curation prompt before sending ontology/literature context to an LLM
+- create project curation runs with `literature_only`, `ontology_only`, `literature_plus_ontology`, or `structured_relation_extraction` prompt strategies
+- parse structured JSON suggestions into persistent project/run records while preserving malformed raw output diagnostics
+- review each suggestion as accepted, edited, rejected, duplicate, unsupported, or further_review with comments and review time
+- compute project evaluation metrics for precision, unsupported rate, duplicate rate, relation correctness, evidence traceability, and review effort
+- compare curation runs by exact label overlap, normalized label overlap, and relation triple overlap
 - ingest a server-side literature file path or paste extracted text/notes into the Literature panel
 - extract candidates from all valid LLM-ready literature Markdown files in the repository without selecting an individual paper
 - run deterministic mock extraction, or use an OpenAI-compatible LLM when configured
@@ -182,47 +203,42 @@ imported_at: "2026-06-02T12:00:00+00:00"
 ...
 ```
 
-The per-paper repository omits page-wise chunks, running headers/footers, page numbers, references, and publisher boilerplate where the local deterministic cleaner can identify them. Candidate extraction uses all valid Markdown files in this repository automatically. Malformed Markdown files are reported and skipped when at least one valid file is available; if none are valid, the UI asks you to import literature first. Reset the repository from the Literature page with explicit confirmation, or from the CLI:
+The per-paper repository omits page-wise chunks, running headers/footers, page numbers, references, and publisher boilerplate where the local deterministic cleaner can identify them. Candidate extraction uses all valid Markdown files in this repository automatically. Malformed Markdown files are reported and skipped when at least one valid file is available; if none are valid, the UI asks you to import literature first. Reset the literature workspace from the Literature page with explicit confirmation, or from the CLI:
 
 ```powershell
 oca literature reset-repository --yes
 ```
 
-Refresh the section-based literature JSON export from deposited Zotero PDF attachments:
+The reset clears every file and subfolder under the configured `OCA_LITERATURE_BASE_DIR` literature directory, recreates the empty directory, and clears the runtime literature/candidate cache. It refuses unsafe reset targets such as filesystem roots and unlinks symlinks instead of following them.
+
+Run the integrated Zotero PDF-to-Markdown pipeline from the browser by setting `Zotero literature source` on the Configuration page and clicking `Import Zotero PDFs`, or from the CLI:
 
 ```powershell
-oca literature sync-from-zotero --all
-oca literature sync-from-zotero-local-pdf --all
-python -m ontology_curation_assistant literature sync-from-zotero --title "Cosolvent effects in protein folding assays" --force
-python -m ontology_curation_assistant literature sync-from-zotero --all --dry-run
-python -m ontology_curation_assistant literature sync-from-zotero --all --include-web-comparison
-oca literature extract-zotero-pdf --all
-python -m ontology_curation_assistant literature extract-zotero-pdf --all --structure sections
-python -m ontology_curation_assistant literature extract-zotero-pdf --all --include-pages
-python -m ontology_curation_assistant literature extract-zotero-pdf --title "Cosolvent effects in protein folding assays" --force
-python -m ontology_curation_assistant literature extract-zotero-pdf --all --dry-run
+oca literature pipeline
+oca literature pipeline --zotero-storage-dir "C:\Users\<USER>\Zotero\storage" --combined-output-file .\literature\combined_literature.md
 ```
 
-These commands resolve each literature entry to a Zotero parent item, read its child PDF attachment from local Zotero storage or a linked local file, extract PDF text with `pypdf`, deduplicate repeated sections, and write canonical section/subsection text under `content.sections`. They do not use DOI URLs, publisher URLs, Zotero web links, or browser downloads as extraction sources. Existing successful deposited-PDF extraction is skipped unless `--force` is passed. Web extraction is never canonical; `--include-web-comparison` is diagnostic-only and does not store full duplicate web text.
+The pipeline copies PDFs from the configured Zotero literature storage path into `literature/Paper-PDF`, converts those PDFs to raw section-structured Markdown in `literature/Markdown`, creates or refreshes cleaned canonical per-paper Markdown records under `literature/papers`, and writes one comprehensive combined Markdown corpus at `literature/combined_literature.md` from the canonical per-paper files. It fails with clear text if the Zotero source is missing, does not exist, contains no PDFs, copies no PDFs, generates no Markdown, or cannot write the combined corpus. It does not create or use a literature JSON sidecar. Before each import run, the wrapper clears only the configured copied-PDF and generated-Markdown working folders under the literature base directory; repeated sync/import runs refresh artifacts instead of creating duplicate `_1` files.
 
-Inspect what the application reads from the authoritative JSON:
+The default literature artefacts are:
 
-```powershell
-oca literature inspect-json --title "Protein-solvent preferential interactions and protein hydration"
-python -m ontology_curation_assistant literature inspect-json --id "zotero-ITEMKEY" --debug
-python -m ontology_curation_assistant literature inspect-json --title "Cosolvent effects in protein folding assays" --raw
-python -m ontology_curation_assistant literature inspect --title "Cosolvent effects in protein folding assays" --section introduction
-python -m ontology_curation_assistant literature canonicalize
-python -m ontology_curation_assistant literature validate-schema
-python -m ontology_curation_assistant literature validate-sync
-python -m ontology_curation_assistant literature find-duplicates
+```text
+literature/
+  Paper-PDF/                 copied source PDFs
+  Markdown/                  raw extracted Markdown
+  papers/                    cleaned canonical per-paper Markdown
+  combined_literature.md     generated combined LLM corpus
+  metadata/
+    literature_index.json
+    extraction_report.json
+    cleanup_reports.json
 ```
 
-The inspection and validation commands print the resolved absolute JSON path, entry count, file cache status, selected paper ID/title/Zotero key, content hash, canonical source, extraction status, section count/headings, duplicate-section count, and failure diagnostics when present.
+Per-paper Markdown front matter includes provenance fields such as `paper_id`, `zotero_key`, `source_pdf`, `raw_markdown`, `extraction_method`, `extraction_date`, `cleanup_version`, and `extraction_quality` when available, while retaining the older `id`, `source`, and `imported_at` fields for compatibility. Cleanup is conservative and records named rule counts/examples; DOI-containing scientific lines are not removed merely because they contain a DOI. The combined corpus includes explicit paper boundary comments and skips files marked `failed` or `requires_manual_review`.
 
 ### Zotero from the Browser
 
-In API Key Configuration, enter:
+In Configuration > Zotero Metadata Sync, enter:
 
 - Zotero library type: `user` or `group`
 - Zotero user ID or group ID
@@ -233,6 +249,8 @@ Use Zotero Connection to test the credentials, then click `Sync All Zotero Recor
 
 If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
 
+In Configuration > Literature Pipeline Configuration, only `Zotero literature source` is required for the integrated PDF import flow. Point it at the local Zotero `storage` folder, then click `Import Zotero PDFs`. Advanced output paths still come from environment settings when needed, but they are not exposed in the routine browser workflow.
+
 ### LLM / Chatbot Configuration
 
 In API Key Configuration, enter:
@@ -241,12 +259,15 @@ In API Key Configuration, enter:
 - API key
 - optional model name, such as `gpt-4o-mini`
 - optional OpenAI-compatible base URL
+- optional context character limit through `OCA_LLM_CONTEXT_CHAR_LIMIT`
 
 If no LLM key is configured, Candidate Extraction still works through a deterministic mock extractor. Select `Use configured LLM` only when you want the backend to call the configured OpenAI-compatible chat completions endpoint.
 
 ### Candidate Extraction and Curation
 
 Add optional guidance, then click `Extract Candidates`. The backend combines all valid LLM-ready Markdown files in the configured literature repository automatically. Draft, in-review, deferred, and needs-more-evidence candidates appear in Candidate Curation, where you can edit all curator-facing fields, add a manual candidate, approve/reject candidates, and run OLS checks. Approved and rejected candidates leave the active curation queue. Use `Run OLS For Draft Candidates` to batch-check draft candidates.
+
+Open <http://127.0.0.1:8000/curation-prompt> to review the ontology curation prompt before running the LLM suggestion workflow. The saved prompt is stored in local application settings and is assembled deterministically with the selected existing ontology `.obo` file and the current `literature/combined_literature.md` file. Missing or empty literature, missing LLM credentials, or a missing/non-OBO selected ontology file stops the request before any LLM call. Request traces and parsed responses are written under `literature/curation_runs/`; invalid JSON responses are preserved as raw text for debugging. The selected OBO file is read-only during suggestion generation.
 
 ### Existing PPO Ontology
 
@@ -276,10 +297,32 @@ Local PPO matching differs from OLS matching:
 Useful endpoints include:
 
 ```text
+GET    /api/projects
+POST   /api/projects
+GET    /api/projects/active
+GET    /api/projects/{project_ref}
+PATCH  /api/projects/{project_ref}
+POST   /api/projects/{project_ref}/select
+GET    /api/projects/{project_ref}/odk/validate
+GET    /api/projects/{project_ref}/odk/logs
+POST   /api/projects/{project_ref}/odk/logs
+GET    /api/projects/{project_ref}/exports/accepted.robot.tsv
 GET    /api/config/status
 POST   /api/config/zotero
 POST   /api/config/llm
 POST   /api/config/ontology-path
+POST   /api/config/literature
+GET    /api/curation/prompt
+POST   /api/curation/prompt
+DELETE /api/curation/prompt
+GET    /api/curation/prompt-strategies
+GET    /api/curation/runs
+POST   /api/curation/runs
+POST   /api/curation/runs/{run_id}/suggestions
+GET    /api/suggestions
+POST   /api/suggestions/{suggestion_id}/review
+POST   /api/evaluation/compute
+POST   /api/evaluation/compare
 GET    /api/config/saved
 POST   /api/config/saved
 POST   /api/config/saved/{id}/activate
@@ -301,6 +344,8 @@ GET    /api/ontology/graph
 GET    /api/meta-ontology/graph
 GET    /api/literature
 POST   /api/literature
+POST   /api/literature/pipeline/run
+POST   /api/curation/suggestions/run
 POST   /api/extraction/candidates
 GET    /api/candidates
 POST   /api/candidates
@@ -320,6 +365,50 @@ POST   /api/refine
 POST   /api/odk/workflow
 GET    /api/exports/approved.robot.tsv
 GET    /api/exports/approved.candidates.tsv
+```
+
+## Project-Based Workflow
+
+Create a project from the browser at <http://127.0.0.1:8000/projects>, or from the CLI:
+
+```powershell
+oca project create --name "Protein precipitation" --ontology-id ppo --ontology-title "Protein Precipitation Ontology" --base-iri "http://purl.obolibrary.org/obo/PPO_" --local-workspace-path "C:\path\to\workspace" --github-url "https://github.com/example/ppo"
+oca project list
+oca project select protein-precipitation
+oca project show
+```
+
+Project creation writes a clear local layout under `projects/<project_slug>/` with `literature/`, `ontology/`, `curation/`, `evaluation/`, and `logs/` subfolders plus `project.json`. Existing non-project literature, candidate, and export workflows remain available.
+
+Create a curation run and import structured LLM suggestion JSON:
+
+```powershell
+oca curation run --project protein-precipitation --strategy literature_plus_ontology --raw-output-file .\suggestions.json
+oca curation list-runs --project protein-precipitation
+oca curation review 1 --status edited --reviewer "Curator" --comment "Accepted after wording edit" --review-time-seconds 120
+```
+
+Review statuses are `accepted`, `edited`, `rejected`, `duplicate`, `unsupported`, and `further_review`. Default project exports include only accepted and edited suggestions:
+
+```powershell
+oca ontology export-templates --project protein-precipitation
+```
+
+Compute and compare evaluation metrics:
+
+```powershell
+oca evaluation compute --project protein-precipitation
+oca evaluation compare --project protein-precipitation --runs 1 --runs 2
+oca evaluation export --project protein-precipitation --output .\evaluation.json
+```
+
+Project ODK support currently validates/logs project metadata and required paths, initializes a project ODK folder placeholder, and exports accepted/edited suggestions. Build/test commands are logged as explicit pending manual operations until safe command execution is configured for the project:
+
+```powershell
+oca ontology init-odk --project protein-precipitation
+oca ontology validate --project protein-precipitation
+oca ontology build --project protein-precipitation
+oca ontology test --project protein-precipitation
 ```
 
 ## OLS Matching
@@ -394,6 +483,20 @@ OCA_ONTOLOGY_REPO=C:\path\to\your\odk-managed-ontology
 
 The assistant should generate reviewed templates into the ontology repository, then run configured ODK or Make targets.
 
+## LLM Ontology Suggestion Dry Run
+
+Create a traceable LLM ontology-suggestion prompt/export from the canonical Markdown literature repository without credentials:
+
+```powershell
+oca llm-ontology-suggestions --dry-run --output .\literature\ontology_suggestions\trace.json
+```
+
+The trace includes exported literature records, the prompt, skipped malformed Markdown files, and a schema-valid empty `suggestions` payload. Passing `--no-dry-run` requires configured OpenAI-compatible LLM credentials and validates the response shape before writing the trace. To explicitly reference a generated suggestion trace during the safe ODK handoff:
+
+```powershell
+oca odk-apply-approved --suggestion-file .\literature\ontology_suggestions\trace.json
+```
+
 ## Zotero Metadata
 
 Offline metadata import:
@@ -415,13 +518,32 @@ oca zotero-sync --library-type group --library-id 123456 --collection COLLECTION
 
 Configure API sync with `OCA_ZOTERO_LIBRARY_TYPE`, `OCA_ZOTERO_LIBRARY_ID`, optional `OCA_ZOTERO_API_KEY`, optional `OCA_ZOTERO_COLLECTION_KEY`, and `OCA_ZOTERO_API_BASE_URL`. Sync imports metadata only; it does not download attachments or write to Zotero.
 
-Direct deposited-PDF extraction also uses:
+The routine browser literature pipeline configuration uses:
 
-- `OCA_ZOTERO_STORAGE_DIR`: Zotero `storage` folder for imported attachments, where files are resolved as `<storage>/<attachment_key>/<filename>.pdf`.
+- `OCA_ZOTERO_LITERATURE_STORAGE_PATH`: Zotero `storage` folder read by the integrated literature pipeline.
+
+Advanced path settings are available through environment configuration:
+
 - `OCA_ZOTERO_LINKED_ATTACHMENT_BASE_DIR`: optional base folder for relative linked-file attachment paths.
+- `OCA_LITERATURE_BASE_DIR`: base folder for the integrated combined literature pipeline, defaulting to `literature`.
+- `OCA_LITERATURE_PDF_DIR`: folder where Zotero PDFs are copied before conversion, defaulting to `literature/Paper-PDF`.
+- `OCA_LITERATURE_GENERATED_MD_DIR`: folder for full-text Markdown generated from PDFs, defaulting to `literature/Markdown`.
 - `OCA_LITERATURE_REPOSITORY_PATH`: per-paper LLM-ready Markdown repository path, defaulting to `literature/papers`.
+- `OCA_LITERATURE_COMBINED_OUTPUT_FILE`: final combined LLM-ready Markdown corpus path, defaulting to `literature/combined_literature.md`.
+- `OCA_LITERATURE_FUZZY_MIN_SCORE`: minimum title-match score used when merging generated full text into paper Markdown, defaulting to `0.82`.
 
 For the Zotero local API, set `OCA_ZOTERO_API_BASE_URL=http://localhost:23119/api` with the relevant user or group library ID.
+
+Run the integrated configurable pipeline:
+
+```powershell
+oca literature pipeline
+oca literature pipeline --zotero-storage-dir "C:\Users\<USER>\Zotero\storage" --combined-output-file .\literature\combined_literature.md
+```
+
+The pipeline copies PDFs from the configured Zotero literature storage path, converts them to raw Markdown with PyMuPDF, creates cleaned canonical per-paper Markdown records when the import starts from PDFs only, merges matching generated full text into `literature/papers`, writes diagnostics under `literature/metadata`, and writes the combined LLM-ready Markdown corpus from usable canonical papers. Passing `--base-dir` to the CLI derives the original expected subfolders (`Paper-PDF`, `Markdown`, `papers`, and `combined_literature.md`) from that base unless a more specific folder option is supplied.
+
+Later BFO support should target BFO 2020 terminology and identifiers. Later relation validation should use a version-controlled static YAML or JSON relation catalogue in this repository, with optional checks against ontology imports.
 
 ## PPO ODK and GitHub Export Configuration
 

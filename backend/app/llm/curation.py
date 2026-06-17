@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.app.config import get_settings
-from backend.app.llm.service import LlmUnavailableError, _call_openai_compatible
+from backend.app.llm.clients import LlmClientError, estimate_input_size, generate_text
+from backend.app.llm.service import LlmUnavailableError
 from backend.app.services.runtime_config import LlmRuntimeConfig
 
 
@@ -109,6 +110,8 @@ class CurationRunResult:
     warning_count: int
     chunk_count: int
     oversized: bool
+    input_chars: int
+    input_approx_tokens: int
     payload: dict[str, Any] = field(default_factory=dict)
     message: str = "Ontology curation suggestions completed."
 
@@ -219,12 +222,11 @@ def run_curation_suggestion_workflow(
     max_context_chars: int | None = None,
     caller: SuggestionCaller | None = None,
 ) -> CurationRunResult:
-    if not config.provider or not config.api_key:
+    if not config.provider or not config.resolved_api_key:
         raise LlmUnavailableError("LLM configuration is missing. Configure provider and API key before curation.")
-    if config.provider.casefold() not in {"openai", "openai-compatible"}:
-        raise LlmUnavailableError("Only OpenAI-compatible LLM providers are supported for curation.")
 
     inputs = load_curation_inputs(prompt=prompt, ontology_path=ontology_path, literature_path=literature_path)
+    input_size = estimate_input_size(assemble_curation_prompt(inputs))
     limit = max_context_chars or get_settings().llm_context_char_limit
     chunks = _curation_chunks(inputs, limit)
     destination = output_dir or Path("literature") / "curation_runs" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -269,6 +271,8 @@ def run_curation_suggestion_workflow(
         warning_count=len(aggregated["warnings"]),
         chunk_count=len(chunks),
         oversized=len(chunks) > 1,
+        input_chars=input_size["characters"],
+        input_approx_tokens=input_size["approx_tokens"],
         payload=aggregated,
     )
 
@@ -276,8 +280,10 @@ def run_curation_suggestion_workflow(
 def _call_curation_llm(prompt: str, config: LlmRuntimeConfig, caller: SuggestionCaller | None) -> str:
     if caller is not None:
         return caller(prompt, config)
-    base_url = (config.base_url or "https://api.openai.com/v1").rstrip("/")
-    return _call_openai_compatible(base_url, config.api_key or "", config.model or "gpt-4o-mini", prompt)
+    try:
+        return generate_text(prompt, system_prompt="Return valid JSON only.", config=config).text
+    except LlmClientError as exc:
+        raise LlmUnavailableError(str(exc)) from exc
 
 
 def _curation_chunks(inputs: CurationInputs, max_context_chars: int) -> list[str]:

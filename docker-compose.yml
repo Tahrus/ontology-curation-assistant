@@ -2,25 +2,30 @@ services:
   api:
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
     env_file:
-      - .env
+      - .env.example
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
-
-  postgres:
-    image: postgres:16
+      - oca-data:/data
+      - ./projects:/data/projects
+      - ./literature:/data/literature
+      - ./ontology:/ontology
+      - ./odk-workspace:/odk
     environment:
-      POSTGRES_DB: oca
-      POSTGRES_USER: oca
-      POSTGRES_PASSWORD: oca
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
+      OCA_DATABASE_URL: sqlite:////data/oca.sqlite3
+      OCA_ONTOLOGY_REPO: /odk/ontology
+      OCA_LOCAL_ONTOLOGY_PATH: /ontology
+      OCA_ODK_HOME: /odk
+      OCA_PPO_ODK_ONTOLOGY_PATH: /odk/ontology/src/ontology
+      OCA_LITERATURE_BASE_DIR: /data/literature
+      OCA_LITERATURE_PDF_DIR: /data/literature/Paper-PDF
+      OCA_LITERATURE_GENERATED_MD_DIR: /data/literature/Markdown
+      OCA_LITERATURE_REPOSITORY_PATH: /data/literature/papers
+      OCA_LITERATURE_COMBINED_OUTPUT_FILE: /data/literature/combined_literature.md
+      OCA_LLM_API_KEY_ENV_VAR: ${OCA_LLM_API_KEY_ENV_VAR:-GEMINI_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
 
 volumes:
-  postgres-data:
-
+  oca-data:

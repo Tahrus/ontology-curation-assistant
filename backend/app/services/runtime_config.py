@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,10 +25,34 @@ class ZoteroRuntimeConfig:
 
 @dataclass(frozen=True)
 class LlmRuntimeConfig:
-    provider: str | None
-    api_key: str | None
-    model: str | None
-    base_url: str | None
+    provider: str | None = None
+    api_key: str | None = None
+    api_key_env_var: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    temperature: float = 0.0
+    max_output_tokens: int = 1024
+    timeout_seconds: float = 30.0
+    retry_count: int = 1
+    stream: bool = False
+
+    @property
+    def resolved_api_key(self) -> str | None:
+        if self.api_key:
+            return self.api_key
+        if self.api_key_env_var:
+            return os.environ.get(self.api_key_env_var)
+        return None
+
+    @property
+    def api_key_source(self) -> str | None:
+        if self.api_key:
+            return "stored"
+        if self.api_key_env_var and os.environ.get(self.api_key_env_var):
+            return f"environment:{self.api_key_env_var}"
+        if self.api_key_env_var:
+            return f"missing_environment:{self.api_key_env_var}"
+        return None
 
 
 @dataclass(frozen=True)
@@ -84,11 +109,22 @@ def zotero_config(session: Session) -> ZoteroRuntimeConfig:
 
 
 def llm_config(session: Session) -> LlmRuntimeConfig:
+    settings = get_settings()
     return LlmRuntimeConfig(
         provider=get_runtime_value(session, "llm_provider"),
         api_key=get_runtime_value(session, "llm_api_key"),
+        api_key_env_var=get_runtime_value(session, "llm_api_key_env_var"),
         model=get_runtime_value(session, "llm_model"),
         base_url=get_runtime_value(session, "llm_base_url"),
+        temperature=float(get_runtime_value(session, "llm_temperature") or settings.llm_temperature),
+        max_output_tokens=int(
+            get_runtime_value(session, "llm_max_output_tokens") or settings.llm_max_output_tokens
+        ),
+        timeout_seconds=float(
+            get_runtime_value(session, "llm_timeout_seconds") or settings.llm_timeout_seconds
+        ),
+        retry_count=int(get_runtime_value(session, "llm_retry_count") or settings.llm_retry_count),
+        stream=(str(get_runtime_value(session, "llm_stream") or settings.llm_stream).lower() == "true"),
     )
 
 
@@ -152,11 +188,18 @@ def config_status(session: Session) -> dict[str, object]:
             "api_key": mask_secret(zotero.api_key),
         },
         "llm": {
-            "configured": bool(llm.provider and llm.api_key),
+            "configured": bool(llm.provider and llm.resolved_api_key),
             "provider": llm.provider,
             "model": llm.model,
             "base_url": llm.base_url,
-            "api_key": mask_secret(llm.api_key),
+            "api_key": mask_secret(llm.resolved_api_key),
+            "api_key_env_var": llm.api_key_env_var,
+            "api_key_source": llm.api_key_source,
+            "temperature": llm.temperature,
+            "max_output_tokens": llm.max_output_tokens,
+            "timeout_seconds": llm.timeout_seconds,
+            "retry_count": llm.retry_count,
+            "stream": llm.stream,
         },
         "odk": {
             "home": str(settings.odk_home),

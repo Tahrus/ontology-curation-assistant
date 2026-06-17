@@ -14,6 +14,7 @@ from backend.app.config import get_settings
 
 LOGGER = logging.getLogger(__name__)
 REFERENCE_HEADINGS = {"references", "bibliography", "literature_cited"}
+UNUSABLE_EXTRACTION_QUALITIES = {"failed", "requires_manual_review"}
 SCIENTIFIC_HEADINGS = {
     "abstract",
     "summary",
@@ -147,6 +148,14 @@ def load_llm_ready_repository_with_diagnostics(
             skipped_files.append({"path": str(path), "error": str(exc)})
             continue
         paper["source_file"] = str(path)
+        if str(paper.get("extraction_quality") or "").casefold() in UNUSABLE_EXTRACTION_QUALITIES:
+            skipped_files.append(
+                {
+                    "path": str(path),
+                    "error": f"extraction_quality={paper.get('extraction_quality')}",
+                }
+            )
+            continue
         papers.append(paper)
         loaded_files.append(path)
     return LiteratureRepositoryLoadResult(
@@ -180,16 +189,32 @@ def load_literature_markdown(path: Path) -> dict[str, Any]:
     metadata, body = _split_front_matter(text)
     if not metadata:
         raise ValueError("Literature Markdown must include YAML front matter.")
+    
+    paper_id = metadata.get("paper_id") or metadata.get("id") or path.stem
+    extraction_method = metadata.get("extraction_method") or metadata.get("source") or ""
+    extraction_date = metadata.get("extraction_date") or metadata.get("imported_at") or ""
+
     paper = {
-        "id": metadata.get("id") or path.stem,
+        "id": paper_id,
+        "paper_id": paper_id,
+        "zotero_key": metadata.get("zotero_key") or "",
         "title": metadata.get("title") or "",
         "authors": metadata.get("authors") or [],
         "year": metadata.get("year"),
+        "journal": metadata.get("journal") or "",
         "doi": metadata.get("doi") or "",
         "pmid": metadata.get("pmid") or "",
-        "source": metadata.get("source") or "",
+        "source_pdf": metadata.get("source_pdf") or "",
+        "raw_markdown": metadata.get("raw_markdown") or metadata.get("source_pdf_markdown") or "",
+        "source_collection": metadata.get("source_collection") or "",
+        "extraction_method": extraction_method,
+        "extraction_date": extraction_date,
+        "cleanup_version": metadata.get("cleanup_version") or "",
+        "extraction_quality": metadata.get("extraction_quality") or "unknown",
+        # Keep old field names for backward compatibility:
+        "source": extraction_method,
         "url": metadata.get("url") or "",
-        "imported_at": metadata.get("imported_at") or "",
+        "imported_at": extraction_date,
         "abstract": _markdown_section(body, "Abstract"),
         "notes": _markdown_section(body, "Notes"),
         "ontology_relevant_information": _markdown_section(body, "Extracted ontology-relevant information"),
@@ -201,21 +226,31 @@ def load_literature_markdown(path: Path) -> dict[str, Any]:
     return paper
 
 
-def combine_literature_markdown(papers: list[dict[str, Any]]) -> str:
+def combine_literature_markdown(papers: list[dict[str, Any]], *, include_references: bool = False) -> str:
     """Combine loaded Markdown entries into the corpus passed to the LLM."""
-    blocks = ["# Literature Corpus"]
+    blocks = ["# Literature Corpus", "", "# Combined Literature Markdown"]
+    seen_ids: set[str] = set()
     for index, paper in enumerate(papers, start=1):
         entry_id = paper.get("id") or paper.get("paper_id") or f"literature-{index}"
+        if entry_id in seen_ids:
+            continue
+        seen_ids.add(entry_id)
         source_file = paper.get("source_file") or filesystem_safe_paper_filename(paper)
         markdown = paper.get("markdown") or display_literature_markdown(paper)
+        if not include_references:
+            markdown = _strip_reference_section_from_markdown(markdown)
         blocks.append(
             "\n".join(
                 [
+                    f"<!-- BEGIN_PAPER: {entry_id} -->",
+                    "",
                     f"## Literature Entry: {entry_id}",
                     "",
                     f"Source file: `{Path(source_file).name}`",
                     "",
                     markdown.strip(),
+                    "",
+                    f"<!-- END_PAPER: {entry_id} -->",
                 ]
             )
         )
@@ -226,23 +261,48 @@ def display_literature_markdown(paper: dict[str, Any]) -> str:
     """Render a paper as curator-readable Markdown with YAML front matter."""
     normalized = _paper_with_id(paper)
     sections = _flatten_llm_sections(normalized.get("sections") or [])
+    
+    paper_id = normalized.get("paper_id") or normalized.get("id") or ""
+    zotero_key = normalized.get("zotero_key") or ""
+    title = normalized.get("title") or ""
+    authors = normalized.get("authors") or []
+    year = normalized.get("year")
+    journal = normalized.get("journal") or ""
+    doi = normalized.get("doi") or ""
+    source_pdf = normalized.get("source_pdf") or normalized.get("source_pdf_markdown") or ""
+    raw_markdown = normalized.get("raw_markdown") or normalized.get("source_pdf_markdown") or ""
+    source_collection = normalized.get("source_collection") or ""
+    extraction_method = normalized.get("extraction_method") or normalized.get("source") or "Ontology Curation Assistant"
+    extraction_date = normalized.get("extraction_date") or normalized.get("imported_at") or datetime.now(timezone.utc).isoformat()
+    cleanup_version = normalized.get("cleanup_version") or "phase2-cleanup-v1"
+    extraction_quality = normalized.get("extraction_quality") or "usable"
+
     front_matter = _front_matter(
         {
-            "id": normalized.get("id"),
-            "title": normalized.get("title"),
-            "authors": normalized.get("authors") or [],
-            "year": normalized.get("year"),
-            "doi": normalized.get("doi"),
-            "pmid": normalized.get("pmid"),
-            "source": normalized.get("source") or "Ontology Curation Assistant",
-            "url": normalized.get("url"),
-            "imported_at": normalized.get("imported_at") or datetime.now(timezone.utc).isoformat(),
+            "paper_id": paper_id,
+            "zotero_key": zotero_key,
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "journal": journal,
+            "doi": doi,
+            "source_pdf": source_pdf,
+            "raw_markdown": raw_markdown,
+            "source_collection": source_collection,
+            "extraction_method": extraction_method,
+            "extraction_date": extraction_date,
+            "cleanup_version": cleanup_version,
+            "extraction_quality": extraction_quality,
+            # Maintain backward compatibility fields for tests:
+            "id": paper_id,
+            "source": extraction_method,
+            "imported_at": extraction_date,
         }
     )
     body = [
         front_matter,
         "",
-        f"# {normalized.get('title') or 'Untitled literature record'}",
+        f"# {title or 'Untitled literature record'}",
         "",
         "## Abstract",
         "",
@@ -260,7 +320,11 @@ def display_literature_markdown(paper: dict[str, Any]) -> str:
         text = section.get("text") or ""
         if not text:
             continue
-        body.extend([f"### {heading}", "", text, ""])
+        body.extend([f"### {heading}"])
+        normalized_heading = _normalized_section_category(heading)
+        if normalized_heading:
+            body.extend([f"<!-- normalized_section: {normalized_heading} -->"])
+        body.extend(["", text, ""])
     if not sections:
         body.append(normalized.get("ontology_relevant_information") or "")
     return "\n".join(body).strip() + "\n"
@@ -470,6 +534,14 @@ def _strip_reference_text(text: str) -> str:
     )[0].strip()
 
 
+def _strip_reference_section_from_markdown(text: str) -> str:
+    return re.split(
+        r"(?im)^##{2,3}\s*(references|bibliography|literature cited)\s*$",
+        text,
+        maxsplit=1,
+    )[0].rstrip()
+
+
 def _extract_doi(text: str) -> str | None:
     match = re.search(r"\b10\.\d{4,9}/[^\s,;]+", text, re.IGNORECASE)
     return match.group(0).rstrip(".") if match else None
@@ -521,6 +593,24 @@ def _normalize_heading(value: Any) -> str:
     return re.sub(r"_+", "_", text).strip("_")
 
 
+def _normalized_section_category(value: Any) -> str | None:
+    mapping = {
+        "abstract": "abstract",
+        "introduction": "introduction",
+        "materials_and_methods": "methods",
+        "methods": "methods",
+        "methodology": "methods",
+        "results": "results",
+        "discussion": "discussion",
+        "conclusion": "conclusion",
+        "conclusions": "conclusion",
+        "references": "references",
+        "bibliography": "references",
+        "literature_cited": "references",
+    }
+    return mapping.get(_normalize_heading(value))
+
+
 def repository_status(path: Path | None = None) -> dict[str, Any]:
     """Return a small status payload for the LLM-ready literature repository."""
     root = Path(path or get_settings().literature_repository_path)
@@ -569,7 +659,11 @@ def _paper_with_id(paper: dict[str, Any]) -> dict[str, Any]:
 def _front_matter(values: dict[str, Any]) -> str:
     lines = ["---"]
     for key, value in values.items():
-        if value in (None, ""):
+        if value is None:
+            lines.append(f"{key}: null")
+            continue
+        if value == "":
+            lines.append(f"{key}: \"\"")
             continue
         if isinstance(value, list):
             lines.append(f"{key}:")
@@ -627,6 +721,8 @@ def _unquote_yaml_scalar(value: str) -> Any:
     text = value.strip()
     if text.startswith('"') and text.endswith('"'):
         return text[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    if text == "null":
+        return None
     if re.fullmatch(r"\d{4}", text):
         return int(text)
     return text

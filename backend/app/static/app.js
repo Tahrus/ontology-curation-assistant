@@ -4,22 +4,41 @@ const state = {
   entries: [],
   candidates: [],
   rejectedCandidates: [],
+  projects: [],
+  activeProject: null,
+  selectedProjectRef: null,
+  curationRuns: [],
+  suggestions: [],
   ontologyFiles: [],
   ontologyTerms: [],
+  ontologyTree: null,
+  collapsedOntologyNodes: new Set(),
+  selectedOntologyNodeId: null,
+  ontologyFocusNodeId: null,
+  ontologyViewport: { scale: 1, tx: 0, ty: 0 },
+  ontologyCenterOnSelected: false,
+  relationTypes: [],
+  activeCandidateId: null,
   savedConfigs: [],
+  llmProviders: [],
   curationPrompt: null,
+  projectWizardStep: 0,
+  projectBaseIriEdited: false,
   temporaryRejectedIds: new Set(JSON.parse(sessionStorage.getItem("oca-temp-rejected") || "[]")),
   graphPreferences: JSON.parse(localStorage.getItem("oca-graph-preferences") || "{}"),
 };
 
 const APP_ROUTES = {
   "/": "dashboard",
+  "/projects": "projects",
   "/config": "config",
   "/zotero": "zotero",
   "/literature": "zotero",
   "/ontology": "ontology",
   "/curation-prompt": "curation-prompt",
   "/curation": "curation",
+  "/suggestions": "suggestions",
+  "/evaluation": "evaluation",
   "/export": "export",
 };
 
@@ -33,6 +52,15 @@ function safeText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function escapeHtml(value, fallback = "") {
+  return safeText(value, fallback)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function searchableText(value) {
@@ -94,7 +122,11 @@ async function api(path, options = {}) {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.detail || response.statusText);
+    const error = new Error(payload.detail || response.statusText);
+    error.status = response.status;
+    error.detail = payload.detail || response.statusText;
+    error.path = path;
+    throw error;
   }
   return response.json();
 }
@@ -109,6 +141,17 @@ function csv(value) {
 
 function parseCsv(value) {
   return value.split(";").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseListField(value) {
+  return safeText(value)
+    .split(/[\n;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function listText(value) {
+  return Array.isArray(value) ? value.join("\n") : "";
 }
 
 function currentPage() {
@@ -128,17 +171,27 @@ function showCurrentPage() {
 async function refreshCurrentPageData() {
   const page = currentPage();
   if (page === "dashboard") {
-    await loadStatus();
+    await Promise.all([loadStatus(), loadProjects()]);
+  } else if (page === "projects") {
+    await loadProjects();
   } else if (page === "config") {
-    await Promise.all([loadStatus(), loadSavedConfigs()]);
+    await loadStatus();
+    await Promise.all([loadSavedConfigs(), loadLlmProviders()]);
   } else if (page === "zotero") {
+    await loadProjects();
     await loadEntries();
   } else if (page === "ontology") {
+    await loadProjects();
     await loadOntologyStatus();
   } else if (page === "curation-prompt") {
     await Promise.all([loadStatus(), loadCurationPrompt()]);
   } else if (page === "curation") {
-    await Promise.all([loadEntries(), loadCandidates()]);
+    await loadProjects();
+    await Promise.all([loadEntries(), loadRelationTypes(), loadCandidates(), loadOntologyStatus()]);
+  } else if (page === "suggestions") {
+    await Promise.all([loadProjects(), loadCurationRuns(), loadSuggestions()]);
+  } else if (page === "evaluation") {
+    await Promise.all([loadProjects(), loadCurationRuns()]);
   }
 }
 
@@ -188,6 +241,29 @@ function setError(selector, message) {
   node.textContent = message;
   node.classList.remove("success");
   node.classList.add("error");
+}
+
+function projectErrorMessage(operation, error, nextAction = "Review the project fields and try again.") {
+  const detail = error?.detail || error?.message || "The project operation did not complete.";
+  let likelyCause = "A project setting could not be saved or loaded.";
+  if (/already exists|duplicate/i.test(detail)) {
+    likelyCause = "The ontology ID or project identifier is already used by another project.";
+  } else if (/base iri|iri|url/i.test(detail)) {
+    likelyCause = "One of the URL or IRI fields does not look valid.";
+  } else if (/parent|circular|self/i.test(detail)) {
+    likelyCause = "The selected parent project would make an invalid project hierarchy.";
+  } else if (/not found/i.test(detail)) {
+    likelyCause = "The selected project or path could not be found.";
+  } else if (/llm|api key|provider/i.test(detail)) {
+    likelyCause = "The configured LLM settings could not complete the request.";
+  }
+  const technical = error?.status ? `Backend returned ${error.status}${error.path ? ` from ${error.path}` : ""}.` : "No HTTP status was available.";
+  return `${operation} failed. Details: ${detail} Likely cause: ${likelyCause} Next action: ${nextAction} Technical detail: ${technical}`;
+}
+
+function setProjectError(operation, error, nextAction) {
+  console.error(operation, error);
+  setError("#project-message", projectErrorMessage(operation, error, nextAction));
 }
 
 function setAppStatus(message, kind = "") {
@@ -246,27 +322,780 @@ async function withButtonFeedback(button, busyText, action) {
 
 async function loadStatus() {
   state.status = await api("/api/config/status");
+  renderStatusGrid();
+  populateLiteratureConfigForm();
+}
+
+function statusLabel(item) {
+  if (!item?.configured) return "Not configured";
+  return item.exists ? `Ready: ${item.path}` : `Missing: ${item.path}`;
+}
+
+function projectHierarchyLabel(project) {
+  if (!project) return "No active project";
+  const chain = [...(project.parent_chain || []), project].map((item) => item.name || item.ontology_id);
+  return chain.join(" -> ");
+}
+
+function renderStatusGrid() {
+  if (!state.status) return;
+  const active = state.activeProject;
+  const projectLabel = state.activeProject ? ` | Project ${state.activeProject.slug}` : "";
   setAppStatus(
-    `${state.status.backend.app_name} | Zotero ${state.status.zotero.configured ? "configured" : "not configured"} | LLM ${state.status.llm.configured ? "configured" : "mock only"}`
+    `${state.status.backend.app_name}${projectLabel} | Zotero ${state.status.zotero.configured ? "configured" : "not configured"} | LLM ${state.status.llm.configured ? "configured" : "mock only"}`
   );
+  renderActiveProjectBanner();
+  renderProjectDependencyBlocks();
+  const pill = document.querySelector("#active-project-pill");
+  if (pill) {
+    pill.textContent = active
+      ? `Active project: ${active.name} (${active.ontology_id})`
+      : "Active project: none";
+  }
 
   const grid = document.querySelector("#status-grid");
+  if (!grid) return;
   grid.innerHTML = "";
-  [
+  const cards = [
     ["Backend", state.status.backend.ok ? "Ready" : "Unavailable"],
     ["Database", state.status.database.ok ? "Ready" : "Unavailable"],
     ["Zotero", state.status.zotero.configured ? `Ready (${state.status.zotero.library_type})` : "Missing library settings"],
     ["LLM", state.status.llm.configured ? `Ready (${state.status.llm.provider})` : "Mock extraction available"],
     ["Zotero literature storage", state.status.literature.zotero_literature_storage_path_exists ? "Ready" : "Missing path"],
     ["Ontology", state.status.ontology.selected_file || state.status.ontology.path || "Not configured"],
+    ["Active project", active ? active.name : "No active project"],
+    ["Project type", active?.project_type || "Not configured"],
+    ["Ontology ID / prefix", active ? `${active.ontology_id}${active.ontology_namespace ? ` / ${active.ontology_namespace}` : ""}` : "Not configured"],
+    ["Project hierarchy", projectHierarchyLabel(active)],
+    ["Child projects", active?.children?.length ? active.children.map((child) => child.name).join("; ") : "No child projects"],
+    ["Workspace", statusLabel(active?.path_statuses?.workspace_path)],
+    ["ODK repository", statusLabel(active?.path_statuses?.odk_repo_path)],
+    ["Git repository", statusLabel(active?.path_statuses?.local_git_repository_path)],
+    ["GitHub", active?.github_url || "Not configured"],
+    ["Editable ontology", statusLabel(active?.path_statuses?.editable_ontology_path)],
+    ["Built ontology", statusLabel(active?.path_statuses?.built_ontology_path)],
+    ["Literature repository", statusLabel(active?.path_statuses?.literature_repository_path)],
+    ["Tagged literature", active ? `${active.literature_project_tag_count || 0} entr${active.literature_project_tag_count === 1 ? "y" : "ies"}` : "Not available"],
+  ];
+  cards.forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = "status-card";
+    card.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span>`;
+    grid.append(card);
+  });
+}
+
+function renderActiveProjectBanner() {
+  const banner = document.querySelector("#active-project-banner");
+  if (!banner) return;
+  const active = state.activeProject;
+  if (!active) {
+    banner.classList.add("needs-project");
+    banner.innerHTML = `<div>
+        <strong>No active project selected.</strong>
+        <span>Create or select a project to use ontology, literature, curation, and export workflows.</span>
+      </div>
+      <div class="button-row compact-actions">
+        <a href="/projects" data-route>Select or create project</a>
+      </div>`;
+    return;
+  }
+  banner.classList.remove("needs-project");
+  banner.innerHTML = `<div>
+      <strong>Active project: ${escapeHtml(active.name)}</strong>
+      <span>${escapeHtml(active.ontology_id)} | ${escapeHtml(active.project_type)} | ${escapeHtml(projectHierarchyLabel(active))}</span>
+    </div>
+    <div class="button-row compact-actions">
+      <a href="/projects" data-route data-project-details="${escapeHtml(active.slug)}">View project details</a>
+      <a href="/projects" data-route>Switch project</a>
+    </div>`;
+}
+
+function renderProjectDependencyBlocks() {
+  const active = state.activeProject;
+  const message = active
+    ? `Using active project ${active.name} (${active.ontology_id}).`
+    : "No active project selected. Create or select a project before using this workflow.";
+  [
+    "#literature-project-blocker",
+    "#ontology-project-blocker",
+    "#curation-project-blocker",
+    "#export-project-blocker",
+  ].forEach((selector) => {
+    const node = document.querySelector(selector);
+    if (!node) return;
+    node.classList.toggle("hidden", Boolean(active));
+    node.innerHTML = active
+      ? ""
+      : `${escapeHtml(message)} <a href="/projects" data-route>Select or create a project</a>.`;
+  });
+}
+
+async function loadProjects() {
+  try {
+    const payload = await api("/api/projects");
+    state.projects = payload.projects || [];
+    state.activeProject = payload.active_project || null;
+    if (!state.selectedProjectRef && state.activeProject) {
+      state.selectedProjectRef = state.activeProject.slug;
+    }
+    renderProjects();
+    renderDashboardProjectHierarchy();
+    renderActiveProjectBanner();
+    renderProjectDependencyBlocks();
+    renderStatusGrid();
+  } catch (error) {
+    console.error("Load project list failed", error);
+    const dashboardMessage = document.querySelector("#dashboard-project-message");
+    if (dashboardMessage) {
+      dashboardMessage.classList.add("error");
+      dashboardMessage.textContent = projectErrorMessage(
+        "Project hierarchy could not be loaded",
+        error,
+        "Refresh the dashboard or open Project Management."
+      );
+    }
+    setProjectError("Load project list", error, "Refresh the page or create a project from the Projects page.");
+    throw error;
+  }
+}
+
+function renderProjects() {
+  populateProjectParentSelect();
+  const summary = document.querySelector("#active-project-summary");
+  if (summary) {
+    summary.innerHTML = "";
+    const project = state.activeProject;
+    [
+      ["Active project", project ? project.name : "No active project"],
+      ["Project type", project?.project_type || "Not configured"],
+      ["Ontology ID / prefix", project ? `${project.ontology_id}${project.ontology_namespace ? ` / ${project.ontology_namespace}` : ""}` : "Not configured"],
+      ["Parent project", project?.parent_project?.name || "No parent project"],
+      ["Child projects", project?.children?.length ? project.children.map((child) => child.name).join("; ") : "No child projects"],
+      ["Workspace", statusLabel(project?.path_statuses?.workspace_path)],
+      ["ODK repository", statusLabel(project?.path_statuses?.odk_repo_path)],
+      ["Git repository", statusLabel(project?.path_statuses?.local_git_repository_path)],
+      ["GitHub", project?.github_url || "Not configured"],
+      ["Editable ontology", statusLabel(project?.path_statuses?.editable_ontology_path)],
+      ["Built ontology", statusLabel(project?.path_statuses?.built_ontology_path)],
+      ["Literature repository", statusLabel(project?.path_statuses?.literature_repository_path)],
+      ["Tagged literature", project ? `${project.literature_project_tag_count || 0}` : "0"],
+    ].forEach(([label, value]) => {
+      const card = document.createElement("div");
+      card.className = "status-card";
+      card.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span>`;
+      summary.append(card);
+    });
+  }
+  const selectedProject = projectByRef(state.selectedProjectRef) || state.activeProject || state.projects[0] || null;
+  state.selectedProjectRef = selectedProject?.slug || null;
+  renderProjectDetail(selectedProject);
+  const list = document.querySelector("#project-list");
+  if (!list) return;
+  list.innerHTML = "";
+  const projectsByParent = new Map();
+  state.projects.forEach((project) => {
+    const key = project.parent_project_id || "root";
+    projectsByParent.set(key, [...(projectsByParent.get(key) || []), project]);
+  });
+  const ordered = [];
+  function appendProjects(parentId = "root", depth = 0) {
+    (projectsByParent.get(parentId) || []).forEach((project) => {
+      ordered.push({ project, depth });
+      appendProjects(project.id, depth + 1);
+    });
+  }
+  appendProjects();
+  ordered.forEach(({ project, depth }) => {
+    const row = document.createElement("article");
+    row.className = `project-card${project.active ? " is-active-project" : ""}`;
+    row.style.marginLeft = `${Math.min(depth * 18, 72)}px`;
+    row.innerHTML = `<header class="project-card-header">
+        <div>
+          <strong>${project.active ? "Active: " : ""}${escapeHtml(project.name)}</strong>
+          <p>${escapeHtml(project.project_type)} | ontology ID ${escapeHtml(project.ontology_id)} | ${escapeHtml(project.ontology_namespace || "namespace not configured")}</p>
+        </div>
+        <span class="project-state">${project.active ? "Active" : "Inactive"}</span>
+      </header>
+      <div class="project-card-grid">
+        <span><strong>Parent</strong>${escapeHtml(project.parent_project?.name || "None")}</span>
+        <span><strong>Children</strong>${escapeHtml(String(project.child_count ?? project.children?.length ?? 0))}</span>
+        <span><strong>Workspace</strong>${escapeHtml(statusLabel(project.path_statuses?.workspace_path))}</span>
+        <span><strong>Literature</strong>${escapeHtml(statusLabel(project.path_statuses?.literature_repository_path))}</span>
+        <span><strong>Ontology</strong>${escapeHtml(projectOntologyStatus(project))}</span>
+        <span><strong>Last modified</strong>${escapeHtml(project.updated_at || project.created_at || "Not available")}</span>
+      </div>
+      <div class="button-row">
+        <button type="button" data-project-view="${project.slug}">View project details</button>
+        <button type="button" class="secondary" data-project-edit="${project.slug}">Edit project metadata</button>
+        <button type="button" data-project-select="${project.slug}">${project.active ? "Project is active" : "Set this project as active"}</button>
+        <button type="button" class="secondary" data-project-child="${project.slug}">Create child project</button>
+        <button type="button" class="secondary" disabled>Open workspace path (not supported in browser)</button>
+        <a href="/api/projects/${encodeURIComponent(project.slug)}/exports/accepted.robot.tsv">Accepted TSV</a>
+      </div>`;
+    row.querySelector("[data-project-view]").addEventListener("click", () => {
+      state.selectedProjectRef = project.slug;
+      renderProjectDetail(project);
+      document.querySelector("#project-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    row.querySelector("[data-project-select]").addEventListener("click", async (event) => {
+      await selectProjectFromUi(project, event.currentTarget);
+    });
+    row.querySelectorAll("[data-project-edit]").forEach((button) => button.addEventListener("click", () => {
+      fillProjectForm(project);
+      setSuccess("#project-message", `Editing ${project.name}. Current values are loaded in the form above.`);
+    }));
+    row.querySelector("[data-project-child]").addEventListener("click", () => startChildProject(project));
+    list.append(row);
+  });
+  if (!list.children.length) {
+    list.innerHTML = '<p class="message">No projects created yet. Use the wizard above to create your first ontology-development project.</p>';
+  }
+}
+
+function projectsByParentMap() {
+  const map = new Map();
+  state.projects.forEach((project) => {
+    const key = project.parent_project_id || "root";
+    map.set(key, [...(map.get(key) || []), project]);
+  });
+  return map;
+}
+
+function projectStatusBadge(project) {
+  const workspace = project?.path_statuses?.workspace_path;
+  if (!workspace?.configured) return "Workspace not configured";
+  return workspace.exists ? "Workspace ready" : "Workspace missing";
+}
+
+function renderDashboardProjectHierarchy() {
+  const tree = document.querySelector("#dashboard-project-tree");
+  const preview = document.querySelector("#dashboard-project-preview");
+  const message = document.querySelector("#dashboard-project-message");
+  if (!tree || !preview) return;
+  tree.innerHTML = "";
+  preview.innerHTML = "";
+  if (message) message.textContent = "";
+
+  if (!state.projects.length) {
+    tree.innerHTML = `<div class="empty-state">
+      <strong>No projects exist yet.</strong>
+      <p>No projects exist yet. Create a project to start ontology curation.</p>
+      <a href="/projects" data-route>Create first project</a>
+    </div>`;
+    return;
+  }
+
+  if (!state.activeProject && message) {
+    message.textContent = "No active project selected. Click a project tile to work on it.";
+  }
+
+  const selected = state.activeProject || projectByRef(state.selectedProjectRef) || state.projects[0];
+  renderDashboardProjectPreview(selected);
+  const byParent = projectsByParentMap();
+  const roots = byParent.get("root") || state.projects.filter((project) => !project.parent_project_id);
+  const list = document.createElement("div");
+  list.className = "project-tree-list";
+  roots.forEach((project) => list.append(renderDashboardProjectNode(project, byParent, 0)));
+  tree.append(list);
+}
+
+function renderDashboardProjectNode(project, byParent, depth) {
+  const wrapper = document.createElement("div");
+  wrapper.className = `project-tree-node depth-${Math.min(depth, 6)}`;
+  const tile = document.createElement("article");
+  tile.className = `dashboard-project-tile${project.active ? " is-active-project" : ""}`;
+  tile.tabIndex = 0;
+  tile.setAttribute("role", "button");
+  tile.setAttribute("aria-label", `Work on project ${project.name}`);
+  tile.innerHTML = `<header class="project-card-header">
+      <div>
+        <strong>${escapeHtml(project.name)}</strong>
+        <p>${escapeHtml(project.ontology_id)} | ${escapeHtml(project.project_type)}</p>
+      </div>
+      <span class="project-state">${project.active ? "Active" : "Inactive"}</span>
+    </header>
+    <div class="project-card-grid compact-project-grid">
+      <span><strong>Parent</strong>${escapeHtml(project.parent_project?.name || "Root project")}</span>
+      <span><strong>Children</strong>${escapeHtml(String(project.child_count ?? project.children?.length ?? 0))}</span>
+      <span><strong>Status</strong>${escapeHtml(projectStatusBadge(project))}</span>
+      <span><strong>Ontology</strong>${escapeHtml(projectOntologyStatus(project))}</span>
+    </div>
+    <div class="button-row">
+      <button type="button" data-dashboard-select="${project.slug}">${project.active ? "Work on this active project" : "Work on this project"}</button>
+      <button type="button" class="secondary" data-dashboard-view="${project.slug}">View details</button>
+      <button type="button" class="secondary" data-dashboard-edit="${project.slug}">Edit metadata</button>
+      <button type="button" class="secondary" data-dashboard-child="${project.slug}">Create child project</button>
+    </div>`;
+
+  const activate = async (event) => {
+    event?.preventDefault?.();
+    await selectProjectFromUi(project, tile, "#dashboard-project-message");
+  };
+  tile.addEventListener("click", async (event) => {
+    if (event.target.closest("button, a")) return;
+    await activate(event);
+  });
+  tile.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    await activate(event);
+  });
+  tile.querySelector("[data-dashboard-select]")?.addEventListener("click", async (event) => {
+    await selectProjectFromUi(project, event.currentTarget, "#dashboard-project-message");
+  });
+  tile.querySelector("[data-dashboard-view]")?.addEventListener("click", () => {
+    state.selectedProjectRef = project.slug;
+    navigateTo("/projects");
+  });
+  tile.querySelector("[data-dashboard-edit]")?.addEventListener("click", () => {
+    state.selectedProjectRef = project.slug;
+    fillProjectForm(project);
+    navigateTo("/projects");
+  });
+  tile.querySelector("[data-dashboard-child]")?.addEventListener("click", () => {
+    startChildProject(project);
+    navigateTo("/projects");
+  });
+
+  wrapper.append(tile);
+  const children = byParent.get(project.id) || [];
+  if (children.length) {
+    const childList = document.createElement("div");
+    childList.className = "project-tree-children";
+    children.forEach((child) => childList.append(renderDashboardProjectNode(child, byParent, depth + 1)));
+    wrapper.append(childList);
+  }
+  return wrapper;
+}
+
+function renderDashboardProjectPreview(project) {
+  const preview = document.querySelector("#dashboard-project-preview");
+  if (!preview || !project) return;
+  preview.innerHTML = `<div class="section-title">
+      <div>
+        <h3>Selected project preview</h3>
+        <p class="description">This is a project hierarchy overview, not an ontology class hierarchy or import/dependency graph.</p>
+      </div>
+      <span class="project-state">${project.active ? "Active project" : "Selected project"}</span>
+    </div>
+    <div class="status-grid">
+      <div class="status-card"><strong>Project</strong><span>${escapeHtml(project.name)}</span></div>
+      <div class="status-card"><strong>Ontology ID</strong><span>${escapeHtml(project.ontology_id)}</span></div>
+      <div class="status-card"><strong>Project type</strong><span>${escapeHtml(project.project_type)}</span></div>
+      <div class="status-card"><strong>Parent</strong><span>${escapeHtml(project.parent_project?.name || "Root project")}</span></div>
+      <div class="status-card"><strong>Children</strong><span>${escapeHtml((project.children || []).map((child) => child.name).join("; ") || "None")}</span></div>
+      <div class="status-card"><strong>Workspace</strong><span>${escapeHtml(statusLabel(project.path_statuses?.workspace_path))}</span></div>
+      <div class="status-card"><strong>Ontology file status</strong><span>${escapeHtml(projectOntologyStatus(project))}</span></div>
+      <div class="status-card"><strong>Literature repository</strong><span>${escapeHtml(statusLabel(project.path_statuses?.literature_repository_path))}</span></div>
+    </div>
+    <div class="button-row">
+      <a href="/projects" data-route>Project details</a>
+      <button type="button" class="secondary" data-dashboard-preview-edit="${project.slug}">Edit metadata</button>
+      ${project.active ? '<a href="/ontology" data-route>Ontology section</a>' : '<button type="button" class="secondary" disabled>Ontology section after activation</button>'}
+      <a href="/zotero" data-route>Literature section</a>
+    </div>`;
+  preview.querySelector("[data-dashboard-preview-edit]")?.addEventListener("click", () => {
+    state.selectedProjectRef = project.slug;
+    fillProjectForm(project);
+    navigateTo("/projects");
+  });
+}
+
+function projectByRef(projectRef) {
+  return state.projects.find((project) => [project.slug, project.project_id, String(project.id)].includes(String(projectRef)));
+}
+
+function projectOntologyStatus(project) {
+  const built = statusLabel(project?.path_statuses?.built_ontology_path);
+  const editable = statusLabel(project?.path_statuses?.editable_ontology_path);
+  if (project?.path_statuses?.built_ontology_path?.configured) return `Built: ${built}`;
+  if (project?.path_statuses?.editable_ontology_path?.configured) return `Editable: ${editable}`;
+  return "No ontology file configured";
+}
+
+function pathUseDescription(key) {
+  return {
+    workspace_path: "Project files and local scaffold metadata.",
+    odk_repo_path: "ODK-managed ontology repository when one is connected.",
+    editable_ontology_path: "Human-editable ontology source used for ontology browsing when no built file exists.",
+    built_ontology_path: "Built or released ontology file preferred by the ontology browser.",
+    literature_repository_path: "Project literature workspace and later project-specific evidence context.",
+    local_git_repository_path: "Local Git checkout metadata only; the app does not create repositories.",
+    github_url: "Remote repository reference metadata only; the app does not create GitHub repositories.",
+  }[key] || "Project metadata path.";
+}
+
+function renderPathStatusCard(label, status, rawValue, key) {
+  const configured = status?.configured || Boolean(rawValue);
+  const stateText = configured ? (status?.exists ? "Exists" : "Missing") : "Not configured";
+  const value = status?.path || rawValue || "Not configured";
+  const warning = configured && !status?.exists ? " warning" : "";
+  return `<div class="status-card${warning}">
+    <strong>${escapeHtml(label)}: ${escapeHtml(stateText)}</strong>
+    <span>${escapeHtml(value)}</span>
+    <p>${escapeHtml(pathUseDescription(key))}</p>
+  </div>`;
+}
+
+function projectNextSteps(project) {
+  const upper = project?.project_type === "upper_bioprocess_ontology";
+  if (upper) {
+    return [
+      "Review and edit project metadata.",
+      "Configure ontology paths or connect an ODK repository later.",
+      "Add child/domain projects, for example Protein Precipitation Ontology.",
+      "Import or tag relevant literature.",
+      "Later: generate ontology candidates with the LLM.",
+      "Later: review candidates and export accepted changes.",
+    ];
+  }
+  return [
+    "Confirm the parent project.",
+    "Configure ontology source or workspace paths.",
+    "Tag literature relevant to this project.",
+    "Later: generate and review candidates in the context of this project.",
+  ];
+}
+
+function renderProjectDetail(project) {
+  const detail = document.querySelector("#project-detail");
+  if (!detail) return;
+  if (!project) {
+    detail.innerHTML = `<h3>Project details</h3>
+      <p class="message">No project selected. Create a project with the wizard or select an existing project to inspect it.</p>`;
+    return;
+  }
+  const paths = project.path_statuses || {};
+  detail.innerHTML = `<div class="section-title">
+      <div>
+        <h3>Project details: ${escapeHtml(project.name)}</h3>
+        <p class="description">Inspect identity, hierarchy, configured paths, missing pieces, and next actions for this project.</p>
+      </div>
+      <span class="project-state">${project.active ? "Active project" : "Inactive project"}</span>
+    </div>
+    <div class="status-grid">
+      <div class="status-card"><strong>Project name</strong><span>${escapeHtml(project.name)}</span></div>
+      <div class="status-card"><strong>Ontology ID / namespace</strong><span>${escapeHtml(project.ontology_id)} / ${escapeHtml(project.ontology_namespace || "not configured")}</span></div>
+      <div class="status-card"><strong>Project type</strong><span>${escapeHtml(project.project_type)}</span></div>
+      <div class="status-card"><strong>Base IRI</strong><span>${escapeHtml(project.base_iri || "Not configured")}</span></div>
+      <div class="status-card"><strong>Parent project</strong><span>${escapeHtml(project.parent_project?.name || "None")}</span></div>
+      <div class="status-card"><strong>Child projects</strong><span>${escapeHtml((project.children || []).map((child) => child.name).join("; ") || "None")}</span></div>
+      <div class="status-card"><strong>Last modified</strong><span>${escapeHtml(project.updated_at || project.created_at || "Not available")}</span></div>
+    </div>
+    <div class="project-detail-text">
+      <h4>Description</h4>
+      <p>${escapeHtml(project.description || "No short description yet.")}</p>
+      <h4>Scope notes</h4>
+      <p>${escapeHtml(project.minimal_scope_notes || "No scope notes yet.")}</p>
+    </div>
+    <h4>Paths and status</h4>
+    <div class="status-grid">
+      ${renderPathStatusCard("Workspace path", paths.workspace_path, project.local_path, "workspace_path")}
+      ${renderPathStatusCard("ODK repository path", paths.odk_repo_path, project.odk_repo_path, "odk_repo_path")}
+      ${renderPathStatusCard("Editable ontology file", paths.editable_ontology_path, project.editable_ontology_path, "editable_ontology_path")}
+      ${renderPathStatusCard("Built ontology file", paths.built_ontology_path, project.built_ontology_path, "built_ontology_path")}
+      ${renderPathStatusCard("Literature repository", paths.literature_repository_path, project.literature_repository_path, "literature_repository_path")}
+      ${renderPathStatusCard("Local Git repository", paths.local_git_repository_path, project.local_git_repository_path, "local_git_repository_path")}
+      ${renderPathStatusCard("GitHub URL/path", { configured: Boolean(project.github_url), exists: Boolean(project.github_url), path: project.github_url }, project.github_url, "github_url")}
+    </div>
+    <h4>What can I do next?</h4>
+    <ol>${projectNextSteps(project).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+    <div class="button-row">
+      <button type="button" data-detail-edit="${project.slug}">Edit project metadata</button>
+      <button type="button" class="secondary" data-detail-child="${project.slug}">Create child project</button>
+      <button type="button" data-detail-select="${project.slug}">${project.active ? "Project is active" : "Set as active project"}</button>
+      <a href="/zotero" data-route>Open literature section</a>
+      ${project.active ? '<a href="/ontology" data-route>Open ontology browser for active project</a>' : '<button type="button" class="secondary" disabled>Open ontology browser after setting active</button>'}
+      <button type="button" class="secondary" disabled>Configure ontology paths in metadata form</button>
+    </div>`;
+  detail.querySelector("[data-detail-edit]")?.addEventListener("click", () => {
+    fillProjectForm(project);
+    setSuccess("#project-message", `Editing ${project.name}. Update fields above, then save project metadata.`);
+  });
+  detail.querySelector("[data-detail-child]")?.addEventListener("click", () => startChildProject(project));
+  detail.querySelector("[data-detail-select]")?.addEventListener("click", async (event) => {
+    await selectProjectFromUi(project, event.currentTarget);
+  });
+}
+
+async function selectProjectFromUi(project, button, messageSelector = "#project-message") {
+  try {
+    const action = async () => {
+      await api(`/api/projects/${encodeURIComponent(project.slug)}/select`, { method: "POST", body: "{}" });
+      state.selectedProjectRef = project.slug;
+      await loadProjects();
+      if (["ontology", "curation"].includes(currentPage())) {
+        await loadOntologyStatus();
+      }
+      setSuccess(messageSelector, `Active project set to ${project.name}.`);
+      if (messageSelector !== "#project-message") {
+        setSuccess("#project-message", `Active project set to ${project.name}. Next: review details, configure paths, or open literature/ontology sections.`);
+      }
+    };
+    if (button?.matches?.("button")) {
+      await withButtonFeedback(button, "Setting active project", action);
+    } else {
+      showActionToast(`Setting active project ${project.name}...`);
+      await action();
+      showActionToast(`Active project set to ${project.name}.`);
+    }
+  } catch (error) {
+    if (messageSelector === "#project-message") {
+      setProjectError("Set active project", error, "Select a different project or refresh the project list.");
+    } else {
+      console.error("Set active project", error);
+      setError(
+        messageSelector,
+        projectErrorMessage("Project hierarchy could not be loaded", error, "Refresh the dashboard or open Project Management.")
+      );
+    }
+  }
+}
+
+function startChildProject(parentProject) {
+  resetProjectForm();
+  const form = document.querySelector("#project-create-form");
+  if (!form) return;
+  form.parent_project_id.value = String(parentProject.id);
+  form.project_type.value = "domain_ontology";
+  setProjectWizardStep(0);
+  updateProjectWizardReview();
+  form.name.focus();
+  setSuccess("#project-message", `Creating child project under ${parentProject.name}. Fill identity fields, then create the project.`);
+}
+
+function descendantProjectIds(projectId) {
+  const ids = new Set();
+  function visit(parentId) {
+    state.projects
+      .filter((project) => project.parent_project_id === parentId)
+      .forEach((child) => {
+        ids.add(child.id);
+        visit(child.id);
+      });
+  }
+  visit(projectId);
+  return ids;
+}
+
+function populateProjectParentSelect(excludedProjectId = null) {
+  const select = document.querySelector("#project-parent-select");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">No parent project</option>';
+  const blockedIds = excludedProjectId ? new Set([Number(excludedProjectId), ...descendantProjectIds(Number(excludedProjectId))]) : new Set();
+  state.projects.forEach((project) => {
+    if (blockedIds.has(project.id)) return;
+    const option = document.createElement("option");
+    option.value = String(project.id);
+    option.textContent = `${project.name} (${project.ontology_id})`;
+    select.append(option);
+  });
+  if ([...select.options].some((option) => option.value === current)) {
+    select.value = current;
+  }
+}
+
+function fillProjectForm(project) {
+  const form = document.querySelector("#project-create-form");
+  if (!form) return;
+  populateProjectParentSelect(project.id);
+  form.project_ref.value = project.slug || "";
+  form.name.value = project.name || "";
+  form.ontology_id.value = project.ontology_id || "";
+  form.project_type.value = project.project_type || "domain_ontology";
+  form.parent_project_id.value = project.parent_project_id || "";
+  form.ontology_title.value = project.ontology_title || "";
+  form.ontology_namespace.value = project.ontology_namespace || "";
+  form.base_iri.value = project.base_iri || "";
+  state.projectBaseIriEdited = Boolean(project.base_iri && project.base_iri !== project.suggested_base_iri);
+  form.local_workspace_path.value = project.local_path || "";
+  form.github_url.value = project.github_url || "";
+  form.local_git_repository_path.value = project.local_git_repository_path || "";
+  form.zotero_literature_source_path.value = "";
+  form.odk_repo_path.value = project.odk_repo_path || "";
+  form.editable_ontology_path.value = project.editable_ontology_path || "";
+  form.built_ontology_path.value = project.built_ontology_path || "";
+  form.literature_repository_path.value = project.literature_repository_path || "";
+  form.description.value = project.description || "";
+  form.minimal_scope_notes.value = project.minimal_scope_notes || listText(project.ontology_scope);
+  document.querySelector("#project-submit-button").textContent = "Save Project Metadata";
+  document.querySelector("#project-cancel-edit")?.classList.remove("hidden");
+  setProjectWizardStep(0);
+  updateProjectWizardReview();
+}
+
+function resetProjectForm() {
+  const form = document.querySelector("#project-create-form");
+  if (!form) return;
+  populateProjectParentSelect();
+  form.reset();
+  form.project_ref.value = "";
+  form.project_type.value = "domain_ontology";
+  state.projectBaseIriEdited = false;
+  document.querySelector("#project-submit-button").textContent = "Create Project";
+  document.querySelector("#project-cancel-edit")?.classList.add("hidden");
+  setProjectWizardStep(0);
+  updateProjectWizardReview();
+}
+
+function suggestedBaseIriFor(ontologyId) {
+  const normalized = safeText(ontologyId).trim().toLowerCase().replace(/[^a-z0-9_]+/g, "");
+  return normalized ? `http://purl.obolibrary.org/obo/${normalized}.owl` : "";
+}
+
+function setProjectWizardStep(step) {
+  const steps = [...document.querySelectorAll(".project-wizard-step")];
+  if (!steps.length) return;
+  state.projectWizardStep = Math.max(0, Math.min(step, steps.length - 1));
+  steps.forEach((section, index) => {
+    section.classList.toggle("hidden", index !== state.projectWizardStep);
+  });
+  document.querySelectorAll("[data-project-step]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(Number(button.dataset.projectStep) === state.projectWizardStep));
+  });
+  const prev = document.querySelector("#project-wizard-prev");
+  const next = document.querySelector("#project-wizard-next");
+  if (prev) prev.disabled = state.projectWizardStep === 0;
+  if (next) next.classList.toggle("hidden", state.projectWizardStep === steps.length - 1);
+  updateProjectWizardReview();
+}
+
+function projectFormData() {
+  const form = document.querySelector("#project-create-form");
+  return form ? formPayload(form) : {};
+}
+
+function updateProjectWizardReview() {
+  const review = document.querySelector("#project-wizard-review");
+  const warnings = document.querySelector("#project-wizard-warnings");
+  if (!review) return;
+  const payload = projectFormData();
+  const optionalPaths = [
+    ["Workspace", payload.local_workspace_path],
+    ["ODK repository", payload.odk_repo_path],
+    ["Editable ontology", payload.editable_ontology_path],
+    ["Built ontology", payload.built_ontology_path],
+    ["Literature repository", payload.literature_repository_path],
+    ["Local Git repository", payload.local_git_repository_path],
+  ];
+  review.innerHTML = "";
+  [
+    ["Project", payload.name || "Missing project name"],
+    ["Ontology ID", payload.ontology_id || "Missing ontology ID"],
+    ["Project type", payload.project_type || "domain_ontology"],
+    ["Parent", document.querySelector("#project-parent-select")?.selectedOptions?.[0]?.textContent || "No parent project"],
+    ["Base IRI", payload.base_iri || "Not configured"],
+    ["GitHub", payload.github_url || "Not configured"],
   ].forEach(([label, value]) => {
     const card = document.createElement("div");
     card.className = "status-card";
-    card.innerHTML = `<strong>${label}</strong><span>${value}</span>`;
-    grid.append(card);
+    card.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span>`;
+    review.append(card);
   });
-  populateLiteratureConfigForm();
-  await renderMetaGraph();
+  if (warnings) {
+    const missing = optionalPaths
+      .filter(([, value]) => !safeText(value).trim())
+      .map(([label]) => label);
+    const invalidBase = payload.base_iri && !/^[a-z][a-z0-9+.-]*:/i.test(payload.base_iri);
+    warnings.textContent = [
+      invalidBase ? "Base IRI does not look like an IRI/URL." : "",
+      missing.length ? `Optional paths not configured yet: ${missing.join(", ")}.` : "All optional path fields have values.",
+    ].filter(Boolean).join(" ");
+  }
+}
+
+async function loadCurationRuns() {
+  try {
+    state.curationRuns = await api("/api/curation/runs");
+  } catch {
+    state.curationRuns = [];
+  }
+  renderCurationRuns();
+}
+
+function renderCurationRuns() {
+  const list = document.querySelector("#curation-run-list");
+  if (!list) return;
+  list.innerHTML = "";
+  state.curationRuns.forEach((run) => {
+    const row = document.createElement("article");
+    row.className = "entry-row";
+    row.innerHTML = `<strong>${safeText(run.id)}: ${safeText(run.name)}</strong>
+      <p>${safeText(run.prompt_strategy)} | ${safeText(run.status)} | ${safeText(run.created_at || "")}</p>`;
+    list.append(row);
+  });
+  if (!list.children.length) {
+    list.innerHTML = '<p class="message">No curation runs for the active project.</p>';
+  }
+}
+
+async function loadSuggestions() {
+  try {
+    state.suggestions = await api("/api/suggestions");
+  } catch {
+    state.suggestions = [];
+  }
+  renderSuggestions();
+}
+
+function renderSuggestions() {
+  const list = document.querySelector("#suggestion-list");
+  if (!list) return;
+  list.innerHTML = "";
+  state.suggestions.forEach((suggestion) => {
+    const row = document.createElement("article");
+    row.className = "candidate";
+    row.innerHTML = `<div class="candidate-head">
+        <strong>${safeText(suggestion.label)}</strong>
+        <span>${safeText(suggestion.review_status)}</span>
+      </div>
+      <p class="candidate-source">Run ${safeText(suggestion.curation_run_id)} | ${safeText(suggestion.suggestion_type)} | confidence ${safeText(suggestion.confidence || "")}</p>
+      <div class="candidate-grid">
+        <label>Definition<textarea class="suggestion-definition" rows="3">${safeText(suggestion.definition || "")}</textarea></label>
+        <label>Evidence<textarea rows="3" readonly>${safeText(suggestion.evidence_text || "")}</textarea></label>
+        <label>Raw LLM output<textarea rows="3" readonly>${safeText(suggestion.raw_llm_output || "")}</textarea></label>
+        <label>Status
+          <select class="suggestion-status">
+            <option value="accepted">accepted</option>
+            <option value="edited">edited</option>
+            <option value="rejected">rejected</option>
+            <option value="duplicate">duplicate</option>
+            <option value="unsupported">unsupported</option>
+            <option value="further_review">further_review</option>
+          </select>
+        </label>
+        <label>Reviewer<input class="suggestion-reviewer" /></label>
+        <label>Review time seconds<input class="suggestion-time" type="number" min="0" /></label>
+      </div>
+      <label>Comment<textarea class="suggestion-comment" rows="2"></textarea></label>
+      <div class="candidate-actions">
+        <button type="button" class="save-review">Save Review</button>
+      </div>`;
+    row.querySelector(".suggestion-status").value =
+      suggestion.review_status === "unreviewed" ? "accepted" : suggestion.review_status;
+    row.querySelector(".save-review").addEventListener("click", async (event) => {
+      await withButtonFeedback(event.currentTarget, "Saving review", async () => {
+        const status = row.querySelector(".suggestion-status").value;
+        await api(`/api/suggestions/${suggestion.id}/review`, {
+          method: "POST",
+          body: JSON.stringify({
+            status,
+            reviewer: row.querySelector(".suggestion-reviewer").value || null,
+            edited_definition: status === "edited" ? row.querySelector(".suggestion-definition").value : null,
+            comment: row.querySelector(".suggestion-comment").value || null,
+            review_time_seconds: Number(row.querySelector(".suggestion-time").value || 0) || null,
+          }),
+        });
+        await loadSuggestions();
+        setSuccess("#suggestions-message", "Review saved.");
+      });
+    });
+    list.append(row);
+  });
+  if (!list.children.length) {
+    list.innerHTML = '<p class="message">No structured suggestions for the active project.</p>';
+  }
 }
 
 function populateLiteratureConfigForm() {
@@ -341,7 +1170,41 @@ function renderEntries() {
       });
     }
 
-    actions.append(zoteroLink);
+    const tagSelect = document.createElement("select");
+    tagSelect.multiple = true;
+    tagSelect.size = Math.min(Math.max(state.projects.length, 2), 6);
+    tagSelect.setAttribute("aria-label", "Project tags");
+    state.projects.forEach((project) => {
+      const option = document.createElement("option");
+      option.value = project.ontology_id;
+      option.textContent = `${project.name} (${project.ontology_id})`;
+      option.selected = (entry.project_tags || []).includes(project.ontology_id) ||
+        (entry.project_tags || []).includes(project.slug) ||
+        (entry.project_tags || []).includes(String(project.id));
+      tagSelect.append(option);
+    });
+    const saveTags = document.createElement("button");
+    saveTags.type = "button";
+    saveTags.textContent = "Save project tags";
+    saveTags.disabled = entry.provider !== "zotero";
+    saveTags.addEventListener("click", async (event) => {
+      await withButtonFeedback(event.currentTarget, "Saving tags", async () => {
+        const projectTags = [...tagSelect.selectedOptions].map((option) => option.value);
+        await api(`/api/zotero/entries/${encodeURIComponent(entry.id)}/project-tags`, {
+          method: "PATCH",
+          body: JSON.stringify({ project_tags: projectTags }),
+        });
+        await Promise.all([loadEntries(), loadProjects()]);
+        setSuccess("#literature-repository-message", "Project tags saved.");
+      }).catch((error) => setError("#literature-repository-message", error.message));
+    });
+    const tagMeta = document.createElement("span");
+    tagMeta.className = "message";
+    tagMeta.textContent = (entry.project_tags || []).length
+      ? `Project tags: ${(entry.project_tags || []).join(", ")}`
+      : "No project tags";
+
+    actions.append(zoteroLink, tagSelect, saveTags, tagMeta);
     header.append(text, actions);
 
     const details = document.createElement("details");
@@ -409,6 +1272,16 @@ async function loadCandidates() {
   renderRejectedCandidates();
 }
 
+async function loadRelationTypes() {
+  try {
+    const payload = await api("/api/ontology/relation-types");
+    state.relationTypes = payload.relation_types || [];
+  } catch {
+    state.relationTypes = [];
+  }
+  populateRelationTypeSelects();
+}
+
 async function loadCurationPrompt() {
   state.curationPrompt = await api("/api/curation/prompt");
   const form = document.querySelector("#curation-prompt-form");
@@ -422,8 +1295,54 @@ async function loadCurationPrompt() {
   );
 }
 
+async function loadLlmProviders() {
+  const payload = await api("/api/config/llm/providers");
+  state.llmProviders = payload.providers || [];
+  const providerSelect = document.querySelector("#llm-provider-select");
+  const modelSelect = document.querySelector("#llm-model-select");
+  if (!providerSelect || !modelSelect) return;
+  const currentProvider = state.status?.llm?.provider || state.llmProviders[0]?.id || "gemini";
+  providerSelect.innerHTML = state.llmProviders
+    .map((provider) => `<option value="${safeText(provider.id)}">${safeText(provider.label)}</option>`)
+    .join("");
+  providerSelect.value = currentProvider;
+  const renderModels = () => {
+    const provider = state.llmProviders.find((item) => item.id === providerSelect.value);
+    const currentModel = state.status?.llm?.model || provider?.models?.[0] || "";
+    modelSelect.innerHTML = (provider?.models?.length ? provider.models : [provider?.default_model || ""])
+      .filter(Boolean)
+      .map((model) => `<option value="${safeText(model)}">${safeText(model)}</option>`)
+      .join("");
+    if (currentModel && [...modelSelect.options].some((option) => option.value === currentModel)) {
+      modelSelect.value = currentModel;
+    }
+    const form = document.querySelector("#llm-config-form");
+    if (!form) return;
+    const envInput = form.querySelector('[name="api_key_env_var"]');
+    const baseInput = form.querySelector('[name="base_url"]');
+    const manualModel = form.querySelector('[name="model"]');
+    if (envInput && !envInput.value) {
+      envInput.value = state.status?.llm?.api_key_env_var || provider?.api_key_env_vars?.[0] || "";
+    }
+    if (baseInput && !baseInput.value) {
+      baseInput.value = state.status?.llm?.base_url || provider?.default_base_url || "";
+    }
+    if (manualModel) {
+      manualModel.placeholder = provider?.manual_model ? "Required custom model name" : "Optional custom model name";
+    }
+  };
+  providerSelect.onchange = () => {
+    const form = document.querySelector("#llm-config-form");
+    form?.querySelector('[name="api_key_env_var"]') && (form.querySelector('[name="api_key_env_var"]').value = "");
+    form?.querySelector('[name="base_url"]') && (form.querySelector('[name="base_url"]').value = "");
+    renderModels();
+  };
+  renderModels();
+}
+
 function fillCandidate(node, candidate) {
   node.dataset.id = candidate.id;
+  node.dataset.candidate = JSON.stringify(candidate);
   node.querySelector(".label").value = candidate.label || "";
   node.querySelector(".status").value = candidate.review_status || "new";
   node.querySelector(".candidate-source").textContent = `Source document: ${candidate.document_id}`;
@@ -435,6 +1354,10 @@ function fillCandidate(node, candidate) {
   node.querySelector(".mappings").value = csv(candidate.mappings || []);
   node.querySelector(".synonyms").value = csv(candidate.synonyms || []);
   node.querySelector(".parent").value = candidate.proposed_parent || "";
+  const graphReview = candidate.graph_review || {};
+  node.querySelector(".relation-source").value = graphReview.relation_source || "";
+  node.querySelector(".relation-target").value = graphReview.relation_target || "";
+  node.querySelector(".graph-review").value = JSON.stringify(graphReview, null, 2);
   node.querySelector(".decision").value = candidate.curator_decision || "needs_review";
   renderLocalMatches(node, candidate);
   renderOlsMatches(node, candidate);
@@ -460,6 +1383,7 @@ function fillCandidate(node, candidate) {
   node.querySelector(".new-term").addEventListener("click", (event) =>
     withButtonFeedback(event.currentTarget, "Marking", () => markNewTerm(candidate.id))
   );
+  node.addEventListener("click", () => activateCandidateForGraph(node));
 }
 
 function payloadFromNode(node) {
@@ -473,7 +1397,173 @@ function payloadFromNode(node) {
     synonyms: parseCsv(node.querySelector(".synonyms").value),
     proposed_parent: node.querySelector(".parent").value,
     curator_decision: node.querySelector(".decision").value,
+    graph_review: graphReviewFromNode(node),
   };
+}
+
+function graphReviewFromNode(node) {
+  let review = {};
+  try {
+    review = JSON.parse(node.querySelector(".graph-review").value || "{}");
+  } catch {
+    review = {};
+  }
+  review.relation_source = node.querySelector(".relation-source").value || review.relation_source || null;
+  review.relation_target = node.querySelector(".relation-target").value || review.relation_target || null;
+  return review;
+}
+
+function activeCandidateNode() {
+  if (!state.activeCandidateId) return null;
+  return document.querySelector(`.candidate[data-id="${state.activeCandidateId}"]`);
+}
+
+function activateCandidateForGraph(node) {
+  state.activeCandidateId = node.dataset.id;
+  document.querySelectorAll(".candidate").forEach((candidateNode) => {
+    candidateNode.classList.toggle("is-active-candidate", candidateNode === node);
+  });
+  const candidate = JSON.parse(node.dataset.candidate || "{}");
+  const context = node.querySelector(".parent").value || candidate.selected_local?.iri || candidate.selected_local?.term_id || "";
+  if (context && state.ontologyTree) {
+    const match = searchOntologyNodes(state.ontologyTree, context)[0];
+    if (match) {
+      state.selectedOntologyNodeId = match.id;
+      state.ontologyFocusNodeId = match.id;
+      state.ontologyCenterOnSelected = true;
+      renderOntologyTree().catch((error) => setError("#ols-message", error.message));
+    }
+  }
+  updateGraphCurationStatus();
+}
+
+function selectedOntologyNodePayload() {
+  if (!state.ontologyTree || !state.selectedOntologyNodeId) return null;
+  return ontologyIndexes(state.ontologyTree).byId.get(state.selectedOntologyNodeId) || null;
+}
+
+function updateGraphCurationStatus() {
+  const status = document.querySelector("#graph-curation-active");
+  if (!status) return;
+  const candidateNode = activeCandidateNode();
+  const selected = selectedOntologyNodePayload();
+  status.textContent = `Candidate: ${candidateNode?.querySelector(".label")?.value || "none"} | Selected node: ${selected?.label || selected?.id || "none"}`;
+}
+
+function updateCandidateGraphReview(mutator) {
+  const node = activeCandidateNode();
+  const selected = selectedOntologyNodePayload();
+  if (!node || !selected) {
+    setError("#ols-message", "Select a candidate and an ontology node first.");
+    return null;
+  }
+  const review = graphReviewFromNode(node);
+  mutator(review, selected, node);
+  node.querySelector(".graph-review").value = JSON.stringify(review, null, 2);
+  updateGraphCurationStatus();
+  return { node, selected, review };
+}
+
+function setSelectedNodeAsParent() {
+  const result = updateCandidateGraphReview((review, selected, node) => {
+    node.querySelector(".parent").value = selected.id;
+    node.querySelector(".decision").value = "propose_new_term";
+    review.parent_class = { id: selected.id, label: selected.label || selected.id, source: "ontology_graph" };
+  });
+  if (result) setSuccess("#ols-message", "Selected ontology node set as proposed parent.");
+}
+
+function setSelectedNodeAsRelationRole(role) {
+  const result = updateCandidateGraphReview((review, selected, node) => {
+    node.querySelector(role === "source" ? ".relation-source" : ".relation-target").value = selected.id;
+    review[`relation_${role}`] = selected.id;
+  });
+  if (result) setSuccess("#ols-message", `Selected ontology node set as relation ${role}.`);
+}
+
+function compareCandidateWithSelectedNode() {
+  const result = updateCandidateGraphReview((review, selected, node) => {
+    const candidateLabel = normalizeText(node.querySelector(".label").value);
+    const selectedLabel = normalizeText(selected.label || selected.id);
+    review.comparison = {
+      selected_node: { id: selected.id, label: selected.label || selected.id },
+      label_overlap: candidateLabel && selectedLabel ? Math.round(SequenceMatcherRatio(candidateLabel, selectedLabel) * 100) / 100 : null,
+    };
+  });
+  if (result) setSuccess("#ols-message", "Candidate comparison recorded in graph review proposals.");
+}
+
+function SequenceMatcherRatio(left, right) {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length >= right.length ? left : right;
+  let matches = 0;
+  shorter.split(/\s+/).forEach((token) => {
+    if (token && longer.includes(token)) matches += token.length;
+  });
+  return matches / Math.max(1, longer.length);
+}
+
+function markCandidateDuplicateOfSelectedNode() {
+  const result = updateCandidateGraphReview((review, selected, node) => {
+    node.querySelector(".decision").value = "use_existing_local_term";
+    review.duplicate_of = { id: selected.id, label: selected.label || selected.id, source: "ontology_graph" };
+    review.review_status_suggestion = "duplicate";
+  });
+  if (result) setSuccess("#ols-message", "Duplicate target recorded. Save the candidate to persist it.");
+}
+
+function addGraphRelationProposal() {
+  const node = activeCandidateNode();
+  if (!node) {
+    setError("#ols-message", "Select a candidate first.");
+    return;
+  }
+  const relationSelect = document.querySelector("#graph-relation-type");
+  const review = graphReviewFromNode(node);
+  const relationType = state.relationTypes.find((item) => item.label === relationSelect?.value || item.id === relationSelect?.value);
+  const source = node.querySelector(".relation-source").value;
+  const target = node.querySelector(".relation-target").value || selectedOntologyNodePayload()?.id || "";
+  const warnings = validateGraphRelationProposal({ source, target, relationType, review });
+  document.querySelector("#graph-relation-warnings").textContent = warnings.join(" ");
+  review.proposed_relations = review.proposed_relations || [];
+  if (!warnings.some((warning) => warning.includes("missing"))) {
+    review.proposed_relations.push({
+      source,
+      target,
+      relation: relationType.label,
+      relation_id: relationType.id,
+      status: "proposed_for_review",
+      source_kind: "graph_assisted_candidate_review",
+    });
+    node.querySelector(".graph-review").value = JSON.stringify(review, null, 2);
+    setSuccess("#ols-message", "Proposed relation added to candidate review data.");
+  }
+}
+
+function validateGraphRelationProposal({ source, target, relationType, review }) {
+  const warnings = [];
+  if (!source) warnings.push("Relation source missing.");
+  if (!target) warnings.push("Relation target missing.");
+  if (!relationType) warnings.push("Relation type missing.");
+  const duplicate = (review.proposed_relations || []).some(
+    (relation) => relation.source === source && relation.target === target && relation.relation === relationType?.label
+  );
+  if (duplicate) warnings.push("Relation duplicates an existing candidate proposal.");
+  const existing = (state.ontologyTree?.relation_edges || []).some(
+    (edge) => edge.source === source && edge.target === target && (edge.relation === relationType?.label || edge.relation_label === relationType?.label)
+  );
+  if (existing) warnings.push("Relation already exists in the indexed ontology.");
+  return warnings;
+}
+
+function populateRelationTypeSelects() {
+  const select = document.querySelector("#graph-relation-type");
+  if (!select) return;
+  select.innerHTML = state.relationTypes
+    .map((relation) => `<option value="${safeText(relation.label)}">${safeText(relation.label)}</option>`)
+    .join("");
 }
 
 async function saveCandidate(node) {
@@ -697,8 +1787,14 @@ document.querySelector("#llm-config-form").addEventListener("submit", async (eve
         body: JSON.stringify({
           provider: payload.provider,
           api_key: payload.api_key || null,
-          model: payload.model || null,
+          api_key_env_var: payload.api_key_env_var || null,
+          model: payload.model || payload.model_select || null,
           base_url: payload.base_url || null,
+          temperature: Number(payload.temperature || 0),
+          max_output_tokens: Number(payload.max_output_tokens || 1024),
+          timeout_seconds: Number(payload.timeout_seconds || 30),
+          retry_count: Number(payload.retry_count || 1),
+          stream: Boolean(payload.stream),
         }),
       });
       event.currentTarget.querySelector('[name="api_key"]').value = "";
@@ -708,6 +1804,39 @@ document.querySelector("#llm-config-form").addEventListener("submit", async (eve
     });
   } catch (error) {
     setError("#extract-message", error.message);
+  }
+});
+
+document.querySelector("#test-llm")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Testing", async () => {
+      const result = await api("/api/config/llm/test", { method: "POST", body: "{}" });
+      document.querySelector("#llm-test-result").textContent = JSON.stringify(result, null, 2);
+      if (result.ok) {
+        setSuccess("#extract-message", `LLM test succeeded for ${result.provider} ${result.model} in ${result.latency_ms} ms.`);
+      } else {
+        setError("#extract-message", result.error || "LLM test failed.");
+      }
+    });
+  } catch (error) {
+    setError("#extract-message", error.message);
+  }
+});
+
+document.querySelector("#load-docker-odk-diagnostics")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Checking", async () => {
+      const result = await api("/api/diagnostics/docker-odk");
+      document.querySelector("#docker-odk-diagnostics").textContent = JSON.stringify(result, null, 2);
+      const missingTools = Object.entries(result.tools || {}).filter(([, value]) => !value.available).map(([name]) => name);
+      if (missingTools.length) {
+        setError("#docker-odk-message", `Missing tools: ${missingTools.join(", ")}`);
+      } else {
+        setSuccess("#docker-odk-message", "ODK/ROBOT command tools were found.");
+      }
+    });
+  } catch (error) {
+    setError("#docker-odk-message", error.message);
   }
 });
 
@@ -824,19 +1953,99 @@ document.querySelector("#sync-zotero").addEventListener("click", async (event) =
 async function loadOntologyStatus() {
   try {
     const status = await api("/api/ontology/status");
+    renderOntologyProjectSummary(status);
+    setOntologyControlsEnabled(Boolean(status.project && status.selected_file));
     const input = document.querySelector('#ontology-path-form [name="path"]');
-    input.value = status.path || "";
+    if (input) input.value = status.path || status.selected_file || "";
     renderOntologyFiles(status.scan?.files || [], status.selected_file);
+    if (!status.project) {
+      state.ontologyTerms = [];
+      state.ontologyTree = null;
+      document.querySelector("#ontology-terms").innerHTML = "";
+      document.querySelector("#ontology-tree").innerHTML = '<p class="message">Select or create a project before working with ontology files.</p>';
+      setMessage("#ontology-message", status.message || "Select or create a project before working with ontology files.");
+      return;
+    }
+    if (!status.selected_file) {
+      state.ontologyTerms = [];
+      state.ontologyTree = null;
+      document.querySelector("#ontology-terms").innerHTML = "";
+      document.querySelector("#ontology-tree").innerHTML = '<p class="message">No ontology file configured for this project.</p>';
+      setMessage("#ontology-message", status.message || "No ontology file configured for this project.");
+      return;
+    }
     const statusError = status.error ? ` Selected file error: ${status.error}` : "";
-    setMessage("#ontology-message", `${status.scan?.message || "Ontology status loaded."} Parsed terms: ${status.term_count}.${statusError}`);
+    setMessage("#ontology-message", `${status.message || status.scan?.message || "Ontology status loaded."} Parsed terms: ${status.term_count}.${statusError}`);
     await loadOntologyTerms();
   } catch (error) {
     state.ontologyTerms = [];
     document.querySelector("#ontology-terms").innerHTML = '<p class="message">Ontology terms are unavailable.</p>';
-    renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", { nodes: [], edges: [] });
-    setError("#ontology-message", `Could not load ontology data: ${error.message}`);
+    document.querySelector("#ontology-tree").innerHTML = '<p class="message">Ontology tree is unavailable.</p>';
+    setError("#ontology-message", projectErrorMessage("Load ontology section for active project", error, "Select an active project with configured ontology paths, or edit the project metadata."));
     throw error;
   }
+}
+
+function setOntologyControlsEnabled(enabled) {
+  const selectors = [
+    "#scan-ontology",
+    "#index-ontology",
+    "#ontology-search",
+    "#ontology-tree-root",
+    "#ontology-tree-search",
+    "#ontology-tree-jump",
+    "#ontology-tree-focus",
+    "#ontology-tree-reset",
+    "#ontology-tree-depth",
+    "#ontology-tree-relations",
+    "#ontology-tree-relation-labels",
+    "#ontology-tree-node-labels",
+    "#ontology-tree-zoom-in",
+    "#ontology-tree-zoom-out",
+    "#ontology-tree-fit",
+    "#ontology-tree-center",
+    "#refresh-ontology-tree",
+  ];
+  selectors.forEach((selector) => {
+    const element = document.querySelector(selector);
+    if (element) element.disabled = !enabled;
+  });
+  ["#scan-ontology", "#index-ontology"].forEach((selector) => {
+    const element = document.querySelector(selector);
+    if (element) element.disabled = true;
+  });
+  const form = document.querySelector("#ontology-path-form");
+  if (form) form.classList.toggle("hidden", true);
+}
+
+function renderOntologyProjectSummary(status) {
+  const summary = document.querySelector("#ontology-project-summary");
+  if (!summary) return;
+  summary.innerHTML = "";
+  const project = status.project;
+  if (!project) {
+    const card = document.createElement("div");
+    card.className = "status-card warning";
+    card.innerHTML = "<strong>Active project</strong><span>Select or create a project before working with ontology files.</span>";
+    summary.append(card);
+    return;
+  }
+  const rows = [
+    ["Active project", project.name],
+    ["Ontology ID", project.ontology_id || "Not configured"],
+    ["Base IRI", project.base_iri || "Not configured"],
+    ["Selected ontology source", status.selected_source || "No ontology file configured"],
+    ["Selected ontology file", status.selected_file || "Not configured"],
+    ["Editable ontology", `${project.editable_ontology_path || "Not configured"} (${statusLabel(status.path_statuses?.editable_ontology_path)})`],
+    ["Built ontology", `${project.built_ontology_path || "Not configured"} (${statusLabel(status.path_statuses?.built_ontology_path)})`],
+    ["ODK repository", `${project.odk_repo_path || "Not configured"} (${statusLabel(status.path_statuses?.odk_repo_path)})`],
+  ];
+  rows.forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = `status-card${status.selected_file ? "" : " warning"}`;
+    card.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(value || "Not available")}</span>`;
+    summary.append(card);
+  });
 }
 
 function renderOntologyFiles(files, selectedFile) {
@@ -844,26 +2053,28 @@ function renderOntologyFiles(files, selectedFile) {
   const list = document.querySelector("#ontology-files");
   list.innerHTML = "";
   files.forEach((file) => {
-    const row = document.createElement("label");
+    const row = document.createElement("div");
     row.className = "file-row";
-    row.innerHTML = `<span><input type="radio" name="ontology-file" ${file.path === selectedFile ? "checked" : ""} /> <strong>${file.name}</strong></span>
+    row.innerHTML = `<span><strong>${file.path === selectedFile ? "Selected project source: " : ""}${escapeHtml(file.name)}</strong></span>
       <p>${file.suffix} | ${file.kind} | ${file.size_bytes} bytes</p>
-      <p>${file.path}</p>`;
-    row.querySelector("input").addEventListener("change", async () => {
-      await api("/api/ontology/select-file", {
-        method: "POST",
-        body: JSON.stringify({ path: file.path }),
-      });
-      setSuccess("#ontology-message", `Selected ${file.name}.`);
-      await loadOntologyStatus();
-    });
+      <p>${escapeHtml(file.path)}</p>`;
     list.append(row);
   });
+  if (!files.length) {
+    list.innerHTML = '<p class="message">No project ontology files found.</p>';
+  }
 }
 
 async function loadOntologyTerms() {
   const query = document.querySelector("#ontology-search").value || "";
-  const terms = await api(query ? `/api/ontology/search?q=${encodeURIComponent(query)}` : "/api/ontology/terms");
+  if (!state.activeProject) {
+    state.ontologyTerms = [];
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set("project_id", state.activeProject.slug || state.activeProject.project_id || state.activeProject.id);
+  if (query) params.set("q", query);
+  const terms = await api(query ? `/api/ontology/search?${params.toString()}` : `/api/ontology/terms?${params.toString()}`);
   state.ontologyTerms = terms;
   const list = document.querySelector("#ontology-terms");
   list.innerHTML = "";
@@ -1013,9 +2224,566 @@ function renderKnowledgeGraph(containerSelector, detailsSelector, graph, options
 }
 
 async function renderOntologyGraph() {
-  const graph = await api("/api/ontology/graph");
-  renderGraphControls("ontology", () => renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", graph, { name: "ontology" }));
-  renderKnowledgeGraph("#ontology-graph", "#ontology-graph-details", graph, { name: "ontology" });
+  await renderOntologyTree();
+}
+
+async function renderOntologyTree() {
+  if (!state.activeProject) {
+    const container = document.querySelector(currentPage() === "curation" ? "#curation-ontology-tree" : "#ontology-tree");
+    if (container) container.innerHTML = '<p class="message">Select or create a project before working with ontology files.</p>';
+    return;
+  }
+  const rootInput = document.querySelector("#ontology-tree-root");
+  const depthInput = document.querySelector("#ontology-tree-depth");
+  const showRelations = document.querySelector("#ontology-tree-relations")?.checked || false;
+  const showRelationLabels = document.querySelector("#ontology-tree-relation-labels")?.checked !== false;
+  const showNodeLabels = document.querySelector("#ontology-tree-node-labels")?.checked !== false;
+  const params = new URLSearchParams();
+  params.set("depth_limit", "12");
+  params.set("project_id", state.activeProject.slug || state.activeProject.project_id || state.activeProject.id);
+  const tree = await api(`/api/ontology/tree?${params.toString()}`);
+  state.ontologyTree = tree;
+  const inCuration = currentPage() === "curation";
+  const container = document.querySelector(inCuration ? "#curation-ontology-tree" : "#ontology-tree");
+  const details = document.querySelector(inCuration ? "#curation-ontology-details" : "#ontology-graph-details");
+  if (!container) return;
+  if (!tree.nodes?.length) {
+    container.innerHTML = '<p class="message">No ontology hierarchy available.</p>';
+    return;
+  }
+  container.innerHTML = "";
+  refreshOntologyTreeSearchOptions();
+  const visibleTree = deriveVisibleOntologyTree(tree, {
+    depthLimit: Number(depthInput?.value || 2) || 2,
+    rootQuery: rootInput?.value?.trim() || "",
+    focusNodeId: state.ontologyFocusNodeId,
+    selectedNodeId: state.selectedOntologyNodeId,
+    collapsedNodes: state.collapsedOntologyNodes,
+  });
+  if (!visibleTree.roots.length) {
+    container.innerHTML = '<p class="message">No matching ontology section available.</p>';
+    return;
+  }
+  const layout = layoutOntologyTree(visibleTree.roots);
+  if (state.ontologyCenterOnSelected && state.selectedOntologyNodeId && layout.byId.has(state.selectedOntologyNodeId)) {
+    const selected = layout.byId.get(state.selectedOntologyNodeId);
+    state.ontologyViewport.tx = layout.width / 2 - selected.x * state.ontologyViewport.scale;
+    state.ontologyViewport.ty = layout.height / 2 - selected.y * state.ontologyViewport.scale;
+    state.ontologyCenterOnSelected = false;
+  }
+  renderOntologyTreeSvg(container, details, tree, layout, {
+    showRelations,
+    showRelationLabels,
+    showNodeLabels,
+    visibleNodeIds: visibleTree.visibleNodeIds,
+    selectedNodeId: state.selectedOntologyNodeId,
+    focusNodeId: state.ontologyFocusNodeId,
+    relatedNodeIds: selectedOntologyContextIds(tree, state.selectedOntologyNodeId),
+  });
+  renderOntologyTreeSummary(container, visibleTree);
+  if (state.selectedOntologyNodeId) {
+    const selected = ontologyIndexes(tree).byId.get(state.selectedOntologyNodeId);
+    showOntologyNodeDetails(selected || { id: state.selectedOntologyNodeId }, tree, details);
+  } else if (details) {
+    details.innerHTML = '<p class="empty">Select an ontology node to inspect label, ID, definition, parents, subclasses, and relations.</p>';
+  }
+  const warnings = tree.metadata?.warnings || [];
+  if (warnings.length) {
+    const warning = document.createElement("p");
+    warning.className = "message error";
+    warning.textContent = `Tree warnings: ${warnings.join("; ")}`;
+    container.append(warning);
+  }
+}
+
+function ontologyIndexes(tree) {
+  const nodes = tree.nodes || [];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map();
+  const parentsByChild = new Map();
+  (tree.hierarchy_edges || []).forEach((edge) => {
+    if (!byId.has(edge.source) || !byId.has(edge.target)) return;
+    if (!childrenByParent.has(edge.source)) childrenByParent.set(edge.source, []);
+    childrenByParent.get(edge.source).push(edge.target);
+    if (!parentsByChild.has(edge.target)) parentsByChild.set(edge.target, []);
+    parentsByChild.get(edge.target).push(edge.source);
+  });
+  childrenByParent.forEach((children) => children.sort((left, right) => safeText(byId.get(left)?.label || left).localeCompare(safeText(byId.get(right)?.label || right))));
+  parentsByChild.forEach((parents) => parents.sort((left, right) => safeText(byId.get(left)?.label || left).localeCompare(safeText(byId.get(right)?.label || right))));
+  const childIds = new Set([...(tree.hierarchy_edges || []).map((edge) => edge.target)]);
+  const rootIds = (tree.root_ids || nodes.map((node) => node.id).filter((id) => !childIds.has(id))).filter((id) => byId.has(id));
+  return { byId, childrenByParent, parentsByChild, rootIds };
+}
+
+function selectedOntologyContextIds(tree, nodeId) {
+  const ids = new Set();
+  if (!tree || !nodeId) return ids;
+  const indexes = ontologyIndexes(tree);
+  if (!indexes.byId.has(nodeId)) return ids;
+  ids.add(nodeId);
+  (indexes.parentsByChild.get(nodeId) || []).forEach((id) => ids.add(id));
+  (indexes.childrenByParent.get(nodeId) || []).forEach((id) => ids.add(id));
+  lateralRelationsFor(nodeId, tree).forEach((edge) => {
+    if (edge.source) ids.add(edge.source);
+    if (edge.target) ids.add(edge.target);
+  });
+  return ids;
+}
+
+function deriveVisibleOntologyTree(tree, options) {
+  const indexes = ontologyIndexes(tree);
+  const overviewRootLimit = 8;
+  const visibleNodeIds = new Set();
+  const warnings = [];
+
+  function cloneSubtree(nodeId, depth, seen = new Set()) {
+    if (!indexes.byId.has(nodeId) || seen.has(nodeId)) return null;
+    const source = indexes.byId.get(nodeId);
+    visibleNodeIds.add(nodeId);
+    const childIds = indexes.childrenByParent.get(nodeId) || [];
+    const collapsed = options.collapsedNodes.has(nodeId);
+    const canShowChildren = !collapsed && depth < options.depthLimit;
+    const children = canShowChildren
+      ? childIds.map((childId) => cloneSubtree(childId, depth + 1, new Set([...seen, nodeId]))).filter(Boolean)
+      : [];
+    return {
+      ...source,
+      parents: source.parent_ids || source.parents || [],
+      children_ids: childIds,
+      child_count: childIds.length,
+      hidden_child_count: canShowChildren ? Math.max(0, childIds.length - children.length) : childIds.length,
+      collapsed,
+      depth,
+      children,
+    };
+  }
+
+  function ancestorPath(nodeId) {
+    const path = [];
+    const seen = new Set();
+    let current = nodeId;
+    while (current && indexes.byId.has(current) && !seen.has(current)) {
+      seen.add(current);
+      path.unshift(current);
+      current = (indexes.parentsByChild.get(current) || [])[0];
+    }
+    return path;
+  }
+
+  if (options.focusNodeId && indexes.byId.has(options.focusNodeId)) {
+    const path = ancestorPath(options.focusNodeId);
+    const focusedSubtree = cloneSubtree(options.focusNodeId, 0);
+    let current = focusedSubtree;
+    for (let index = path.length - 2; index >= 0; index -= 1) {
+      const id = path[index];
+      const source = indexes.byId.get(id);
+      visibleNodeIds.add(id);
+      current = {
+        ...source,
+        parents: source.parent_ids || source.parents || [],
+        children_ids: indexes.childrenByParent.get(id) || [],
+        child_count: (indexes.childrenByParent.get(id) || []).length,
+        hidden_child_count: Math.max(0, (indexes.childrenByParent.get(id) || []).length - 1),
+        collapsed: false,
+        depth: index,
+        children: [current],
+      };
+    }
+    const semanticRoots = lateralRelationsFor(options.focusNodeId, tree)
+      .map((edge) => (edge.source === options.focusNodeId ? edge.target : edge.source))
+      .filter((id) => indexes.byId.has(id) && !visibleNodeIds.has(id))
+      .map((id) => cloneSubtree(id, 0, new Set([options.focusNodeId])))
+      .filter(Boolean)
+      .map((node) => ({ ...node, semantic_context: true }));
+    return { roots: current ? [current, ...semanticRoots] : semanticRoots, visibleNodeIds, mode: "focus", warnings };
+  }
+
+  let rootIds = indexes.rootIds;
+  if (options.rootQuery) {
+    const matched = searchOntologyNodes(tree, options.rootQuery)[0];
+    rootIds = matched ? [matched.id] : rootIds.filter((id) => searchableOntologyNodeText(indexes.byId.get(id), tree).includes(normalizeText(options.rootQuery)));
+  }
+  if (!options.rootQuery && rootIds.length > overviewRootLimit) {
+    warnings.push(`Showing ${overviewRootLimit} of ${rootIds.length} top-level classes. Search, jump, or focus to inspect a section.`);
+    rootIds = rootIds.slice(0, overviewRootLimit);
+  }
+  return {
+    roots: rootIds.map((id) => cloneSubtree(id, 0)).filter(Boolean),
+    visibleNodeIds,
+    mode: options.rootQuery ? "root" : "overview",
+    warnings,
+  };
+}
+
+function layoutOntologyTree(roots) {
+  const nodeWidth = 230;
+  const nodeHeight = 66;
+  const levelGap = 112;
+  const siblingGap = 276;
+  const rootGap = 1;
+  const margin = 52;
+  const positionedNodes = [];
+  const hierarchyLinks = [];
+  let cursor = 0;
+  let maxDepth = 0;
+
+  function assign(node, depth, parent = null) {
+    maxDepth = Math.max(maxDepth, depth);
+    const children = node.children || [];
+    if (children.length) {
+      children.forEach((child) => assign(child, depth + 1, node));
+      node.x = (children[0].x + children[children.length - 1].x) / 2;
+    } else {
+      node.x = cursor * siblingGap + nodeWidth / 2;
+      cursor += 1;
+    }
+    node.y = depth * levelGap + nodeHeight / 2;
+    positionedNodes.push(node);
+    if (parent) {
+      hierarchyLinks.push({ source: parent, target: node, relation: "is_a", edgeType: "hierarchy" });
+    }
+  }
+
+  roots.forEach((root) => {
+    assign(root, 0);
+    cursor += rootGap;
+  });
+
+  const minX = Math.min(...positionedNodes.map((node) => node.x), nodeWidth / 2);
+  positionedNodes.forEach((node) => {
+    node.x = node.x - minX + margin + nodeWidth / 2;
+    node.y += margin;
+  });
+  const byId = new Map(positionedNodes.map((node) => [node.id, node]));
+  const width = Math.max(760, Math.max(...positionedNodes.map((node) => node.x), 0) + nodeWidth / 2 + margin);
+  const height = Math.max(360, margin * 2 + nodeHeight + maxDepth * levelGap);
+  return { nodes: positionedNodes, hierarchyLinks, byId, width, height, nodeWidth, nodeHeight };
+}
+
+function renderOntologyTreeSvg(container, details, tree, layout, options) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "ontology-tree-svg");
+  svg.setAttribute("viewBox", `0 0 ${layout.width} ${layout.height}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Top-down ontology class hierarchy tree");
+
+  const viewport = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.append(viewport);
+  applyOntologyViewportTransform(viewport);
+  wireOntologyViewportControls(svg, viewport, layout);
+
+  layout.hierarchyLinks.forEach((edge) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const dimmed = options.selectedNodeId && !options.relatedNodeIds.has(edge.source.id) && !options.relatedNodeIds.has(edge.target.id);
+    path.setAttribute("class", `tree-hierarchy-edge ${dimmed ? "is-dimmed" : ""}`);
+    path.setAttribute("d", hierarchyPath(edge.source, edge.target, layout.nodeHeight));
+    viewport.append(path);
+  });
+
+  if (options.showRelations) {
+    (tree.relation_edges || []).forEach((edge) => {
+      const source = layout.byId.get(edge.source);
+      const target = layout.byId.get(edge.target);
+      if (!source || !target) return;
+      if (options.focusNodeId && edge.source !== options.focusNodeId && edge.target !== options.focusNodeId) return;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const dimmed = options.selectedNodeId && edge.source !== options.selectedNodeId && edge.target !== options.selectedNodeId;
+      path.setAttribute("class", `tree-semantic-edge ${dimmed ? "is-dimmed" : ""}`);
+      path.setAttribute("d", semanticPath(source, target, layout.nodeWidth));
+      path.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showOntologyEdgeDetails(edge, details);
+      });
+      viewport.append(path);
+      if (options.showRelationLabels) {
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("class", "tree-semantic-label");
+        label.setAttribute("x", (source.x + target.x) / 2);
+        label.setAttribute("y", (source.y + target.y) / 2 - 8);
+        label.textContent = edge.relation || edge.relation_label || edge.relation_type || "related";
+        viewport.append(label);
+      }
+    });
+  }
+
+  graphReviewProposedRelations().forEach((edge) => {
+    const source = layout.byId.get(edge.source);
+    const target = layout.byId.get(edge.target);
+    if (!source || !target) return;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", "tree-proposed-edge");
+    path.setAttribute("d", semanticPath(source, target, layout.nodeWidth));
+    viewport.append(path);
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("class", "tree-proposed-label");
+    label.setAttribute("x", (source.x + target.x) / 2);
+    label.setAttribute("y", (source.y + target.y) / 2 + 14);
+    label.textContent = `proposed: ${edge.relation || "relation"}`;
+    viewport.append(label);
+  });
+
+  layout.nodes.forEach((node) => {
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const selected = node.id === options.selectedNodeId;
+    const focused = node.id === options.focusNodeId;
+    const dimmed = options.selectedNodeId && !selected && !options.relatedNodeIds.has(node.id);
+    group.setAttribute("class", `ontology-tree-node ${selected ? "is-selected" : ""} ${focused ? "is-focused" : ""} ${dimmed ? "is-dimmed" : ""} ${node.semantic_context ? "is-semantic-context" : ""}`);
+    group.setAttribute("transform", `translate(${node.x} ${node.y})`);
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${node.label || node.id} (${node.id})`;
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("class", "tree-node-box");
+    rect.setAttribute("x", -layout.nodeWidth / 2);
+    rect.setAttribute("y", -layout.nodeHeight / 2);
+    rect.setAttribute("width", layout.nodeWidth);
+    rect.setAttribute("height", layout.nodeHeight);
+    group.append(title, rect);
+
+    if (node.child_count > 0) {
+      const toggle = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      toggle.setAttribute("class", "tree-node-toggle");
+      toggle.setAttribute("x", -layout.nodeWidth / 2 + 14);
+      toggle.setAttribute("y", 5);
+      toggle.textContent = node.collapsed ? "+" : "-";
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (state.collapsedOntologyNodes.has(node.id)) {
+          state.collapsedOntologyNodes.delete(node.id);
+        } else {
+          state.collapsedOntologyNodes.add(node.id);
+        }
+        renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+      });
+      group.append(toggle);
+    }
+
+    if (options.showNodeLabels) {
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("class", "tree-node-label");
+      label.setAttribute("x", -layout.nodeWidth / 2 + 32);
+      label.setAttribute("y", -5);
+      label.textContent = truncateLabel(node.label || node.id, 28);
+      const idText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      idText.setAttribute("class", "tree-node-id");
+      idText.setAttribute("x", -layout.nodeWidth / 2 + 32);
+      idText.setAttribute("y", 17);
+      idText.textContent = truncateLabel(node.id, 30);
+      group.append(label, idText);
+    }
+
+    if (node.hidden_child_count) {
+      const badge = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      badge.setAttribute("class", "tree-node-badge");
+      badge.setAttribute("x", layout.nodeWidth / 2 - 12);
+      badge.setAttribute("y", 20);
+      badge.textContent = `+${node.hidden_child_count}`;
+      group.append(badge);
+    }
+
+    group.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.selectedOntologyNodeId = node.id;
+      showOntologyNodeDetails(node, tree, details);
+      updateGraphCurationStatus();
+      renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+    });
+    viewport.append(group);
+  });
+
+  container.append(svg);
+}
+
+function renderOntologyTreeSummary(container, visibleTree) {
+  const summary = document.createElement("p");
+  summary.className = "message tree-summary";
+  const visibleCount = visibleTree.visibleNodeIds.size;
+  const mode = visibleTree.mode === "focus" ? "Focused section" : visibleTree.mode === "root" ? "Selected section" : "Top-level overview";
+  const tree = state.ontologyTree || {};
+  const sourceFiles = tree.metadata?.source_files || [];
+  const sourceText = sourceFiles.length ? sourceFiles.slice(0, 2).join("; ") : "source not available";
+  const selected = selectedOntologyNodePayload();
+  const selectedText = selected ? `${selected.label || selected.id} (${selected.id})` : "none";
+  summary.textContent = `${mode}: ${visibleCount} visible of ${tree.term_count || tree.nodes?.length || 0} classes. Source: ${sourceText}. Selected: ${selectedText}. ${visibleTree.warnings.join(" ")}`;
+  container.append(summary);
+}
+
+function applyOntologyViewportTransform(viewport) {
+  viewport.setAttribute(
+    "transform",
+    `translate(${state.ontologyViewport.tx} ${state.ontologyViewport.ty}) scale(${state.ontologyViewport.scale})`
+  );
+}
+
+function wireOntologyViewportControls(svg, viewport) {
+  let dragging = false;
+  let last = null;
+  svg.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    zoomOntologyTree(event.deltaY > 0 ? 0.9 : 1.1, viewport);
+  });
+  svg.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    last = { x: event.clientX, y: event.clientY };
+    svg.setPointerCapture?.(event.pointerId);
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (!dragging || !last) return;
+    state.ontologyViewport.tx += event.clientX - last.x;
+    state.ontologyViewport.ty += event.clientY - last.y;
+    last = { x: event.clientX, y: event.clientY };
+    applyOntologyViewportTransform(viewport);
+  });
+  svg.addEventListener("pointerup", (event) => {
+    dragging = false;
+    last = null;
+    svg.releasePointerCapture?.(event.pointerId);
+  });
+}
+
+function zoomOntologyTree(factor, viewport = null) {
+  state.ontologyViewport.scale = Math.max(0.35, Math.min(3.2, state.ontologyViewport.scale * factor));
+  if (viewport) applyOntologyViewportTransform(viewport);
+  else renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+}
+
+function fitOntologyTree() {
+  state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+  renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+}
+
+function centerSelectedOntologyNode() {
+  if (!state.ontologyTree || !state.selectedOntologyNodeId) return;
+  state.ontologyViewport = { scale: 1.15, tx: 0, ty: 0 };
+  state.ontologyCenterOnSelected = true;
+  renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+}
+
+function hierarchyPath(source, target, nodeHeight) {
+  const startY = source.y + nodeHeight / 2;
+  const endY = target.y - nodeHeight / 2;
+  const midY = (startY + endY) / 2;
+  return `M ${source.x} ${startY} V ${midY} H ${target.x} V ${endY}`;
+}
+
+function semanticPath(source, target, nodeWidth) {
+  const direction = source.x <= target.x ? 1 : -1;
+  const startX = source.x + direction * (nodeWidth / 2);
+  const targetX = target.x - direction * (nodeWidth / 2);
+  const curve = Math.max(72, Math.abs(target.x - source.x) * 0.35);
+  return `M ${startX} ${source.y} C ${startX + direction * curve} ${source.y}, ${targetX - direction * curve} ${target.y}, ${targetX} ${target.y}`;
+}
+
+function truncateLabel(value, maxLength) {
+  const text = safeText(value);
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function showOntologyNodeDetails(node, tree, details) {
+  if (!details) return;
+  const sourceNode = ontologyIndexes(tree).byId.get(node.id) || node;
+  const indexes = ontologyIndexes(tree);
+  const unavailable = "not available";
+  const parentIds = sourceNode.parent_ids || sourceNode.parents || indexes.parentsByChild.get(sourceNode.id) || [];
+  const childIds = sourceNode.child_ids || sourceNode.children_ids || indexes.childrenByParent.get(sourceNode.id) || [];
+  const semanticRelations = lateralRelationsFor(sourceNode.id, tree).map((edge) => {
+    const relation = edge.relation_label || edge.relation || edge.relation_type || "related to";
+    const otherId = edge.source === sourceNode.id ? edge.target : edge.source;
+    const other = indexes.byId.get(otherId);
+    const direction = edge.source === sourceNode.id ? relation : `inverse ${relation}`;
+    return `${direction} ${other?.label || otherId}`;
+  });
+  const row = (label, value) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || unavailable)}</dd>`;
+  details.innerHTML = `
+    <div class="node-detail-card">
+      <h3>Selected Ontology Node</h3>
+      <p class="node-detail-title">${escapeHtml(sourceNode.label || sourceNode.id || unavailable)}</p>
+      <p class="node-detail-id">${escapeHtml(sourceNode.id || sourceNode.iri || unavailable)}</p>
+      <dl>
+        ${row("Definition", sourceNode.definition)}
+        ${row("Synonyms", (sourceNode.synonyms || []).join("; "))}
+        ${row("Parent / superclass", parentIds.join("; "))}
+        ${row("Direct subclasses", childIds.join("; "))}
+        ${row("Semantic relations", semanticRelations.join("; "))}
+        ${row("Source path", sourceNode.source_file || sourceNode.source_ontology)}
+        ${row("Status", sourceNode.status || sourceNode.review_state)}
+      </dl>
+    </div>
+  `;
+}
+
+function showOntologyEdgeDetails(edge, details) {
+  if (!details) return;
+  details.textContent = [
+    `Relation: ${edge.relation || edge.relation_label || edge.relation_type || "related"}`,
+    `Type: ${edge.edgeType || "semantic"}`,
+    `Source: ${edge.source}`,
+    `Target: ${edge.target}`,
+  ].join("\n");
+}
+
+function lateralRelationsFor(nodeId, tree) {
+  return (tree.relation_edges || []).filter((edge) => edge.source === nodeId || edge.target === nodeId);
+}
+
+function graphReviewProposedRelations() {
+  const node = activeCandidateNode();
+  if (!node) return [];
+  return graphReviewFromNode(node).proposed_relations || [];
+}
+
+function searchableOntologyNodeText(node, tree) {
+  if (!node) return "";
+  const relationText = (tree.relation_edges || [])
+    .filter((edge) => edge.source === node.id || edge.target === node.id)
+    .map((edge) => [edge.source, edge.target, edge.relation, edge.relation_label, edge.relation_type].filter(Boolean).join(" "))
+    .join(" ");
+  return normalizeText([node.id, node.label, node.definition, ...(node.synonyms || []), relationText].filter(Boolean).join(" "));
+}
+
+function searchOntologyNodes(tree, query) {
+  const normalized = normalizeText(query);
+  if (!normalized) return [];
+  return (tree.nodes || [])
+    .filter((node) => searchableOntologyNodeText(node, tree).includes(normalized))
+    .slice(0, 30);
+}
+
+function refreshOntologyTreeSearchOptions() {
+  const datalist = document.querySelector("#ontology-tree-search-results");
+  const input = document.querySelector("#ontology-tree-search");
+  if (!datalist || !input || !state.ontologyTree) return;
+  const results = searchOntologyNodes(state.ontologyTree, input.value).slice(0, 12);
+  datalist.innerHTML = "";
+  results.forEach((node) => {
+    const option = document.createElement("option");
+    option.value = `${node.label || node.id} (${node.id})`;
+    datalist.append(option);
+  });
+}
+
+function selectedSearchNode() {
+  const input = document.querySelector("#ontology-tree-search");
+  if (!input || !state.ontologyTree) return null;
+  const query = input.value.trim();
+  const idMatch = query.match(/\(([^()]+)\)$/);
+  if (idMatch) {
+    return ontologyIndexes(state.ontologyTree).byId.get(idMatch[1]) || null;
+  }
+  return searchOntologyNodes(state.ontologyTree, query)[0] || null;
+}
+
+function jumpToOntologySearch({ focus = true } = {}) {
+  const node = selectedSearchNode();
+  if (!node) {
+    setError("#ontology-message", "No matching ontology class found.");
+    return;
+  }
+  state.selectedOntologyNodeId = node.id;
+  if (focus) state.ontologyFocusNodeId = node.id;
+  state.collapsedOntologyNodes.delete(node.id);
+  state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+  showOntologyNodeDetails(node, state.ontologyTree, document.querySelector("#ontology-graph-details"));
+  renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
 }
 
 async function renderMetaGraph() {
@@ -1059,6 +2827,105 @@ document.querySelector("#ontology-search").addEventListener("input", () => {
   loadOntologyTerms().catch((error) => setError("#ontology-message", error.message));
 });
 
+document.querySelector("#refresh-ontology-tree")?.addEventListener("click", (event) => {
+  state.collapsedOntologyNodes.clear();
+  state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+  withButtonFeedback(event.currentTarget, "Refreshing", renderOntologyTree)
+    .catch((error) => setError("#ontology-message", error.message));
+});
+
+document.querySelector("#ontology-tree-search")?.addEventListener("input", refreshOntologyTreeSearchOptions);
+
+document.querySelector("#ontology-tree-search")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    jumpToOntologySearch({ focus: true });
+  }
+});
+
+document.querySelector("#ontology-tree-root")?.addEventListener("change", () => {
+  state.ontologyFocusNodeId = null;
+  state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+  renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+});
+
+document.querySelector("#ontology-tree-root")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    state.ontologyFocusNodeId = null;
+    state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+    renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+  }
+});
+
+document.querySelector("#ontology-tree-jump")?.addEventListener("click", () => {
+  jumpToOntologySearch({ focus: true });
+});
+
+document.querySelector("#ontology-tree-focus")?.addEventListener("click", () => {
+  if (!state.selectedOntologyNodeId) {
+    setError("#ontology-message", "Select an ontology class before focusing.");
+    return;
+  }
+  state.ontologyFocusNodeId = state.selectedOntologyNodeId;
+  state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+  const relationsToggle = document.querySelector("#ontology-tree-relations");
+  if (relationsToggle) relationsToggle.checked = true;
+  renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+});
+
+document.querySelector("#ontology-tree-reset")?.addEventListener("click", () => {
+  state.ontologyFocusNodeId = null;
+  state.selectedOntologyNodeId = null;
+  state.collapsedOntologyNodes.clear();
+  state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+  const rootInput = document.querySelector("#ontology-tree-root");
+  const searchInput = document.querySelector("#ontology-tree-search");
+  if (rootInput) rootInput.value = "";
+  if (searchInput) searchInput.value = "";
+  renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+});
+
+document.querySelector("#ontology-tree-zoom-in")?.addEventListener("click", () => zoomOntologyTree(1.18));
+document.querySelector("#ontology-tree-zoom-out")?.addEventListener("click", () => zoomOntologyTree(0.84));
+document.querySelector("#ontology-tree-fit")?.addEventListener("click", fitOntologyTree);
+document.querySelector("#ontology-tree-center")?.addEventListener("click", centerSelectedOntologyNode);
+document.querySelector("#graph-set-parent")?.addEventListener("click", setSelectedNodeAsParent);
+document.querySelector("#graph-set-source")?.addEventListener("click", () => setSelectedNodeAsRelationRole("source"));
+document.querySelector("#graph-set-target")?.addEventListener("click", () => setSelectedNodeAsRelationRole("target"));
+document.querySelector("#graph-compare")?.addEventListener("click", compareCandidateWithSelectedNode);
+document.querySelector("#graph-duplicate")?.addEventListener("click", markCandidateDuplicateOfSelectedNode);
+document.querySelector("#graph-open-details")?.addEventListener("click", () => {
+  const selected = selectedOntologyNodePayload();
+  if (selected && state.ontologyTree) {
+    showOntologyNodeDetails(selected, state.ontologyTree, document.querySelector("#curation-ontology-details"));
+  }
+});
+document.querySelector("#graph-add-relation")?.addEventListener("click", addGraphRelationProposal);
+document.querySelector("#graph-relation-target-search")?.addEventListener("change", (event) => {
+  if (!state.ontologyTree) return;
+  const match = searchOntologyNodes(state.ontologyTree, event.currentTarget.value)[0];
+  const node = activeCandidateNode();
+  if (match && node) {
+    node.querySelector(".relation-target").value = match.id;
+    state.selectedOntologyNodeId = match.id;
+    state.ontologyFocusNodeId = match.id;
+    renderOntologyTree().catch((error) => setError("#ols-message", error.message));
+  }
+});
+
+[
+  "#ontology-tree-relations",
+  "#ontology-tree-relation-labels",
+  "#ontology-tree-node-labels",
+  "#ontology-tree-depth",
+].forEach((selector) => {
+  document.querySelector(selector)?.addEventListener("change", () => {
+    state.ontologyViewport = { scale: 1, tx: 0, ty: 0 };
+    renderOntologyTree().catch((error) => setError("#ontology-message", error.message));
+  });
+});
+
 document.querySelector("#zotero-filter").addEventListener("input", renderEntries);
 
 document.querySelector("#curation-prompt-form").addEventListener("submit", async (event) => {
@@ -1097,7 +2964,7 @@ document.querySelector("#run-curation-suggestions").addEventListener("click", as
       const result = await api("/api/curation/suggestions/run", { method: "POST", body: "{}" });
       setSuccess(
         "#curation-prompt-message",
-        `Curation complete. Suggestions: ${result.suggestion_count}; warnings: ${result.warning_count}; chunks: ${result.chunk_count}.`
+        `Curation complete. Suggestions: ${result.suggestion_count}; warnings: ${result.warning_count}; chunks: ${result.chunk_count}; approx. input: ${result.input_chars || 0} chars / ${result.input_approx_tokens || 0} tokens.`
       );
       document.querySelector("#curation-suggestion-preview").textContent = JSON.stringify(
         {
@@ -1236,6 +3103,198 @@ document.querySelector("#ols-all").addEventListener("click", async (event) => {
     const result = await api("/api/candidates/ols", { method: "POST", body: "{}" });
     setSuccess("#ols-message", `OLS updated ${result.updated} draft candidates; ${result.failed} failed.`);
     await loadCandidates();
+  });
+});
+
+document.querySelector("#project-create-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const payload = formPayload(event.currentTarget);
+  const body = {
+    name: payload.name,
+    ontology_id: payload.ontology_id,
+    ontology_title: payload.ontology_title || null,
+    project_type: payload.project_type || "domain_ontology",
+    parent_project_id: payload.parent_project_id || null,
+    ontology_namespace: payload.ontology_namespace || null,
+    ontology_scope: parseListField(payload.minimal_scope_notes || ""),
+    minimal_scope_notes: payload.minimal_scope_notes || null,
+    base_iri: payload.base_iri || null,
+    github_url: payload.github_url || null,
+    local_git_repository_path: payload.local_git_repository_path || null,
+    odk_repo_path: payload.odk_repo_path || null,
+    editable_ontology_path: payload.editable_ontology_path || null,
+    built_ontology_path: payload.built_ontology_path || null,
+    literature_repository_path: payload.literature_repository_path || null,
+    description: payload.description || null,
+  };
+  try {
+    await withButtonFeedback(button, payload.project_ref ? "Saving project" : "Creating project", async () => {
+      const project = await api(
+        payload.project_ref ? `/api/projects/${encodeURIComponent(payload.project_ref)}` : "/api/projects",
+        {
+          method: payload.project_ref ? "PATCH" : "POST",
+          body: JSON.stringify({
+            ...body,
+            local_workspace_path: payload.local_workspace_path || null,
+            zotero_literature_source_path: payload.zotero_literature_source_path || null,
+            activate: true,
+          }),
+        }
+      );
+      state.selectedProjectRef = project.slug;
+      resetProjectForm();
+      await loadProjects();
+      renderProjectDetail(project);
+      setSuccess(
+        "#project-message",
+        payload.project_ref
+          ? `Saved project metadata for ${project.name}. Changes are visible in the project detail panel.`
+          : `Created and selected ${project.name}. Review the next-step guide below before moving to literature or ontology.`
+      );
+    });
+  } catch (error) {
+    const message = error.message || "Could not save project.";
+    if (/base iri|ontology id|project type|parent/i.test(message)) {
+      setProjectWizardStep(0);
+    }
+    updateProjectWizardReview();
+    setProjectError(payload.project_ref ? "Project update" : "Project creation", error, "Correct the highlighted project metadata, then save again. Your form values are still present.");
+  }
+});
+
+document.querySelector("#project-cancel-edit")?.addEventListener("click", () => {
+  resetProjectForm();
+  setMessage("#project-message", "Project edit cancelled.");
+});
+
+document.querySelector("#project-ai-suggest")?.addEventListener("click", async (event) => {
+  const idea = document.querySelector("#project-ai-idea")?.value || "";
+  if (!idea.trim()) {
+    setError("#project-message", "Enter a short project idea first.");
+    return;
+  }
+  await withButtonFeedback(event.currentTarget, "Suggesting metadata", async () => {
+    const result = await api("/api/projects/suggest-metadata", {
+      method: "POST",
+      body: JSON.stringify({ idea }),
+    });
+    const suggestion = result.suggestion || {};
+    const form = document.querySelector("#project-create-form");
+    if (!form) return;
+    const proposed = [];
+    const fillIfEmpty = (fieldName, value, label) => {
+      const field = form[fieldName];
+      const text = String(value || "").trim();
+      if (!field || !text) return;
+      if (!field.value.trim()) {
+        field.value = text;
+      } else if (field.value.trim() !== text) {
+        proposed.push(`${label}: ${text}`);
+      }
+    };
+    fillIfEmpty("name", suggestion.project_name, "Project name");
+    fillIfEmpty("ontology_id", suggestion.ontology_id, "Ontology ID");
+    fillIfEmpty("ontology_title", suggestion.project_name, "Ontology title");
+    fillIfEmpty("description", suggestion.short_description, "Short description");
+    fillIfEmpty("minimal_scope_notes", suggestion.minimal_scope_notes, "Minimal scope notes");
+    fillIfEmpty("base_iri", suggestion.base_iri, "Base IRI");
+    if (suggestion.project_type && [...form.project_type.options].some((option) => option.value === suggestion.project_type)) {
+      if (!form.project_type.value) {
+        form.project_type.value = suggestion.project_type;
+      } else if (form.project_type.value !== suggestion.project_type) {
+        proposed.push(`Project type: ${suggestion.project_type}`);
+      }
+    }
+    if (!form.ontology_namespace.value && form.ontology_id.value) {
+      form.ontology_namespace.value = form.ontology_id.value.toLowerCase();
+    }
+    updateProjectWizardReview();
+    const suffix = proposed.length ? ` Suggestions for filled fields: ${proposed.join(" | ")}` : "";
+    setSuccess("#project-message", `AI metadata draft received. Empty fields were filled; review before saving.${suffix}`);
+  }).catch((error) => setProjectError("AI project metadata suggestion", error, "Check LLM settings or continue filling the project form manually."));
+});
+
+document.querySelectorAll("[data-project-step]").forEach((button) => {
+  button.addEventListener("click", () => setProjectWizardStep(Number(button.dataset.projectStep)));
+});
+
+document.querySelector("#project-wizard-prev")?.addEventListener("click", () => {
+  setProjectWizardStep(state.projectWizardStep - 1);
+});
+
+document.querySelector("#project-wizard-next")?.addEventListener("click", () => {
+  setProjectWizardStep(state.projectWizardStep + 1);
+});
+
+document.querySelector("#project-create-form")?.addEventListener("input", (event) => {
+  const form = event.currentTarget;
+  if (event.target.name === "base_iri") {
+    state.projectBaseIriEdited = true;
+  }
+  if (event.target.name === "ontology_id") {
+    if (!state.projectBaseIriEdited) {
+      form.base_iri.value = suggestedBaseIriFor(form.ontology_id.value);
+    }
+    if (!form.ontology_namespace.value) {
+      form.ontology_namespace.value = form.ontology_id.value.toLowerCase();
+    }
+  }
+  updateProjectWizardReview();
+});
+
+document.querySelector("#curation-run-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const payload = formPayload(event.currentTarget);
+  await withButtonFeedback(button, "Creating run", async () => {
+    const result = await api("/api/curation/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        name: payload.name || null,
+        strategy: payload.strategy,
+        model: payload.model || null,
+        prompt_text: payload.prompt_text || null,
+        raw_output: payload.raw_output || null,
+      }),
+    });
+    await Promise.all([loadCurationRuns(), loadSuggestions()]);
+    setSuccess(
+      "#suggestions-message",
+      `Run ${result.id} created. Parsed ${result.parsed_suggestions || 0} suggestion(s).${result.warning ? ` ${result.warning}` : ""}`
+    );
+  });
+});
+
+document.querySelector("#load-suggestions")?.addEventListener("click", async (event) => {
+  await withButtonFeedback(event.currentTarget, "Refreshing", async () => {
+    await Promise.all([loadCurationRuns(), loadSuggestions()]);
+    setSuccess("#suggestions-message", "Suggestions refreshed.");
+  });
+});
+
+document.querySelector("#compute-evaluation")?.addEventListener("click", async (event) => {
+  await withButtonFeedback(event.currentTarget, "Computing", async () => {
+    const result = await api("/api/evaluation/compute", { method: "POST", body: "{}" });
+    document.querySelector("#evaluation-output").textContent = JSON.stringify(result.metrics, null, 2);
+    setSuccess("#evaluation-message", "Evaluation metrics computed.");
+  });
+});
+
+document.querySelector("#compare-runs-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const payload = formPayload(event.currentTarget);
+  await withButtonFeedback(button, "Comparing", async () => {
+    const result = await api("/api/evaluation/compare", {
+      method: "POST",
+      body: JSON.stringify({
+        first_run_id: Number(payload.first_run_id),
+        second_run_id: Number(payload.second_run_id),
+      }),
+    });
+    document.querySelector("#evaluation-output").textContent = JSON.stringify(result, null, 2);
+    setSuccess("#evaluation-message", "Run comparison complete.");
   });
 });
 

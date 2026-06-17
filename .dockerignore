@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+oca.sqlite3
+literature
+projects
+odk-workspace
+ontology
+logs
+.env

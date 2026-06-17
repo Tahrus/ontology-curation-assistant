@@ -1,0 +1,98 @@
+{
+  "id": 1,
+  "project_id": "bioprocess-ontology",
+  "name": "Bioprocess Ontology",
+  "slug": "bioprocess-ontology",
+  "description": null,
+  "ontology_id": "bpo",
+  "ontology_title": "Bioprocess Ontology",
+  "project_type": "upper_bioprocess_ontology",
+  "parent_project_id": null,
+  "parent_project": null,
+  "parent_chain": [],
+  "children": [],
+  "child_count": 0,
+  "ontology_scope": [],
+  "minimal_scope_notes": null,
+  "ontology_namespace": "bpo",
+  "base_iri": "http://purl.obolibrary.org/obo/bpo.owl",
+  "suggested_base_iri": "http://purl.obolibrary.org/obo/bpo.owl",
+  "term_id_prefix": "BPO",
+  "local_path": "projects\\bioprocess-ontology",
+  "odk_repo_path": "projects\\bioprocess-ontology\\ontology\\odk",
+  "editable_ontology_path": null,
+  "built_ontology_path": null,
+  "literature_repository_path": "projects\\bioprocess-ontology\\literature",
+  "local_git_repository_path": null,
+  "path_statuses": {
+    "workspace_path": {
+      "path": "projects\\bioprocess-ontology",
+      "configured": true,
+      "exists": true,
+      "status": "ready",
+      "message": "Path exists."
+    },
+    "odk_repo_path": {
+      "path": "projects\\bioprocess-ontology\\ontology\\odk",
+      "configured": true,
+      "exists": true,
+      "status": "ready",
+      "message": "Path exists."
+    },
+    "editable_ontology_path": {
+      "path": null,
+      "configured": false,
+      "exists": false,
+      "status": "not_configured",
+      "message": "Optional path not configured."
+    },
+    "built_ontology_path": {
+      "path": null,
+      "configured": false,
+      "exists": false,
+      "status": "not_configured",
+      "message": "Optional path not configured."
+    },
+    "literature_repository_path": {
+      "path": "projects\\bioprocess-ontology\\literature",
+      "configured": true,
+      "exists": true,
+      "status": "ready",
+      "message": "Path exists."
+    },
+    "local_git_repository_path": {
+      "path": null,
+      "configured": false,
+      "exists": false,
+      "status": "not_configured",
+      "message": "Optional path not configured."
+    }
+  },
+  "github_url": null,
+  "literature_project_tag_count": 0,
+  "active": true,
+  "created_at": "2026-06-17T13:39:22.306117+00:00",
+  "updated_at": "2026-06-17T13:39:22.306118+00:00",
+  "paths": {
+    "root": "projects\\bioprocess-ontology",
+    "literature": "projects\\bioprocess-ontology\\literature",
+    "literature_pdf": "projects\\bioprocess-ontology\\literature\\pdf",
+    "literature_markdown": "projects\\bioprocess-ontology\\literature\\markdown",
+    "literature_diagnostics": "projects\\bioprocess-ontology\\literature\\diagnostics",
+    "ontology": "projects\\bioprocess-ontology\\ontology",
+    "ontology_odk": "projects\\bioprocess-ontology\\ontology\\odk",
+    "ontology_templates": "projects\\bioprocess-ontology\\ontology\\templates",
+    "ontology_builds": "projects\\bioprocess-ontology\\ontology\\builds",
+    "ontology_releases": "projects\\bioprocess-ontology\\ontology\\releases",
+    "curation": "projects\\bioprocess-ontology\\curation",
+    "curation_runs": "projects\\bioprocess-ontology\\curation\\runs",
+    "curation_prompts": "projects\\bioprocess-ontology\\curation\\prompts",
+    "curation_suggestions": "projects\\bioprocess-ontology\\curation\\suggestions",
+    "curation_reviews": "projects\\bioprocess-ontology\\curation\\reviews",
+    "curation_exports": "projects\\bioprocess-ontology\\curation\\exports",
+    "evaluation": "projects\\bioprocess-ontology\\evaluation",
+    "evaluation_metrics": "projects\\bioprocess-ontology\\evaluation\\metrics",
+    "evaluation_reports": "projects\\bioprocess-ontology\\evaluation\\reports",
+    "logs": "projects\\bioprocess-ontology\\logs"
+  }
+}

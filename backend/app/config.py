@@ -12,17 +12,23 @@ class Settings(BaseSettings):
 
     app_name: str = "Ontology Curation Assistant"
     database_url: str = "sqlite:///./oca.sqlite3"
-    odk_home: Path = Field(default=Path(r"C:\Users\ge47vob\ontology-development-kit"))
+    odk_home: Path = Path("/odk")
     ontology_repo: Path | None = None
-    local_ontology_path: Path = Path(r"C:\Users\ge47vob\ontology-development-kit\target\ppo")
+    local_ontology_path: Path = Path("ontology")
     template_dir: str = "src/ontology/templates"
     default_template_file: str = "ai_approved_terms.tsv"
     git_branch_prefix: str = "ai-curation/"
     require_human_approval: bool = True
     llm_provider: str | None = None
     llm_api_key: str | None = None
+    llm_api_key_env_var: str | None = None
     llm_model: str | None = None
     llm_base_url: str | None = None
+    llm_temperature: float = 0.0
+    llm_max_output_tokens: int = 1024
+    llm_timeout_seconds: float = 30.0
+    llm_retry_count: int = 1
+    llm_stream: bool = False
     llm_context_char_limit: int = 200_000
     zotero_library_type: str | None = None
     zotero_library_id: str | None = None
@@ -41,7 +47,7 @@ class Settings(BaseSettings):
     literature_combined_output_file: Path = Path("literature") / "combined_literature.md"
     literature_fuzzy_min_score: float = 0.82
     ppo_odk_ontology_path: Path = Field(
-        default=Path(r"C:\Users\ge47vob\ontology-development-kit\target\ppo\target\ppo\src\ontology"),
+        default=Path("/odk/ontology/src/ontology"),
         validation_alias=AliasChoices("PPO_ODK_ONTOLOGY_PATH", "OCA_PPO_ODK_ONTOLOGY_PATH"),
     )
     odk_template_relative_path: str = "templates/ai_approved_terms.tsv"

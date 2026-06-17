@@ -9,8 +9,321 @@ from backend.app.odk.integration import OdkProjectConfig, preview_export_path
 
 app = typer.Typer(help="Ontology Curation Assistant command line tools.")
 literature_app = typer.Typer(help="Literature repository commands.")
+project_app = typer.Typer(help="Project management commands.")
+curation_app = typer.Typer(help="Project-scoped curation run commands.")
+evaluation_app = typer.Typer(help="Evaluation metric commands.")
+ontology_app = typer.Typer(help="Project-scoped ontology/ODK commands.")
 app.add_typer(literature_app, name="literature")
+app.add_typer(project_app, name="project")
+app.add_typer(curation_app, name="curation")
+app.add_typer(evaluation_app, name="evaluation")
+app.add_typer(ontology_app, name="ontology")
 console = Console()
+
+
+def _session():
+    from backend.app.db.session import SessionLocal, ensure_runtime_schema
+
+    ensure_runtime_schema()
+    return SessionLocal()
+
+
+@project_app.command("create")
+def project_create(
+    name: str = typer.Option(..., help="Project name."),
+    ontology_id: str = typer.Option(..., help="Ontology ID, e.g. ppo."),
+    ontology_title: str | None = typer.Option(None, help="Human-readable ontology title."),
+    base_iri: str | None = typer.Option(None, help="Ontology base IRI."),
+    github_url: str | None = typer.Option(None, help="GitHub repository URL or name."),
+    local_workspace_path: Path = typer.Option(..., help="Workspace where projects/<slug> is created."),
+    zotero_source_path: str | None = typer.Option(None, help="Local Zotero storage/literature source path."),
+    odk_repo_path: str | None = typer.Option(None, help="Existing or planned ODK repository path."),
+    term_id_pattern: str | None = typer.Option(None, help="Term ID pattern, e.g. PPO_0000001."),
+    description: str | None = typer.Option(None, help="Optional project description."),
+) -> None:
+    """Create a project folder structure and make it active."""
+    from backend.app.projects import create_project, project_payload
+
+    with _session() as session:
+        project = create_project(
+            session,
+            name=name,
+            ontology_id=ontology_id,
+            ontology_title=ontology_title,
+            base_iri=base_iri,
+            local_workspace_path=local_workspace_path,
+            github_url=github_url,
+            zotero_literature_source_path=zotero_source_path,
+            odk_repo_path=odk_repo_path,
+            term_id_pattern=term_id_pattern,
+            description=description,
+        )
+        payload = project_payload(project)
+    console.print(f"[green]Created active project:[/green] {payload['slug']}")
+    console.print(payload["local_path"])
+
+
+@project_app.command("list")
+def project_list() -> None:
+    """List projects."""
+    from sqlalchemy import select
+
+    from backend.app.models.db import Project
+
+    with _session() as session:
+        projects = session.scalars(select(Project).order_by(Project.active.desc(), Project.name)).all()
+        for project in projects:
+            marker = "*" if project.active else " "
+            console.print(f"{marker} {project.id}: {project.slug} | {project.name} | {project.local_path}")
+
+
+@project_app.command("select")
+def project_select(project: str = typer.Argument(..., help="Project id or slug.")) -> None:
+    """Select the active project."""
+    from backend.app.projects import select_project
+
+    with _session() as session:
+        selected = select_project(session, project)
+    console.print(f"[green]Active project:[/green] {selected.slug}")
+
+
+@project_app.command("show")
+def project_show(project: str | None = typer.Argument(None, help="Project id or slug; defaults to active.")) -> None:
+    """Show project metadata."""
+    import json
+
+    from backend.app.projects import get_project, project_payload
+
+    with _session() as session:
+        selected = get_project(session, project)
+        payload = project_payload(selected)
+    console.print(json.dumps(payload, indent=2))
+
+
+@curation_app.command("run")
+def curation_run(
+    project: str | None = typer.Option(None, "--project", help="Project id or slug; defaults to active."),
+    strategy: str = typer.Option("literature_plus_ontology", help="Prompt strategy."),
+    name: str | None = typer.Option(None, help="Run name."),
+    model: str | None = typer.Option(None, help="Model name/settings label."),
+    prompt_file: Path | None = typer.Option(None, help="Prompt text file."),
+    raw_output_file: Path | None = typer.Option(None, help="Optional LLM JSON output to parse into suggestions."),
+) -> None:
+    """Create a project curation run and optionally parse raw suggestion JSON."""
+    from backend.app.projects import create_curation_run, get_project, persist_suggestions
+
+    prompt_text = prompt_file.read_text(encoding="utf-8") if prompt_file else None
+    raw_output = raw_output_file.read_text(encoding="utf-8") if raw_output_file else None
+    with _session() as session:
+        selected = get_project(session, project)
+        run = create_curation_run(
+            session,
+            selected,
+            name=name,
+            strategy=strategy,
+            model=model,
+            prompt_text=prompt_text,
+            raw_output=raw_output,
+        )
+        count = 0
+        warning = None
+        if raw_output:
+            count, warning = persist_suggestions(session, run, raw_output)
+    console.print(f"[green]Curation run:[/green] {run.id} ({run.prompt_strategy})")
+    console.print(f"[bold]Parsed suggestions:[/bold] {count}")
+    if warning:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@curation_app.command("list-runs")
+def curation_list_runs(project: str | None = typer.Option(None, "--project", help="Project id or slug.")) -> None:
+    """List curation runs for a project."""
+    from sqlalchemy import select
+
+    from backend.app.models.db import CurationRun
+    from backend.app.projects import get_project
+
+    with _session() as session:
+        selected = get_project(session, project)
+        runs = session.scalars(
+            select(CurationRun).where(CurationRun.project_id == selected.id).order_by(CurationRun.created_at.desc())
+        ).all()
+        for run in runs:
+            console.print(f"{run.id}: {run.name} | {run.prompt_strategy} | {run.status}")
+
+
+@curation_app.command("review-summary")
+def curation_review_summary(project: str | None = typer.Option(None, "--project", help="Project id or slug.")) -> None:
+    """Show review counts for a project."""
+    from backend.app.projects import compute_evaluation, get_project
+
+    with _session() as session:
+        selected = get_project(session, project)
+        result = compute_evaluation(session, selected)
+    console.print(result["metrics"])
+
+
+@curation_app.command("review")
+def curation_review(
+    suggestion_id: int = typer.Argument(..., help="Suggestion id."),
+    status: str = typer.Option(..., help="accepted, edited, rejected, duplicate, unsupported, or further_review."),
+    reviewer: str | None = typer.Option(None, help="Reviewer name."),
+    comment: str | None = typer.Option(None, help="Review comment."),
+    review_time_seconds: int | None = typer.Option(None, help="Review effort in seconds."),
+) -> None:
+    """Annotate a suggestion with a review decision."""
+    from backend.app.models.db import Suggestion
+    from backend.app.projects import add_review
+
+    with _session() as session:
+        suggestion = session.get(Suggestion, suggestion_id)
+        if suggestion is None:
+            raise typer.BadParameter(f"Suggestion not found: {suggestion_id}")
+        review = add_review(
+            session,
+            suggestion,
+            status=status,
+            reviewer=reviewer,
+            comment=comment,
+            review_time_seconds=review_time_seconds,
+        )
+    console.print(f"[green]Reviewed suggestion {suggestion_id}:[/green] {review.status}")
+
+
+@evaluation_app.command("compute")
+def evaluation_compute(
+    project: str | None = typer.Option(None, "--project", help="Project id or slug."),
+    run: int | None = typer.Option(None, "--run", help="Optional curation run id."),
+) -> None:
+    """Compute reproducible evaluation metrics from stored reviews."""
+    import json
+
+    from backend.app.projects import compute_evaluation, get_project
+
+    with _session() as session:
+        selected = get_project(session, project)
+        result = compute_evaluation(session, selected, run)
+    console.print(json.dumps(result["metrics"], indent=2))
+
+
+@evaluation_app.command("compare")
+def evaluation_compare(
+    project: str | None = typer.Option(None, "--project", help="Project id or slug."),
+    runs: list[int] = typer.Option(..., "--runs", help="Two run ids to compare."),
+) -> None:
+    """Compare two curation runs by label and relation overlap."""
+    import json
+
+    from backend.app.projects import compare_runs, get_project
+
+    if len(runs) != 2:
+        raise typer.BadParameter("Pass exactly two --runs values.")
+    with _session() as session:
+        selected = get_project(session, project)
+        result = compare_runs(session, selected, runs[0], runs[1])
+    console.print(json.dumps(result, indent=2))
+
+
+@evaluation_app.command("export")
+def evaluation_export(
+    project: str | None = typer.Option(None, "--project", help="Project id or slug."),
+    output: Path | None = typer.Option(None, help="Output JSON path."),
+) -> None:
+    """Export evaluation metrics as JSON."""
+    import json
+
+    from backend.app.projects import compute_evaluation, get_project
+
+    with _session() as session:
+        selected = get_project(session, project)
+        result = compute_evaluation(session, selected)
+    text = json.dumps(result, indent=2)
+    if output:
+        output.write_text(text, encoding="utf-8")
+        console.print(f"[green]Wrote:[/green] {output}")
+    else:
+        console.print(text)
+
+
+@ontology_app.command("validate")
+def ontology_validate(project: str | None = typer.Option(None, "--project", help="Project id or slug.")) -> None:
+    """Validate project ODK path metadata and required files."""
+    import json
+
+    from backend.app.projects import get_project, validate_project_odk
+
+    with _session() as session:
+        selected = get_project(session, project)
+        result = validate_project_odk(session, selected)
+    console.print(json.dumps(result, indent=2))
+
+
+@ontology_app.command("export-templates")
+def ontology_export_templates(
+    project: str | None = typer.Option(None, "--project", help="Project id or slug."),
+    output: Path | None = typer.Option(None, help="Output TSV path; defaults to project curation exports folder."),
+    include_further_review: bool = typer.Option(False, help="Include further_review suggestions explicitly."),
+) -> None:
+    """Export accepted/edited project suggestions to a ROBOT-like TSV."""
+    from backend.app.projects import export_suggestions_tsv, get_project, project_layout
+
+    with _session() as session:
+        selected = get_project(session, project)
+        content = export_suggestions_tsv(session, selected, include_further_review)
+        target = output or (project_layout(Path(selected.local_path))["curation_exports"] / "accepted_suggestions.robot.tsv")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    console.print(f"[green]Wrote:[/green] {target}")
+
+
+@ontology_app.command("init-odk")
+def ontology_init_odk(project: str | None = typer.Option(None, "--project", help="Project id or slug.")) -> None:
+    """Initialize the local ODK folder placeholder for a project."""
+    from backend.app.projects import get_project, project_layout
+
+    with _session() as session:
+        selected = get_project(session, project)
+        path = Path(selected.odk_repo_path or project_layout(Path(selected.local_path))["ontology_odk"])
+        path.mkdir(parents=True, exist_ok=True)
+        selected.odk_repo_path = str(path)
+        session.commit()
+    console.print(f"[green]ODK folder ready:[/green] {path}")
+
+
+@ontology_app.command("build")
+def ontology_build(project: str | None = typer.Option(None, "--project", help="Project id or slug.")) -> None:
+    """Log a requested ODK build operation without running destructive commands."""
+    from backend.app.projects import get_project, log_odk_operation
+
+    with _session() as session:
+        selected = get_project(session, project)
+        log_odk_operation(
+            session,
+            selected,
+            operation="build_requested",
+            command="make all",
+            working_directory=selected.odk_repo_path,
+            status="pending_manual_run",
+        )
+    console.print("[yellow]Build command logged. Run explicit project ODK commands from the UI/CLI when configured.[/yellow]")
+
+
+@ontology_app.command("test")
+def ontology_test(project: str | None = typer.Option(None, "--project", help="Project id or slug.")) -> None:
+    """Log a requested ODK test operation without running destructive commands."""
+    from backend.app.projects import get_project, log_odk_operation
+
+    with _session() as session:
+        selected = get_project(session, project)
+        log_odk_operation(
+            session,
+            selected,
+            operation="test_requested",
+            command="make test",
+            working_directory=selected.odk_repo_path,
+            status="pending_manual_run",
+        )
+    console.print("[yellow]Test command logged. Configure safe execution before running external ODK commands.[/yellow]")
 
 
 @app.command()
@@ -105,6 +418,32 @@ def llm_ontology_suggestions(
     console.print(f"[bold]Literature records:[/bold] {result.literature_count}")
     console.print(f"[bold]Suggestions:[/bold] {result.suggestion_count}")
     console.print(f"[bold]Trace output:[/bold] {result.output_path}")
+
+
+@app.command("llm-test")
+def llm_test() -> None:
+    """Test the configured LLM provider with a tiny prompt."""
+    from backend.app.db.session import SessionLocal, ensure_runtime_schema
+    from backend.app.llm.clients import test_llm_connection
+    from backend.app.services.runtime_config import llm_config
+
+    ensure_runtime_schema()
+    with SessionLocal() as session:
+        result = test_llm_connection(llm_config(session))
+    console.print(f"[bold]Provider:[/bold] {result.provider or '(not configured)'}")
+    console.print(f"[bold]Provider key:[/bold] {result.provider_key or '(not configured)'}")
+    console.print(f"[bold]Model:[/bold] {result.model or '(default)'}")
+    console.print(f"[bold]API key found:[/bold] {'yes' if result.api_key_found else 'no'}")
+    console.print(f"[bold]API key source:[/bold] {result.api_key_source or '(none)'}")
+    console.print(f"[bold]Status:[/bold] {result.status}")
+    if result.latency_ms is not None:
+        console.print(f"[bold]Latency:[/bold] {result.latency_ms} ms")
+    if result.response_preview:
+        console.print(f"[bold]Response:[/bold] {result.response_preview}")
+    if not result.ok:
+        console.print(f"[red]{result.error or 'LLM test failed.'}[/red]")
+        raise typer.Exit(code=1)
+    console.print("[green]LLM connection test succeeded.[/green]")
 
 
 @app.command()
@@ -289,6 +628,9 @@ def literature_pipeline(
     console.print(f"[bold]Copied PDFs:[/bold] {result.copied_pdf_count}")
     console.print(f"[bold]Generated Markdown files:[/bold] {result.converted_markdown_count}")
     console.print(f"[bold]Combined literature records:[/bold] {result.combined_markdown_count}")
+    console.print(f"[bold]Skipped paper records:[/bold] {result.skipped_paper_count}")
+    if result.extraction_report_file:
+        console.print(f"[bold]Extraction diagnostics:[/bold] {result.extraction_report_file}")
 
 
 @literature_app.command("reset-repository")

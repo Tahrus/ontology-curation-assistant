@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,8 @@ from backend.app.llm.curation import (
     CurationResponseError,
     run_curation_suggestion_workflow,
 )
+from backend.app.llm.clients import LlmClientError, generate_text, provider_catalog, test_llm_connection
+from backend.app.llm.presets import normalize_provider_id
 from backend.app.llm.service import LlmUnavailableError, extract_candidates_with_optional_llm
 from backend.app.literature.exporter import (
     refresh_literature_markdown_repository,
@@ -44,6 +48,10 @@ from backend.app.models.core import ReviewStatus
 from backend.app.models.db import (
     AppSetting,
     CandidateTermRecord,
+    CurationRun,
+    OdkOperationLog,
+    Project,
+    Suggestion,
     ExtractionRun,
     LiteratureDocument,
     LiteratureSource,
@@ -53,10 +61,33 @@ from backend.app.odk.workflow import config_from_settings, run_approved_candidat
 from backend.app.ontology.local import (
     index_ontology_file,
     match_local_terms,
+    ontology_tree_payload,
     scan_ontology_folder,
     search_terms,
 )
+from backend.app.ontology.relations import relation_type_payload
 from backend.app.ontology.ols import OlsLookupService
+from backend.app.projects import (
+    PROJECT_TYPES,
+    PROMPT_STRATEGIES,
+    add_review,
+    compare_runs,
+    compute_evaluation,
+    create_curation_run,
+    create_project,
+    export_suggestions_tsv,
+    get_project,
+    latest_reviews_by_suggestion,
+    log_odk_operation,
+    persist_suggestions,
+    project_payload,
+    review_payload,
+    select_project,
+    suggest_base_iri,
+    suggestion_payload,
+    update_project_metadata,
+    validate_project_odk,
+)
 from backend.app.services.runtime_config import (
     config_status,
     display_value,
@@ -90,8 +121,14 @@ class ZoteroConfigPayload(BaseModel):
 class LlmConfigPayload(BaseModel):
     provider: str = Field(min_length=1)
     api_key: str | None = None
+    api_key_env_var: str | None = None
     model: str | None = None
     base_url: str | None = None
+    temperature: float | None = None
+    max_output_tokens: int | None = None
+    timeout_seconds: float | None = None
+    retry_count: int | None = None
+    stream: bool | None = None
 
 
 class SavedApiConfigPayload(BaseModel):
@@ -101,9 +138,15 @@ class SavedApiConfigPayload(BaseModel):
     library_type: Literal["user", "group"] | None = None
     library_id: str | None = None
     api_key: str | None = None
+    api_key_env_var: str | None = None
     collection_key: str | None = None
     model: str | None = None
     base_url: str | None = None
+    temperature: float | None = None
+    max_output_tokens: int | None = None
+    timeout_seconds: float | None = None
+    retry_count: int | None = None
+    stream: bool | None = None
 
 
 class RejectionPayload(BaseModel):
@@ -168,6 +211,7 @@ class CandidateUpdate(BaseModel):
     selected_ols: dict[str, Any] | None = None
     selected_local: dict[str, Any] | None = None
     curator_decision: str | None = None
+    graph_review: dict[str, Any] | None = None
 
 
 class ReviewAction(BaseModel):
@@ -211,6 +255,119 @@ class OdkWorkflowPayload(BaseModel):
     suggestion_file: str | None = None
 
 
+class ProjectCreatePayload(BaseModel):
+    name: str = Field(min_length=1)
+    ontology_id: str = Field(min_length=1)
+    ontology_title: str | None = None
+    project_type: Literal[
+        "upper_bioprocess_ontology",
+        "domain_ontology",
+        "module",
+        "application_ontology",
+        "existing_ontology_project",
+        "imported_reference_ontology",
+    ] = "domain_ontology"
+    parent_project_id: str | int | None = None
+    ontology_scope: list[str] = Field(default_factory=list)
+    minimal_scope_notes: str | None = None
+    ontology_namespace: str | None = None
+    base_iri: str | None = None
+    local_workspace_path: str | None = None
+    github_url: str | None = None
+    local_git_repository_path: str | None = None
+    zotero_literature_source_path: str | None = None
+    selected_ontology_imports: list[str] = Field(default_factory=list)
+    odk_repo_path: str | None = None
+    editable_ontology_path: str | None = None
+    built_ontology_path: str | None = None
+    literature_repository_path: str | None = None
+    term_id_pattern: str | None = None
+    description: str | None = None
+    activate: bool = True
+
+
+class ProjectUpdatePayload(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    ontology_id: str | None = None
+    ontology_title: str | None = None
+    project_type: Literal[
+        "upper_bioprocess_ontology",
+        "domain_ontology",
+        "module",
+        "application_ontology",
+        "existing_ontology_project",
+        "imported_reference_ontology",
+    ] | None = None
+    parent_project_id: str | int | None = None
+    ontology_scope: list[str] | None = None
+    minimal_scope_notes: str | None = None
+    ontology_namespace: str | None = None
+    base_iri: str | None = None
+    local_workspace_path: str | None = None
+    github_url: str | None = None
+    local_git_repository_path: str | None = None
+    odk_repo_path: str | None = None
+    editable_ontology_path: str | None = None
+    built_ontology_path: str | None = None
+    literature_repository_path: str | None = None
+
+
+class CurationRunCreatePayload(BaseModel):
+    project_id: str | int | None = None
+    name: str | None = None
+    strategy: Literal[
+        "literature_only",
+        "ontology_only",
+        "literature_plus_ontology",
+        "structured_relation_extraction",
+    ]
+    model: str | None = None
+    prompt_text: str | None = None
+    context_configuration: dict[str, Any] = Field(default_factory=dict)
+    raw_output: str | None = None
+
+
+class SuggestionImportPayload(BaseModel):
+    raw_output: str = Field(min_length=1)
+
+
+class ReviewDecisionPayload(BaseModel):
+    status: Literal["accepted", "edited", "rejected", "duplicate", "unsupported", "further_review"]
+    reviewer: str | None = None
+    edited_label: str | None = None
+    edited_definition: str | None = None
+    edited_parent_class: str | None = None
+    edited_relation: str | None = None
+    edited_target: str | None = None
+    relation_correct: bool | None = None
+    comment: str | None = None
+    review_time_seconds: int | None = Field(default=None, ge=0)
+
+
+class EvaluationComparePayload(BaseModel):
+    first_run_id: int
+    second_run_id: int
+
+
+class OdkOperationPayload(BaseModel):
+    operation: str = Field(min_length=1)
+    command: str | None = None
+    working_directory: str | None = None
+    stdout: str | None = None
+    stderr: str | None = None
+    exit_code: int | None = None
+    status: str = "logged"
+
+
+class ProjectMetadataSuggestionPayload(BaseModel):
+    idea: str = Field(min_length=3, max_length=500)
+
+
+class LiteratureProjectTagsPayload(BaseModel):
+    project_tags: list[str] = Field(default_factory=list)
+
+
 def _json_loads(value: str | None, default: Any) -> Any:
     if not value:
         return default
@@ -218,6 +375,410 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def _clean_string_list(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        cleaned.append(item)
+    return cleaned
+
+
+def _project_or_404(session: Session, project_ref: str | int | None = None) -> Project:
+    try:
+        return get_project(session, project_ref)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/projects")
+def list_projects(session: Session = Depends(get_session)) -> dict[str, Any]:
+    projects = session.scalars(select(Project).order_by(Project.active.desc(), Project.name)).all()
+    active = next((project for project in projects if project.active), None)
+    return {
+        "project_types": sorted(PROJECT_TYPES),
+        "active_project": project_payload(active, session) if active else None,
+        "projects": [project_payload(project, session) for project in projects],
+    }
+
+
+@router.post("/projects")
+def create_project_endpoint(
+    payload: ProjectCreatePayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    try:
+        project = create_project(
+            session,
+            name=payload.name,
+            ontology_id=payload.ontology_id,
+            ontology_title=payload.ontology_title,
+            project_type=payload.project_type,
+            parent_project_ref=payload.parent_project_id,
+            ontology_scope=payload.ontology_scope,
+            minimal_scope_notes=payload.minimal_scope_notes,
+            ontology_namespace=payload.ontology_namespace,
+            base_iri=payload.base_iri,
+            local_workspace_path=Path(payload.local_workspace_path or "."),
+            github_url=payload.github_url,
+            local_git_repository_path=payload.local_git_repository_path,
+            zotero_literature_source_path=payload.zotero_literature_source_path,
+            odk_repo_path=payload.odk_repo_path,
+            editable_ontology_path=payload.editable_ontology_path,
+            built_ontology_path=payload.built_ontology_path,
+            literature_repository_path=payload.literature_repository_path,
+            term_id_pattern=payload.term_id_pattern,
+            description=payload.description,
+            activate=payload.activate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "already exists" in str(exc) else 400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return project_payload(project, session)
+
+
+@router.get("/projects/suggest-base-iri")
+def suggest_project_base_iri(ontology_id: str) -> dict[str, Any]:
+    return {"ontology_id": ontology_id, "base_iri": suggest_base_iri(ontology_id)}
+
+
+def _parse_project_metadata_json(text: str) -> dict[str, Any]:
+    cleaned = (text or "").strip()
+    candidates = [cleaned]
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
+    if fenced and fenced not in candidates:
+        candidates.append(fenced)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(cleaned[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+        raise ValueError("LLM returned JSON, but it was not a metadata object.")
+    raise ValueError("LLM returned text that was not valid JSON project metadata.")
+
+
+@router.post("/projects/suggest-metadata")
+def suggest_project_metadata(
+    payload: ProjectMetadataSuggestionPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    config = llm_config(session)
+    if not config.provider or not config.resolved_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="LLM is not configured. Enter LLM settings or create the project manually.",
+        )
+    prompt = (
+        "Suggest concise metadata for an ontology-development project. "
+        "Return only JSON with keys: project_name, ontology_id, project_type, short_description, "
+        "base_iri, minimal_scope_notes. "
+        "Allowed project_type values are upper_bioprocess_ontology, domain_ontology, module, "
+        "application_ontology, existing_ontology_project. "
+        "Use a short ontology_id and a base IRI like http://purl.obolibrary.org/obo/<id>.owl.\n\n"
+        f"Project idea: {payload.idea}"
+    )
+    try:
+        result = generate_text(
+            prompt,
+            system_prompt="You help draft short ontology project metadata. Return compact JSON only.",
+            config=config,
+        )
+        suggestion = _parse_project_metadata_json(result.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LlmClientError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ontology_id = str(suggestion.get("ontology_id") or "").strip()
+    project_type = str(suggestion.get("project_type") or "domain_ontology").strip()
+    if project_type not in PROJECT_TYPES:
+        project_type = "domain_ontology"
+    if ontology_id and not suggestion.get("base_iri"):
+        suggestion["base_iri"] = suggest_base_iri(ontology_id)
+    return {
+        "ok": True,
+        "suggestion": {
+            "project_name": str(suggestion.get("project_name") or suggestion.get("name") or "").strip(),
+            "ontology_id": ontology_id,
+            "project_type": project_type,
+            "short_description": str(suggestion.get("short_description") or suggestion.get("description") or "").strip(),
+            "base_iri": str(suggestion.get("base_iri") or "").strip(),
+            "minimal_scope_notes": str(suggestion.get("minimal_scope_notes") or "").strip(),
+        },
+        "provider": result.provider,
+        "model": result.model,
+        "latency_ms": result.latency_ms,
+    }
+
+
+@router.get("/projects/active")
+def read_active_project(session: Session = Depends(get_session)) -> dict[str, Any]:
+    return project_payload(_project_or_404(session), session)
+
+
+@router.post("/projects/{project_ref}/select")
+def select_project_endpoint(project_ref: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    try:
+        project = select_project(session, project_ref)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return project_payload(project, session)
+
+
+@router.post("/projects/{project_ref}/activate")
+def activate_project_endpoint(project_ref: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    return select_project_endpoint(project_ref, session)
+
+
+@router.get("/projects/{project_ref}")
+def read_project(project_ref: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    return project_payload(_project_or_404(session, project_ref), session)
+
+
+@router.get("/projects/{project_ref}/children")
+def list_project_children(project_ref: str, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    project = _project_or_404(session, project_ref)
+    children = session.scalars(
+        select(Project).where(Project.parent_project_id == project.id).order_by(Project.name)
+    ).all()
+    return [project_payload(child, session) for child in children]
+
+
+@router.patch("/projects/{project_ref}")
+def update_project(
+    project_ref: str,
+    payload: ProjectUpdatePayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    project = _project_or_404(session, project_ref)
+    try:
+        updates = payload.model_dump(exclude_unset=True)
+        if "local_workspace_path" in updates:
+            workspace = updates.pop("local_workspace_path")
+            if workspace:
+                updates["local_path"] = str(Path(workspace))
+        project = update_project_metadata(session, project, updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "already exists" in str(exc) else 400, detail=str(exc)) from exc
+    return project_payload(project, session)
+
+
+@router.get("/curation/prompt-strategies")
+def list_prompt_strategies() -> dict[str, str]:
+    return PROMPT_STRATEGIES
+
+
+@router.post("/curation/runs")
+def create_curation_run_endpoint(
+    payload: CurationRunCreatePayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    project = _project_or_404(session, payload.project_id)
+    try:
+        run = create_curation_run(
+            session,
+            project,
+            name=payload.name,
+            strategy=payload.strategy,
+            model=payload.model,
+            prompt_text=payload.prompt_text,
+            context_configuration=payload.context_configuration,
+            raw_output=payload.raw_output,
+        )
+        parsed = 0
+        warning = None
+        if payload.raw_output:
+            parsed, warning = persist_suggestions(session, run, payload.raw_output)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "id": run.id,
+        "project_id": run.project_id,
+        "name": run.name,
+        "prompt_strategy": run.prompt_strategy,
+        "status": run.status,
+        "parsed_suggestions": parsed,
+        "warning": warning,
+    }
+
+
+@router.get("/curation/runs")
+def list_curation_runs(
+    project_id: str | int | None = None,
+    session: Session = Depends(get_session),
+) -> list[dict[str, Any]]:
+    project = _project_or_404(session, project_id)
+    runs = session.scalars(
+        select(CurationRun).where(CurationRun.project_id == project.id).order_by(CurationRun.created_at.desc())
+    ).all()
+    return [
+        {
+            "id": run.id,
+            "project_id": run.project_id,
+            "name": run.name,
+            "model": run.model,
+            "prompt_strategy": run.prompt_strategy,
+            "context_configuration": _json_loads(run.context_configuration_json, {}),
+            "literature_snapshot_path": run.literature_snapshot_path,
+            "ontology_snapshot_path": run.ontology_snapshot_path,
+            "status": run.status,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+        }
+        for run in runs
+    ]
+
+
+@router.post("/curation/runs/{run_id}/suggestions")
+def import_run_suggestions(
+    run_id: int,
+    payload: SuggestionImportPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    run = session.get(CurationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Curation run not found")
+    count, warning = persist_suggestions(session, run, payload.raw_output)
+    return {"run_id": run.id, "parsed_suggestions": count, "warning": warning, "status": run.status}
+
+
+@router.get("/suggestions")
+def list_suggestions(
+    project_id: str | int | None = None,
+    run_id: int | None = None,
+    status: str | None = None,
+    suggestion_type: str | None = None,
+    evidence: Literal["any", "with", "without"] = "any",
+    session: Session = Depends(get_session),
+) -> list[dict[str, Any]]:
+    project = _project_or_404(session, project_id)
+    statement = select(Suggestion).where(Suggestion.project_id == project.id)
+    if run_id is not None:
+        statement = statement.where(Suggestion.curation_run_id == run_id)
+    if suggestion_type:
+        statement = statement.where(Suggestion.suggestion_type == suggestion_type)
+    suggestions = session.scalars(statement.order_by(Suggestion.created_at.desc())).all()
+    reviews = latest_reviews_by_suggestion(session, [item.id for item in suggestions])
+    filtered = []
+    for suggestion in suggestions:
+        latest = reviews.get(suggestion.id)
+        review_status = latest.status if latest else "unreviewed"
+        has_evidence = bool(suggestion.evidence_text or _json_loads(suggestion.evidence_json, []))
+        if status and review_status != status:
+            continue
+        if evidence == "with" and not has_evidence:
+            continue
+        if evidence == "without" and has_evidence:
+            continue
+        filtered.append(suggestion_payload(suggestion, latest))
+    return filtered
+
+
+@router.post("/suggestions/{suggestion_id}/review")
+def review_suggestion(
+    suggestion_id: int,
+    payload: ReviewDecisionPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    suggestion = session.get(Suggestion, suggestion_id)
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    try:
+        review = add_review(session, suggestion, **payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return review_payload(review) or {}
+
+
+@router.post("/evaluation/compute")
+def compute_evaluation_endpoint(
+    project_id: str | int | None = None,
+    run_id: int | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    project = _project_or_404(session, project_id)
+    return compute_evaluation(session, project, run_id)
+
+
+@router.post("/evaluation/compare")
+def compare_evaluation_endpoint(
+    payload: EvaluationComparePayload,
+    project_id: str | int | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    project = _project_or_404(session, project_id)
+    return compare_runs(session, project, payload.first_run_id, payload.second_run_id)
+
+
+@router.get("/projects/{project_ref}/odk/validate")
+def validate_project_odk_endpoint(project_ref: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    project = _project_or_404(session, project_ref)
+    return validate_project_odk(session, project)
+
+
+@router.post("/projects/{project_ref}/odk/logs")
+def log_project_odk_operation(
+    project_ref: str,
+    payload: OdkOperationPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    project = _project_or_404(session, project_ref)
+    log = log_odk_operation(session, project, **payload.model_dump())
+    return {
+        "id": log.id,
+        "project_id": log.project_id,
+        "operation": log.operation,
+        "status": log.status,
+        "exit_code": log.exit_code,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+
+
+@router.get("/projects/{project_ref}/odk/logs")
+def list_project_odk_logs(project_ref: str, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    project = _project_or_404(session, project_ref)
+    logs = session.scalars(
+        select(OdkOperationLog).where(OdkOperationLog.project_id == project.id).order_by(OdkOperationLog.created_at.desc())
+    ).all()
+    return [
+        {
+            "id": log.id,
+            "operation": log.operation,
+            "command": log.command,
+            "working_directory": log.working_directory,
+            "stdout": log.stdout,
+            "stderr": log.stderr,
+            "exit_code": log.exit_code,
+            "status": log.status,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]
+
+
+@router.get("/projects/{project_ref}/exports/accepted.robot.tsv")
+def export_project_accepted_suggestions(
+    project_ref: str,
+    include_further_review: bool = False,
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    project = _project_or_404(session, project_ref)
+    content = export_suggestions_tsv(session, project, include_further_review=include_further_review)
+    return StreamingResponse(
+        io.StringIO(content),
+        media_type="text/tab-separated-values",
+        headers={"Content-Disposition": "attachment; filename=project_accepted_suggestions.robot.tsv"},
+    )
 
 
 def _candidate_payload(candidate: CandidateTermRecord) -> dict[str, Any]:
@@ -242,6 +803,7 @@ def _candidate_payload(candidate: CandidateTermRecord) -> dict[str, Any]:
         "selected_local": _json_loads(candidate.selected_local_json, None),
         "local_lookup_status": candidate.local_lookup_status,
         "curator_decision": candidate.curator_decision,
+        "graph_review": _json_loads(candidate.graph_review_json, {}),
         "refinement_guidance": candidate.refinement_guidance,
         "rejection_reason": candidate.rejection_reason,
         "permanently_rejected_at": (
@@ -335,7 +897,63 @@ def _preferred_ontology_file(files: list[dict[str, Any]]) -> Path | None:
     return Path(files[0]["path"])
 
 
-def _indexed_terms(session: Session):
+def _existing_file(path_value: str | None) -> Path | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    return path if path.exists() and path.is_file() else None
+
+
+def resolve_project_ontology_file(project: Project) -> tuple[Path | None, str | None]:
+    explicit_built = _existing_file(project.built_ontology_path)
+    if explicit_built:
+        return explicit_built, "built_ontology_path"
+    explicit_editable = _existing_file(project.editable_ontology_path)
+    if explicit_editable:
+        return explicit_editable, "editable_ontology_path"
+
+    # List of built/released candidates
+    built_candidates = [
+        Path(project.local_path) / "target" / project.ontology_id / "src" / "ontology" / f"{project.ontology_id}-simple.obo",
+        Path(project.odk_repo_path or "") / "target" / project.ontology_id / "src" / "ontology" / f"{project.ontology_id}-simple.obo",
+        Path(project.local_path) / "ontology" / "releases" / f"{project.ontology_id}-simple.obo",
+        Path(project.local_path) / "ontology" / f"{project.ontology_id}-simple.obo",
+        Path(project.odk_repo_path or "") / "src" / "ontology" / f"{project.ontology_id}-simple.obo",
+        Path(project.odk_repo_path or "") / f"{project.ontology_id}-simple.obo",
+    ]
+    for p in built_candidates:
+        if p and p.exists() and p.is_file():
+            return p, "built_obo"
+
+    # List of edit/editable candidates
+    edit_candidates = [
+        Path(project.local_path) / "target" / project.ontology_id / "src" / "ontology" / f"{project.ontology_id}-edit.owl",
+        Path(project.odk_repo_path or "") / "target" / project.ontology_id / "src" / "ontology" / f"{project.ontology_id}-edit.owl",
+        Path(project.local_path) / "ontology" / f"{project.ontology_id}-edit.owl",
+        Path(project.odk_repo_path or "") / "src" / "ontology" / f"{project.ontology_id}-edit.owl",
+        Path(project.odk_repo_path or "") / f"{project.ontology_id}-edit.owl",
+    ]
+    for p in edit_candidates:
+        if p and p.exists() and p.is_file():
+            return p, "edit_owl"
+
+    return None, None
+
+
+def _indexed_terms(session: Session, project_ref: str | int | None = None):
+    project = None
+    try:
+        project = get_project(session, project_ref)
+    except LookupError:
+        pass
+
+    if project:
+        ontology_file, source_type = resolve_project_ontology_file(project)
+        if ontology_file:
+            return index_ontology_file(ontology_file)
+        raise FileNotFoundError("No project ontology file found. Configure or build the project ontology first.")
+
+    # Global/fallback logic if no active project is found
     selected = _selected_ontology_file(session)
     if selected is None:
         scan = scan_ontology_folder(_configured_ontology_path(session))
@@ -389,6 +1007,12 @@ def _upsert_saved_config(
         "model": values.get("model"),
         "base_url": values.get("base_url"),
         "api_key": values.get("api_key"),
+        "api_key_env_var": values.get("api_key_env_var"),
+        "temperature": values.get("temperature"),
+        "max_output_tokens": values.get("max_output_tokens"),
+        "timeout_seconds": values.get("timeout_seconds"),
+        "retry_count": values.get("retry_count"),
+        "stream": values.get("stream"),
         "created_at": values.get("created_at") or now,
         "updated_at": now,
     }
@@ -567,27 +1191,106 @@ def save_llm_config(
     payload: LlmConfigPayload,
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
+    provider_key = normalize_provider_id(payload.provider) or payload.provider
     set_runtime_values(
         session,
         {
-            "llm_provider": payload.provider,
+            "llm_provider": provider_key,
             "llm_api_key": payload.api_key,
+            "llm_api_key_env_var": payload.api_key_env_var,
             "llm_model": payload.model,
             "llm_base_url": payload.base_url,
+            "llm_temperature": str(payload.temperature) if payload.temperature is not None else None,
+            "llm_max_output_tokens": str(payload.max_output_tokens) if payload.max_output_tokens is not None else None,
+            "llm_timeout_seconds": str(payload.timeout_seconds) if payload.timeout_seconds is not None else None,
+            "llm_retry_count": str(payload.retry_count) if payload.retry_count is not None else None,
+            "llm_stream": str(bool(payload.stream)).lower() if payload.stream is not None else None,
         },
     )
     _upsert_saved_config(
         session,
         kind="llm",
         values={
-            "alias": f"{payload.provider} {payload.model or ''}".strip(),
-            "provider": payload.provider,
+            "alias": f"{provider_key} {payload.model or ''}".strip(),
+            "provider": provider_key,
             "api_key": payload.api_key,
+            "api_key_env_var": payload.api_key_env_var,
             "model": payload.model,
             "base_url": payload.base_url,
+            "temperature": payload.temperature,
+            "max_output_tokens": payload.max_output_tokens,
+            "timeout_seconds": payload.timeout_seconds,
+            "retry_count": payload.retry_count,
+            "stream": payload.stream,
         },
     )
     return config_status(session)["llm"]
+
+
+@router.get("/config/llm/providers")
+def llm_provider_catalog() -> dict[str, Any]:
+    return provider_catalog()
+
+
+@router.post("/config/llm/test")
+def test_configured_llm(session: Session = Depends(get_session)) -> dict[str, Any]:
+    result = test_llm_connection(llm_config(session))
+    return {
+        "ok": result.ok,
+        "provider": result.provider,
+        "provider_key": result.provider_key,
+        "model": result.model,
+        "api_key_found": result.api_key_found,
+        "api_key_source": result.api_key_source,
+        "latency_ms": result.latency_ms,
+        "status": result.status,
+        "response_preview": result.response_preview,
+        "error": result.error,
+    }
+
+
+@router.get("/diagnostics/docker-odk")
+def docker_odk_diagnostics(session: Session = Depends(get_session)) -> dict[str, Any]:
+    settings = get_settings()
+    literature = literature_config(session)
+    ontology_path = _configured_ontology_path(session)
+    selected = _selected_ontology_file(session)
+    tools = {
+        "robot": shutil.which("robot"),
+        "java": shutil.which("java"),
+        "make": shutil.which("make"),
+        "git": shutil.which("git"),
+    }
+    return {
+        "docker": {
+            "configured_for_container_paths": str(settings.odk_home).startswith("/"),
+            "data_dir": str(literature.base_dir),
+        },
+        "tools": {name: {"available": bool(path), "path": path} for name, path in tools.items()},
+        "odk": {
+            "home": str(settings.odk_home),
+            "home_exists": settings.odk_home.exists(),
+            "ontology_repo": str(settings.ontology_repo) if settings.ontology_repo else None,
+            "ontology_repo_exists": settings.ontology_repo.exists() if settings.ontology_repo else False,
+            "ppo_odk_ontology_path": str(settings.ppo_odk_ontology_path),
+            "ppo_odk_ontology_path_exists": settings.ppo_odk_ontology_path.exists(),
+            "validation_command": settings.odk_validation_command,
+        },
+        "ontology": {
+            "configured_path": str(ontology_path),
+            "configured_path_exists": ontology_path.exists(),
+            "selected_file": str(selected) if selected else None,
+            "selected_file_exists": selected.exists() if selected else False,
+        },
+        "literature": {
+            "base_dir": str(literature.base_dir),
+            "base_dir_exists": literature.base_dir.exists(),
+            "papers_dir": str(literature.papers_dir),
+            "papers_dir_exists": literature.papers_dir.exists(),
+            "combined_output_file": str(literature.combined_output_file),
+            "combined_output_exists": literature.combined_output_file.exists(),
+        },
+    }
 
 
 @router.get("/curation/prompt")
@@ -649,7 +1352,10 @@ def create_saved_api_config(
     payload: SavedApiConfigPayload,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    config = _upsert_saved_config(session, kind=payload.kind, values=payload.model_dump())
+    values = payload.model_dump()
+    if payload.kind == "llm":
+        values["provider"] = normalize_provider_id(values.get("provider")) or values.get("provider")
+    config = _upsert_saved_config(session, kind=payload.kind, values=values)
     return _public_saved_config(config, config["id"])
 
 
@@ -675,13 +1381,20 @@ def activate_saved_api_config(
             },
         )
     elif kind == "llm":
+        provider_key = normalize_provider_id(config.get("provider")) or config.get("provider")
         set_runtime_values(
             session,
             {
-                "llm_provider": config.get("provider"),
+                "llm_provider": provider_key,
                 "llm_api_key": config.get("api_key"),
+                "llm_api_key_env_var": config.get("api_key_env_var"),
                 "llm_model": config.get("model"),
                 "llm_base_url": config.get("base_url"),
+                "llm_temperature": str(config.get("temperature")) if config.get("temperature") is not None else None,
+                "llm_max_output_tokens": str(config.get("max_output_tokens")) if config.get("max_output_tokens") is not None else None,
+                "llm_timeout_seconds": str(config.get("timeout_seconds")) if config.get("timeout_seconds") is not None else None,
+                "llm_retry_count": str(config.get("retry_count")) if config.get("retry_count") is not None else None,
+                "llm_stream": str(bool(config.get("stream"))).lower() if config.get("stream") is not None else None,
                 "active_llm_config_id": config_id,
             },
         )
@@ -843,6 +1556,11 @@ def run_literature_pipeline_action(session: Session = Depends(get_session)) -> d
         "created_paper_markdown_count": result.created_paper_markdown_count,
         "structured_markdown_count": result.structured_markdown_count,
         "combined_markdown_count": result.combined_markdown_count,
+        "skipped_paper_count": result.skipped_paper_count,
+        "extraction_report_file": str(result.extraction_report_file) if result.extraction_report_file else None,
+        "extraction_report_exists": bool(result.extraction_report_file and result.extraction_report_file.exists()),
+        "cleanup_report_file": str(result.cleanup_report_file) if result.cleanup_report_file else None,
+        "cleanup_report_exists": bool(result.cleanup_report_file and result.cleanup_report_file.exists()),
         "repository_status": repository_status(config.papers_dir),
     }
 
@@ -948,6 +1666,7 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "url": markdown_metadata.get("url") or source.url,
         "abstract": (markdown_paper or {}).get("abstract") or source.abstract,
         "tags": _json_loads(source.tags_json, []),
+        "project_tags": _json_loads(source.project_tags_json, []),
         "collections": _json_loads(source.collections_json, []),
         "item_type": source.item_type,
         "publication_venue": source.item_type,
@@ -990,6 +1709,7 @@ def _repository_paper_payload(paper: dict[str, Any], index: int) -> dict[str, An
         "url": metadata.get("url") or paper.get("url"),
         "abstract": paper.get("abstract"),
         "tags": [],
+        "project_tags": [],
         "collections": [],
         "item_type": "markdown",
         "publication_venue": "Markdown repository",
@@ -1043,6 +1763,21 @@ def read_zotero_entry(source_id: int, session: Session = Depends(get_session)) -
     source = session.get(LiteratureSource, source_id)
     if source is None or source.provider != "zotero":
         raise HTTPException(status_code=404, detail="Zotero entry not found")
+    return _source_payload(source, session)
+
+
+@router.patch("/zotero/entries/{source_id}/project-tags")
+def update_zotero_entry_project_tags(
+    source_id: int,
+    payload: LiteratureProjectTagsPayload,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    source = session.get(LiteratureSource, source_id)
+    if source is None or source.provider != "zotero":
+        raise HTTPException(status_code=404, detail="Zotero entry not found")
+    source.project_tags_json = json.dumps(_clean_string_list(payload.project_tags))
+    session.commit()
+    session.refresh(source)
     return _source_payload(source, session)
 
 
@@ -1137,8 +1872,7 @@ def import_test_zotero_entries(session: Session = Depends(get_session)) -> dict[
     return {"inserted": result.inserted, "updated": result.updated, "skipped": result.skipped}
 
 
-@router.get("/ontology/status")
-def ontology_status(session: Session = Depends(get_session)) -> dict[str, Any]:
+def _global_ontology_status(session: Session) -> dict[str, Any]:
     folder = _configured_ontology_path(session)
     scan = scan_ontology_folder(folder)
     selected = _selected_ontology_file(session)
@@ -1159,6 +1893,99 @@ def ontology_status(session: Session = Depends(get_session)) -> dict[str, Any]:
     }
 
 
+def _empty_ontology_scan(message: str, path: Path | None = None) -> dict[str, Any]:
+    return {
+        "path": str(path) if path else None,
+        "exists": bool(path and path.exists()),
+        "readable": bool(path and path.exists() and path.is_dir()),
+        "files": [],
+        "message": message,
+    }
+
+
+def _active_project_ontology_status(session: Session) -> dict[str, Any]:
+    try:
+        project = get_project(session)
+    except LookupError:
+        return {
+            "project_required": True,
+            "status": "no_project",
+            "message": "Select or create a project before working with ontology files.",
+            "project": None,
+            "path": None,
+            "selected_file": None,
+            "selected_source": None,
+            "scan": _empty_ontology_scan("Select or create a project before working with ontology files."),
+            "term_count": 0,
+            "indexed": False,
+            "error": None,
+        }
+
+    project_info = project_payload(project, session)
+    selected, selected_source = resolve_project_ontology_file(project)
+    scan_folder = None
+    if selected:
+        scan_folder = selected.parent
+    elif project.odk_repo_path:
+        scan_folder = Path(project.odk_repo_path)
+    elif project.local_path:
+        scan_folder = Path(project.local_path) / "ontology"
+
+    if scan_folder and scan_folder.exists() and scan_folder.is_dir():
+        scan = scan_ontology_folder(scan_folder)
+    else:
+        scan = _empty_ontology_scan(
+            "No ontology file configured for this project.",
+            scan_folder,
+        )
+
+    term_count = 0
+    error = None
+    status = "ready" if selected else "missing_ontology_file"
+    message = (
+        f"Using {selected_source} from active project {project.name}."
+        if selected
+        else "No ontology file configured for this project."
+    )
+    if selected:
+        try:
+            term_count = len(index_ontology_file(selected))
+        except Exception as exc:
+            error = str(exc)
+            status = "parse_error"
+            message = f"Selected project ontology could not be parsed: {exc}"
+
+    return {
+        "project_required": True,
+        "status": status,
+        "message": message,
+        "project": project_info,
+        "path": str(scan_folder) if scan_folder else None,
+        "selected_file": str(selected) if selected else None,
+        "selected_source": selected_source,
+        "editable_ontology_path": project.editable_ontology_path,
+        "built_ontology_path": project.built_ontology_path,
+        "odk_repo_path": project.odk_repo_path,
+        "ontology_id": project.ontology_id,
+        "base_iri": project.base_iri,
+        "path_statuses": project_info.get("path_statuses", {}),
+        "scan": scan,
+        "term_count": term_count,
+        "indexed": term_count > 0,
+        "error": error,
+    }
+
+
+@router.get("/ontology/status")
+def ontology_status(
+    global_fallback: bool = False,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if global_fallback:
+        return _global_ontology_status(session)
+    return _active_project_ontology_status(session)
+
+
 @router.post("/ontology/scan")
 def scan_ontology(session: Session = Depends(get_session)) -> dict[str, Any]:
     return scan_ontology_folder(_configured_ontology_path(session))
@@ -1175,7 +2002,7 @@ def select_ontology_file(
     if path.suffix.lower() not in {".owl", ".rdf", ".ttl", ".obo", ".tsv"}:
         raise HTTPException(status_code=400, detail="Unsupported ontology file type")
     set_runtime_values(session, {"local_ontology_file": str(path.resolve())})
-    return ontology_status(session)
+    return _global_ontology_status(session)
 
 
 @router.post("/ontology/index")
@@ -1199,10 +2026,11 @@ def index_ontology(session: Session = Depends(get_session)) -> dict[str, Any]:
 def ontology_terms(
     q: str | None = None,
     limit: int = 50,
+    project_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
     try:
-        terms = _indexed_terms(session)
+        terms = _indexed_terms(session, project_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not load ontology terms: {exc}") from exc
     selected = search_terms(terms, q, limit=limit) if q else terms[:limit]
@@ -1213,29 +2041,132 @@ def ontology_terms(
 def ontology_search(
     q: str,
     limit: int = 50,
+    project_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
     try:
-        terms = _indexed_terms(session)
+        terms = _indexed_terms(session, project_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not search ontology terms: {exc}") from exc
     return [term.to_dict() for term in search_terms(terms, q, limit=limit)]
 
 
 @router.get("/ontology/terms/{term_id}")
-def ontology_term(term_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
-    for term in _indexed_terms(session):
+def ontology_term(
+    term_id: str,
+    project_id: str | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    try:
+        terms = _indexed_terms(session, project_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not search ontology terms: {exc}") from exc
+    for term in terms:
         if term.term_id == term_id or term.iri == term_id:
             return term.to_dict()
     raise HTTPException(status_code=404, detail="Ontology term not found")
 
 
 @router.get("/ontology/graph")
-def ontology_graph(limit: int = 80, session: Session = Depends(get_session)) -> dict[str, Any]:
+def ontology_graph(
+    project_id: str | None = None,
+    limit: int = 80,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
     try:
-        return _graph_from_terms(_indexed_terms(session), limit=limit)
+        project = None
+        try:
+            project = get_project(session, project_id)
+        except LookupError:
+            pass
+
+        if project:
+            try:
+                ontology_file, source_type = resolve_project_ontology_file(project)
+            except Exception:
+                ontology_file, source_type = None, None
+
+            if not ontology_file:
+                return {
+                    "project_id": project.slug,
+                    "ontology_source": None,
+                    "ontology_source_type": None,
+                    "loaded": False,
+                    "class_count": 0,
+                    "hierarchy_edge_count": 0,
+                    "semantic_edge_count": 0,
+                    "nodes": [],
+                    "hierarchy_edges": [],
+                    "semantic_edges": [],
+                    "warnings": ["No project ontology file found. Configure or build the project ontology first."]
+                }
+            
+            terms = index_ontology_file(ontology_file)
+            tree = ontology_tree_payload(terms, root_id=None, depth_limit=2)
+            nodes = tree.get("nodes", [])
+            hierarchy_edges = tree.get("hierarchy_edges", [])
+            semantic_edges = tree.get("relation_edges", [])
+            return {
+                "project_id": project.slug,
+                "ontology_source": str(ontology_file),
+                "ontology_source_type": source_type,
+                "loaded": True,
+                "class_count": len(nodes),
+                "hierarchy_edge_count": len(hierarchy_edges),
+                "semantic_edge_count": len(semantic_edges),
+                "nodes": nodes,
+                "hierarchy_edges": hierarchy_edges,
+                "semantic_edges": semantic_edges,
+                "edges": [{**e, "label": "subClassOf" if e.get("relation") == "is_a" else e.get("relation")} for e in hierarchy_edges],
+                "warnings": tree.get("metadata", {}).get("warnings", [])
+            }
+        else:
+            terms = _indexed_terms(session)
+            graph = _graph_from_terms(terms, limit=limit)
+            return {
+                "project_id": None,
+                "ontology_source": str(_selected_ontology_file(session) or _configured_ontology_path(session)),
+                "ontology_source_type": "global",
+                "loaded": True,
+                "class_count": len(graph.get("nodes", [])),
+                "hierarchy_edge_count": len(graph.get("edges", [])),
+                "semantic_edge_count": 0,
+                "nodes": graph.get("nodes", []),
+                "hierarchy_edges": graph.get("edges", []),
+                "semantic_edges": [],
+                "edges": graph.get("edges", []),
+                "warnings": []
+            }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not build ontology graph: {exc}") from exc
+
+
+@router.get("/ontology/tree")
+def ontology_tree(
+    root_id: str | None = None,
+    depth_limit: int = 4,
+    max_children: int = 80,
+    q: str | None = None,
+    project_id: str | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    try:
+        return ontology_tree_payload(
+            _indexed_terms(session, project_id),
+            root_id=root_id,
+            depth_limit=max(1, min(depth_limit, 12)),
+            max_children=max(10, min(max_children, 500)),
+            query=q,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not build ontology tree: {exc}") from exc
+
+
+@router.get("/ontology/relation-types")
+def ontology_relation_types() -> dict[str, list[dict[str, Any]]]:
+    return relation_type_payload()
 
 
 @router.get("/meta-ontology/graph")
@@ -1378,6 +2309,8 @@ def run_curation_suggestions(session: Session = Depends(get_session)) -> dict[st
         "warning_count": result.warning_count,
         "chunk_count": result.chunk_count,
         "oversized": result.oversized,
+        "input_chars": result.input_chars,
+        "input_approx_tokens": result.input_approx_tokens,
         "suggestions": result.payload.get("suggestions", []),
         "warnings": result.payload.get("warnings", []),
     }
@@ -1492,6 +2425,8 @@ def update_candidate(
         )
     if "curator_decision" in updates and updates["curator_decision"] is not None:
         candidate.curator_decision = updates["curator_decision"]
+    if "graph_review" in updates and updates["graph_review"] is not None:
+        candidate.graph_review_json = json.dumps(updates["graph_review"])
 
     try:
         session.commit()

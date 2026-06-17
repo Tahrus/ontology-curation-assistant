@@ -19,6 +19,8 @@ from backend.app.literature.pipeline import (
     run_literature_pipeline,
     validate_pipeline_config,
 )
+from backend.app.literature.cleanup import clean_page_text_with_report
+from backend.app.literature.diagnostics import generate_diagnostics
 from backend.app.literature.repository import (
     clean_extracted_text,
     combine_literature_markdown,
@@ -235,6 +237,101 @@ def test_literature_markdown_round_trip_and_combined_corpus(tmp_path):
     assert "## Literature Entry: literature-id" in corpus
     assert f"Source file: `{path.name}`" in corpus
     assert display_literature_markdown(loaded).startswith("---")
+
+
+def test_literature_markdown_front_matter_tracks_phase2_provenance(tmp_path):
+    paper = {
+        "id": "zotero-KEY123",
+        "paper_id": "zotero-KEY123",
+        "zotero_key": "KEY123",
+        "title": 'Protein "quoted" paper',
+        "authors": ["Curator: One"],
+        "year": None,
+        "doi": "10.1000/provenance",
+        "source_pdf": str(tmp_path / "source.pdf"),
+        "raw_markdown": str(tmp_path / "raw.md"),
+        "extraction_method": "PyMuPDF",
+        "extraction_date": "2026-06-10T00:00:00+00:00",
+        "cleanup_version": "phase2-cleanup-v1",
+        "extraction_quality": "usable",
+        "sections": [{"heading": "Materials and Methods", "text": "Retained assay text.", "subsections": []}],
+    }
+
+    path = save_literature_markdown(paper, tmp_path)
+    text = path.read_text(encoding="utf-8")
+    loaded = load_literature_markdown(path)
+
+    assert 'raw_markdown: "' in text
+    assert "year: null" in text
+    assert '\\"quoted\\"' in text
+    assert "<!-- normalized_section: methods -->" in text
+    assert loaded["zotero_key"] == "KEY123"
+    assert loaded["raw_markdown"].endswith("raw.md")
+
+
+def test_cleanup_removes_known_boilerplate_without_removing_doi_text():
+    raw_text = """Open Access Article. Published on 01 January 2026
+View Article Online
+The DOI 10.1000/retained identifies the dataset used in the assay.
+Results show protein recovery in the capture step.
+References
+Smith J. 2020.
+"""
+
+    result = clean_page_text_with_report(raw_text)
+
+    assert "Open Access Article" not in result.cleaned_text
+    assert "View Article Online" not in result.cleaned_text
+    assert "10.1000/retained" in result.cleaned_text
+    assert result.rule_counts["open_access_published_on"] == 1
+    assert result.rule_counts["view_article_online"] == 1
+
+
+def test_diagnostics_statuses_and_unusable_papers_are_skipped(tmp_path):
+    diagnostics = generate_diagnostics(
+        raw_text="",
+        cleaned_text="",
+        pdf_path=tmp_path / "empty.pdf",
+        page_count=2,
+        cleanup_warnings=[],
+    )
+    assert diagnostics.final_usability_status == "failed"
+
+    save_literature_markdown(
+        {
+            "id": "failed-paper",
+            "title": "Failed paper",
+            "extraction_quality": "failed",
+            "sections": [{"heading": "Introduction", "text": "Should not enter corpus.", "subsections": []}],
+        },
+        tmp_path,
+    )
+    result = load_llm_ready_repository_with_diagnostics(tmp_path)
+
+    assert result.papers == []
+    assert result.skipped_files[0]["error"] == "extraction_quality=failed"
+
+
+def test_combined_literature_has_boundaries_deduplicates_and_excludes_references_by_default(tmp_path):
+    paper = {
+        "id": "paper-1",
+        "title": "Boundary paper",
+        "sections": [
+            {"heading": "Introduction", "text": "Useful ontology text.", "subsections": []},
+            {"heading": "References", "text": "Reference list entry.", "subsections": []},
+        ],
+    }
+    path = save_literature_markdown(paper, tmp_path)
+    loaded = load_literature_markdown(path)
+
+    corpus = combine_literature_markdown([loaded, loaded])
+    with_references = combine_literature_markdown([loaded], include_references=True)
+
+    assert corpus.count("<!-- BEGIN_PAPER: paper-1 -->") == 1
+    assert "<!-- END_PAPER: paper-1 -->" in corpus
+    assert "Useful ontology text." in corpus
+    assert "Reference list entry." not in corpus
+    assert "Reference list entry." in with_references
 
 
 def test_literature_pipeline_config_uses_configured_zotero_storage(tmp_path, monkeypatch):

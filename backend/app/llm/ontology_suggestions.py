@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from backend.app.llm.service import LlmUnavailableError, _call_openai_compatible
+from backend.app.llm.clients import LlmClientError, generate_text
+from backend.app.llm.service import LlmUnavailableError
 from backend.app.literature.repository import load_llm_ready_repository_with_diagnostics
 from backend.app.services.runtime_config import LlmRuntimeConfig
 
@@ -96,15 +97,19 @@ def run_ontology_suggestion_test(
         payload: dict[str, Any] = {"suggestions": []}
         raw_response = None
     else:
-        if not config.provider or not config.api_key:
+        if not config.provider or not config.resolved_api_key:
             raise LlmUnavailableError("LLM ontology suggestion test requires configured provider and API key.")
-        if config.provider.casefold() not in {"openai", "openai-compatible"}:
-            raise LlmUnavailableError("Only OpenAI-compatible LLM providers are supported.")
         if caller is not None:
             raw_response = caller(prompt, config)
         else:
-            base_url = (config.base_url or "https://api.openai.com/v1").rstrip("/")
-            raw_response = _call_openai_compatible(base_url, config.api_key, config.model or "gpt-4o-mini", prompt)
+            try:
+                raw_response = generate_text(
+                    prompt,
+                    system_prompt="Return valid JSON only.",
+                    config=config,
+                ).text
+            except LlmClientError as exc:
+                raise LlmUnavailableError(str(exc)) from exc
         payload = validate_ontology_suggestion_payload(json.loads(raw_response))
 
     destination = output_path or Path("literature") / "ontology_suggestions" / "ontology_suggestion_test.json"

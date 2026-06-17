@@ -1,23 +1,52 @@
 # Code Overview
 
-Last updated: 2026-06-03
+Last updated: 2026-06-17
 
 ## Application Entry
 
 - `backend/app/main.py` creates the FastAPI app, initializes the runtime schema on startup, mounts `/static`, and serves the browser UI at `/`, `/config`, `/zotero`, `/literature`, `/ontology`, `/curation-prompt`, `/curation`, and `/export`.
 - `backend/app/api/routes.py` contains the JSON API used by the browser UI.
 - `backend/app/static/index.html`, `styles.css`, and `app.js` implement the dependency-light browser workflow.
-- The static UI includes a shared top-bar logo, local-storage-backed theme selection, client-side route handling for header/dashboard links, page-scoped startup loading with visible startup/page errors, accessible click acknowledgement toasts, long-running button busy states, an editable curation prompt page, SVG graph rendering with persisted label/description controls, candidate rejection controls, and saved API configuration selection.
+- `backend/app/projects.py` contains the shared project workflow service layer: project folder creation, active project selection, curation-run creation, suggestion parsing, review storage, metric computation, run comparison, project TSV export, and ODK operation logging.
+- The static UI includes a shared top-bar logo, persistent active-project banner, dashboard project hierarchy tree, local-storage-backed theme selection, client-side route handling for header/dashboard links, page-scoped startup loading with visible startup/page errors, accessible click acknowledgement toasts, long-running button busy states, provider/model LLM configuration with connection testing, Docker/ODK diagnostics, an editable curation prompt page, focused top-down SVG ontology browser rendering, candidate rejection controls, and saved API configuration selection.
+- The static UI also includes project management, structured suggestion review, and evaluation pages at `/projects`, `/suggestions`, and `/evaluation`.
 - `zotero_lit_md/` is a standalone CLI package exposed through `python -m zotero_lit_md`; it reads Zotero Desktop's local API for parent and child attachment keys, discovers stored PDFs from local Zotero storage folders on disk, extracts PDF text, and writes one LLM/RAG-ready Markdown file per PDF.
+- `Dockerfile`, `docker-compose.yml`, and `.dockerignore` define the container runtime. The image installs the app, static UI, Python dependencies, Java, `make`, `git`, and a ROBOT wrapper; Compose mounts persistent `/data`, `/ontology`, and `/odk` paths.
 
 ## Configuration Flow
 
 - `backend/app/config.py` defines environment-backed settings with the `OCA_` prefix.
 - `backend/app/services/runtime_config.py` overlays browser-saved settings from the `app_settings` table and masks secrets in API responses.
-- Browser configuration endpoints save Zotero, LLM, local ontology path, and the Zotero literature source path without returning API keys in clear text.
+- Browser configuration endpoints save Zotero, provider-neutral LLM settings, local ontology path, and the Zotero literature source path without returning API keys in clear text. LLM provider input is normalized to canonical provider keys before saving and before activating saved LLM configurations.
+- LLM provider metadata comes from `backend/app/llm/presets.py` through `GET /api/config/llm/providers`. Presets define provider label, default model, model list, default base URL where applicable, expected API key environment variables, timeout, retry count, temperature, and max output tokens. `POST /api/config/llm/test` uses the active runtime config and returns provider, canonical `provider_key`, model, key presence/source, latency, status, and a short response/error.
+- `GET /api/diagnostics/docker-odk` reports mounted literature/ontology/ODK paths plus ROBOT, Java, make, and git availability.
 - The browser Literature Pipeline Configuration exposes only the Zotero literature source path. Advanced pipeline output paths are still resolved from environment/runtime settings.
 - The browser Curation Prompt page stores the editable prompt in `app_settings` as `curation_prompt_template`. `/api/curation/prompt` loads, saves, and resets it; `/api/curation/suggestions/run` uses it with the selected Existing Ontology `.obo` file and `combined_literature.md`.
 - Saved API configurations are persisted as masked server-side entries in `app_settings`, with active Zotero/LLM configuration IDs.
+
+## Project Flow
+
+- `backend/app/models/db.py` defines project-oriented tables: `Project`, `CurationRun`, `Suggestion`, `ReviewDecision`, `EvaluationMetric`, and `OdkOperationLog`.
+- Existing `LiteratureDocument`, `LiteratureSource`, `ExtractionRun`, `CandidateTermRecord`, and `LiteratureIndexEntry` records now include nullable `project_id` columns so current databases can be upgraded without deleting legacy global workflow data.
+- `backend/app/db/session.py` continues to provide SQLite-compatible runtime schema upgrades until formal migrations exist.
+- `backend/app/projects.py` creates the requested project folder layout under `projects/<project_slug>/`, writes `project.json`, stores active project state in the `projects.active` flag, validates project metadata, resolves parent/child hierarchy, suggests base IRIs, counts project-tagged literature, and computes optional path statuses.
+- Project API routes in `backend/app/api/routes.py` expose creation, selection/activation, children listing, metadata update/readout, project ODK validation/logging, and accepted-suggestion TSV export.
+- The browser Projects page calls `/api/projects`, `POST /api/projects`, `PATCH /api/projects/{project_ref}`, `POST /api/projects/{project_ref}/select`, and `GET /api/projects/{project_ref}/children` indirectly through project payloads.
+- `backend/app/static/index.html` and `backend/app/static/app.js` implement visible project-management scaffolding: wizard steps, optional AI metadata draft button, project type selector including `existing_ontology_project`, parent-project selector, short description/minimal scope fields, optional workspace/ontology/literature/Git path fields, project cards, selected-project detail/next-step panel, edit metadata mode, active-project selection, hierarchy display, path-status cards, failed-save form preservation, structured project error messages, and empty-field-only AI metadata filling.
+- The Dashboard renders active project name, type, ontology ID/prefix, parent, child projects, workspace/repository metadata, tagged-literature count, optional path statuses, and a nested project hierarchy tree after `/api/projects` loads. Project tiles can set the active project, link to project details/editing, and create child projects. This display does not make literature, graph, candidates, or exports fully project-aware yet.
+- The Literature page uses `PATCH /api/zotero/entries/{source_id}/project-tags` to assign explicit project tags on Zotero-backed `LiteratureSource` records. This does not alter the PDF-to-Markdown pipeline.
+- The CLI exposes the same flow through `oca project create`, `oca project list`, `oca project select`, and `oca project show`.
+
+## Project Curation And Evaluation Flow
+
+- Prompt strategies are defined in `backend/app/projects.py` as `literature_only`, `ontology_only`, `literature_plus_ontology`, and `structured_relation_extraction`.
+- `POST /api/curation/runs` creates a project-scoped `CurationRun`; if raw LLM JSON is supplied, `persist_suggestions()` parses a top-level `suggestions` array into `Suggestion` rows while preserving raw output and returning warnings for malformed JSON.
+- `GET /api/suggestions` lists suggestions for the active or requested project, optionally filtered by run, review status, suggestion type, and evidence availability.
+- `POST /api/suggestions/{suggestion_id}/review` stores a persistent `ReviewDecision` with one of `accepted`, `edited`, `rejected`, `duplicate`, `unsupported`, or `further_review`.
+- `POST /api/evaluation/compute` calculates review/evidence metrics from stored rows and writes reproducible `EvaluationMetric` records.
+- `POST /api/evaluation/compare` compares two runs with exact label overlap, normalized label overlap, and relation triple overlap.
+- `GET /api/projects/{project_ref}/exports/accepted.robot.tsv` exports accepted/edited project suggestions by default, excluding rejected, duplicate, unsupported, and further_review suggestions.
+- CLI equivalents live under `oca curation ...`, `oca evaluation ...`, and `oca ontology export-templates`.
 
 ## Zotero Flow
 
@@ -27,13 +56,14 @@ Last updated: 2026-06-03
 - `POST /api/zotero/sync` defaults to no limit and imports all records returned by the configured library or collection.
 - `GET /api/zotero/entries` feeds the dedicated Literature/Zotero page. Entry payloads include a Zotero select URI only when the provider item key is valid and unambiguous, and the frontend renders title-first records with metadata and expandable per-record Markdown. Repository-only Markdown records created by the integrated PDF pipeline are appended so PDF imports are visible even without matching Zotero metadata rows.
 - `backend/app/literature/exporter.py` builds an initial LLM-ready literature export from the runtime SQLite cache and creates the `literature/` folder automatically.
-- `backend/app/literature/repository.py` manages the per-paper LLM-ready Markdown repository. It can reset the repository recursively, clear stale sidecars, clean deterministic extracted text, omit identifiable PDF artifacts and reference sections, write one `.md` file per paper with YAML front matter, load all valid Markdown files recursively while skipping malformed files with diagnostics, combine entries into one Markdown corpus for LLM calls, and convert canonical/legacy paper records into Markdown metadata plus abstract/notes/ontology-relevant sections.
+- `backend/app/literature/repository.py` manages the per-paper LLM-ready Markdown repository. It can reset the repository recursively, clear stale sidecars, clean deterministic extracted text, write one `.md` file per paper with YAML/provenance front matter, load all valid and usable Markdown files recursively while skipping malformed or failed/manual-review files with diagnostics, combine entries into one Markdown corpus for LLM calls with explicit paper boundaries, and convert canonical/legacy paper records into Markdown metadata plus abstract/notes/ontology-relevant sections.
+- `backend/app/literature/cleanup.py`, `diagnostics.py`, and `literature_types.py` implement the Phase 2 cleanup and quality layer: named boilerplate rules, cleanup rule counts/examples, reference separation, page-marker-aware diagnostics, duplicate-text warnings, scanned/low-text indicators, and final usability statuses.
 - `backend/app/BibPipelineCombined.py` contains the integrated combined literature workflow. `backend/app/literature/pipeline.py` is a configuration/orchestration wrapper that integrates the original pipeline by importing and calling the `run_pipeline` function from `backend/app/BibPipelineCombined.py` while validating inputs.
 - Section detection handles numbered headings, numbered subsections, canonical scientific headings, short standalone headings, front matter before the first heading, deterministic heading normalization, and section page ranges. Canonical output uses `content.sections`; page-level text is omitted by default unless `--include-pages` is used.
 - `/api/zotero/entries` starts from Zotero rows in SQLite for stable source IDs, but merges each row with the matching Markdown repository entry when available. The frontend details panel displays Markdown content, the corresponding Markdown file path, and readable metadata.
 - Browser literature ingestion, test Zotero import, browser Zotero sync, CLI ingest, CLI Zotero import, CLI Zotero link, and CLI Zotero sync refresh the Markdown repository after successful persistence. Zotero sync automatically triggers the PDF literature pipeline using the configured Zotero storage directory.
 - `POST /api/literature/repository/reset` requires explicit confirmation and resets the configured literature base directory, including copied PDFs, generated Markdown, per-paper Markdown, combined Markdown, and stale sidecars, then clears stored literature rows/extraction state. The reset refuses root-like targets and does not follow symlinks. The Literature page exposes this action with a browser confirmation prompt, and `oca literature reset-repository --yes` exposes the same reset path from the CLI.
-- `POST /api/config/literature` stores the runtime Zotero literature source path used by the integrated browser pipeline and clears hidden advanced path overrides so the browser flow returns to the original expected pipeline folders from that single input. `POST /api/literature/pipeline/run` runs the configured full pipeline and reports PDF copy, Markdown generation, per-paper repository, and combined output counts. The wrapper clears only the configured copied-PDF and generated-Markdown working folders under the literature base before calling the unchanged `BibPipelineCombined.run_pipeline`, making repeated sync/import runs idempotent. The CLI exposes the same pipeline through `oca literature pipeline` with optional one-off path overrides; `--base-dir` derives `Paper-PDF`, `Markdown`, `papers`, and `combined_literature.md` unless a specific folder option is supplied.
+- `POST /api/config/literature` stores the runtime Zotero literature source path used by the integrated browser pipeline and clears hidden advanced path overrides so the browser flow returns to the original expected pipeline folders from that single input. `POST /api/literature/pipeline/run` runs the configured full pipeline and reports PDF copy, Markdown generation, per-paper repository, skipped-paper, diagnostic-report, cleanup-report, and combined output counts. The wrapper clears only the configured copied-PDF and generated-Markdown working folders under the literature base before calling the integrated `BibPipelineCombined.run_pipeline` stages, then regenerates `combined_literature.md` from usable canonical per-paper Markdown. The CLI exposes the same pipeline through `oca literature pipeline` with optional one-off path overrides; `--base-dir` derives `Paper-PDF`, `Markdown`, `papers`, and `combined_literature.md` unless a specific folder option is supplied.
 - `ontology_curation_assistant/__main__.py` exposes the same Typer CLI through `python -m ontology_curation_assistant`.
 
 ## Zotero Local Markdown Export
@@ -52,19 +82,25 @@ Last updated: 2026-06-03
 - RDF/OWL/Turtle files are parsed with `rdflib`.
 - OBO and ROBOT/template TSV files are parsed with simple local readers.
 - Indexed term payloads include term ID/IRI, label, definition, synonyms, parents, and source file.
-- The browser Existing Ontology page calls `/api/ontology/status`, `/api/ontology/scan`, `/api/ontology/select-file`, `/api/ontology/index`, and term search endpoints.
-- Ontology status reports selected-file parse errors, while term and search endpoints return controlled HTTP 400 responses if the selected ontology file cannot be parsed.
+- The browser Existing Ontology page calls `/api/ontology/status` for active-project-scoped source status and then project-scoped term/search/tree endpoints. The legacy scan/select/index endpoints remain available for compatibility, but the browser page no longer uses them as its source of truth.
+- Ontology status reports no-active-project, missing-project-ontology, and selected-file parse errors, while term and search endpoints return controlled HTTP 400 responses if the selected ontology file cannot be parsed.
 - `/api/ontology/graph` maps indexed terms to graph nodes and parent/subclass edges.
-- `/api/meta-ontology/graph` returns the curation meta-model used by the dashboard graph.
+- `/api/ontology/tree` maps indexed terms to tree-ready data: flat `nodes` with labels, definitions, synonyms, source metadata, parent/child IDs and relations; `hierarchy_edges` marked `edgeType: "hierarchy"` and `relation: "is_a"`; non-hierarchical `relation_edges` marked `edgeType: "semantic"`; root IDs; nested visible roots for compatibility; source metadata; parse time; and warnings. The browser ontology page uses this payload as the default visualization instead of the older circular graph.
+- `/api/ontology/relation-types` returns the backend-owned relation catalogue used by graph-assisted candidate review. The static catalogue lives in `backend/app/ontology/relations.py` and includes relation labels, ontology IDs where available, inverse labels, descriptions, and simple source/target expectations.
+- `backend/app/static/app.js` renders the ontology payload with `deriveVisibleOntologyTree()`, `layoutOntologyTree()`, and `renderOntologyTreeSvg()`. The frontend stores the full payload in `state.ontologyTree`, derives a smaller visible section from the root filter, selected/focused node, expanded/collapsed state, and depth control, then computes node positions only from visible `is_a` hierarchy edges. Node clicks set `state.selectedOntologyNodeId`, apply visible selected/context/dimmed styles, and update `showOntologyNodeDetails()`. Semantic relations are drawn afterward as dashed side links for visible or focused nodes, with toggles for semantic edges, relation labels, and node labels.
+- The ontology browser controls in `backend/app/static/index.html` support class search/jump, focus on selected class, reset overview, depth selection, expand/collapse, zoom in/out, pan, fit, and center selected node. Node clicks update `state.selectedOntologyNodeId` and the detail panel.
+- `/api/meta-ontology/graph` returns the curation meta-model for compatibility, but the dashboard now uses the project hierarchy tree instead of the meta-ontology graph.
 
 ## Candidate Flow
 
 - `backend/app/extraction/service.py` persists validated candidate payloads.
-- `backend/app/llm/service.py` provides deterministic mock extraction and an optional OpenAI-compatible chat-completions call.
-- `backend/app/llm/curation.py` validates the saved curation prompt, selected `.obo` ontology file, and current `combined_literature.md`; assembles the final LLM request in deterministic sections; chunks oversized literature according to `OCA_LLM_CONTEXT_CHAR_LIMIT`; calls the configured OpenAI-compatible provider; validates JSON responses; and writes sanitized request plus response/raw-response traces under `literature/curation_runs/`.
-- `backend/app/llm/ontology_suggestions.py` builds a complete literature export from the canonical Markdown repository, creates a traceable ontology-suggestion prompt, validates the required `suggestions` JSON shape, and supports a no-credentials dry run through `oca llm-ontology-suggestions`.
-- Browser candidate extraction uses all valid LLM-ready Markdown literature files from the configured repository when no source is explicitly supplied. Empty repositories return a controlled import-literature-first error, and malformed Markdown files are skipped with warnings when valid files remain.
-- Candidate records store curator edits, evidence, selected OLS match, selected local ontology match, lookup statuses, and curator decision.
+- `backend/app/llm/presets.py` stores editable provider presets for Gemini, OpenAI, Anthropic, and custom OpenAI-compatible endpoints, plus provider alias normalization so UI labels such as `Gemini API`, `Google Gemini`, and `google-ai` resolve to canonical keys.
+- `backend/app/llm/clients.py` defines the provider-neutral LLM abstraction. It includes Gemini, OpenAI, Anthropic, and custom OpenAI-compatible clients, secret-safe API key resolution through stored keys or environment variables, approximate input-size estimation, provider-key diagnostics, and a low-token connection test helper.
+- `backend/app/llm/service.py` provides deterministic mock extraction and optional provider-neutral LLM candidate extraction.
+- `backend/app/llm/curation.py` validates the saved curation prompt, selected `.obo` ontology file, current `combined_literature.md`, and LLM provider/API config; assembles the final LLM request in deterministic sections; chunks oversized literature according to `OCA_LLM_CONTEXT_CHAR_LIMIT`; calls the configured provider abstraction; validates JSON responses; reports approximate input character/token count; and writes sanitized request plus response/raw-response traces under `literature/curation_runs/`.
+- `backend/app/llm/ontology_suggestions.py` builds a complete literature export from the canonical Markdown repository, creates a traceable ontology-suggestion prompt, validates the required `suggestions` JSON shape, supports a no-credentials dry run through `oca llm-ontology-suggestions`, and uses the provider abstraction for non-dry-run calls.
+- Browser candidate extraction uses all valid and usable LLM-ready Markdown literature files from the configured repository when no source is explicitly supplied. Empty repositories return a controlled import-literature-first error, and malformed or unusable Markdown files are skipped with warnings when valid files remain.
+- Candidate records store curator edits, evidence, selected OLS match, selected local ontology match, lookup statuses, graph-assisted review proposals in `graph_review_json`, and curator decision.
 - The default `/api/candidates` active queue returns only `new`, `in_review`, `needs_more_evidence`, and `deferred` records, so approved and rejected candidates are removed from the curation list after review.
 - Candidate records also store permanent rejection timestamp and optional rejection reason.
 - Active candidate listing excludes permanently rejected candidates by default.
@@ -72,7 +108,8 @@ Last updated: 2026-06-03
 - OLS matching is implemented in `backend/app/ontology/ols.py`.
 - Local PPO matching uses `backend/app/ontology/local.py`.
 - Neither OLS nor local matches are auto-selected; the UI defaults to `Nothing selected`.
-- Graph rendering is defensive: empty graph data displays an empty state, malformed edges are skipped, node/edge details are shown on click, and local-storage-backed controls can hide or restore text labels, node labels, edge labels, long descriptions, and less relevant placeholder nodes.
+- Tree rendering is defensive: empty hierarchy data displays an empty state, the default overview is shallow and capped to a small top-level section, branches can be collapsed or expanded, focus mode shows one ontology neighborhood at a time, semantic side links are optional, node/relation labels can be toggled, and node selection shows details without using the older circular ontology graph as the default.
+- The Candidate Curation page includes a graph-assisted ontology context panel. Graph actions set the active candidate's proposed parent, relation source, relation target, duplicate target, comparison note, and proposed relation review data. These actions update the candidate form and `graph_review_json`; ontology files are changed only through the existing accepted-candidate export/ODK workflow.
 
 ## Export Flow
 
@@ -83,17 +120,23 @@ Last updated: 2026-06-03
 - `backend/app/github_export.py` saves generated ontology artifacts to GitHub through the contents API. It reads `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `GITHUB_BRANCH`, and optional `GITHUB_BASE_PATH`, supports create/update semantics, and returns commit metadata or clear configuration/API errors.
 - `POST /api/odk/workflow` exposes the orchestrator to the browser/API. Non-dry-run calls require `production=true`. The CLI exposes the same path through `oca odk-apply-approved`, with `--no-dry-run --production` required for real validation/upload.
 - `backend/app/audit/logging.py` appends secret-redacted JSONL audit events for candidate proposal/review/decision changes. The ODK workflow writes implementation, validation, stop, and upload events to the configured audit log.
+- Project-scoped ODK support currently adds safe validation/logging and accepted-suggestion TSV export through `backend/app/projects.py`. `oca ontology build` and `oca ontology test` intentionally log pending manual operations rather than executing external commands until per-project safe execution and backup/clean-git checks are configured.
 
 ## Persistence
 
 - SQLAlchemy models live in `backend/app/models/db.py`.
 - Runtime schema creation and small SQLite-compatible schema additions live in `backend/app/db/session.py`.
 - The project does not yet use Alembic migrations.
+- New project tables are created by `Base.metadata.create_all()`. Nullable project columns are added to existing tables through `ensure_runtime_schema()`.
 
 ## Tests
 
 - Browser/API tests live in `backend/tests/test_browser_api.py`.
+- LLM provider abstraction tests live in `backend/tests/test_llm_clients.py`; browser/API tests also cover provider catalog, LLM provider-key normalization, LLM test endpoint behavior, ontology tree payloads, and lateral relation extraction.
+- Project workflow tests live in `backend/tests/test_project_workflow.py`; they cover project creation/update/selection/activation, project folder creation, hierarchy metadata, child listing, existing ontology project type, base IRI suggestion, duplicate ontology ID rejection, self/circular parent rejection, invalid base IRI rejection, optional path warning statuses, curation-run creation, suggestion parsing, review status annotation, evaluation metrics, accepted/edited-only export behavior, run comparison, and ODK command logging.
+- Browser/API tests cover AI-assisted project metadata suggestions with mocked LLM output and literature project-tag assignment/counting.
 - Existing CLI, Zotero, extraction, ODK, and review policy tests remain in `backend/tests/`.
 - `backend/tests/test_entry_generation.py` covers literature repository reset, deterministic LLM-ready extraction, PPO ODK artifact staging, mocked GitHub export, and one end-to-end ontology entry generation path.
+- `backend/tests/test_entry_generation.py` also covers Phase 2 literature provenance front matter, DOI-safe cleanup, cleanup reports, extraction diagnostics statuses, unusable-paper skipping, reference exclusion, deterministic paper boundaries, and duplicate-paper prevention in combined corpora.
 - `backend/tests/test_odk_workflow.py` covers dry-run behavior, accepted-only implementation, rejected-candidate blocking, validation failure, validation success, upload gating, and audit ordering with mocked commands/uploads.
 - `backend/tests/test_zotero_lit_md.py` covers API-free PDF/folder-to-Markdown extraction, PDF discovery, local Markdown rendering, heading and caption conversion, local chunk generation, output filename collisions, heading detection, header/footer removal, chunk behavior, filename sanitization, PDF attachment filtering, direct storage-path PDF resolution, query-filtered storage extraction, trace JSON, and section parsing for the standalone Zotero Markdown exporter.
