@@ -1,0 +1,40 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-compchemeng-2024-108612-2fda660a.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-6hg9bv2n-87b368f2.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-6hg9bv2n-87b368f2.md",
+  "metadata": {
+    "authors": [
+      "Wendi Zhang",
+      "Todd Przybycien",
+      "Johannes Schm\u00f6lder",
+      "Samuel Leweke",
+      "Eric von Lieres"
+    ],
+    "doi": "10.1016/j.compchemeng.2024.108612",
+    "source_filename": "",
+    "title": "Solving crystallization/precipitation population balance models in CADET, part I: Nucleation growth and growth rate dispersion in batch and continuous modes on nonuniform grids",
+    "year": 2024,
+    "zotero_key": "zotero-6HG9BV2N"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-6hg9bv2n-87b368f2.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-6hg9bv2n-87b368f2.md",
+  "updated_at": "2026-06-18T14:38:27.016541+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Solving crystallization/precipitation population balance models in CADET, part I: Nucleation growth and growth rate dispersion in batch and continuous modes on nonuniform grids",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

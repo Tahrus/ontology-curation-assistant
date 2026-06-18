@@ -107,8 +107,8 @@ The browser UI is split into small pages:
 
 - Project Dashboard: active project metadata, local status, project hierarchy tree, and links to the main workflows.
 - Project Management: wizard-style create/edit/select flow, clear project cards, detail/next-step guidance, active project selection, hierarchy metadata, workspace/repository paths, and optional path statuses.
-- LLM Settings: Zotero metadata sync settings, LLM provider/model settings, LLM connection testing, Docker/ODK diagnostics, Zotero connection testing, Zotero metadata sync, and the local Zotero literature source path used for PDF import.
-- Literature: searchable list of imported or synced Zotero records with titles, Zotero links, per-record Markdown inspection, and project tags.
+- Settings: Zotero metadata sync settings, LLM provider/model settings, LLM connection testing, Docker/ODK diagnostics, Zotero connection testing, Zotero metadata sync, and the local Zotero literature source path used for PDF import.
+- Literature: searchable list of imported or synced Zotero records with titles, Zotero links, review/state/quality filters, per-record raw/clean/context Markdown inspection, extraction-quality metadata, artifact regeneration/retry/block actions, combined-context building, and project tags.
 - Ontology: local PPO ontology path, detected ontology files, indexing, term search, and a collapsible parent-child ontology tree.
 - Curation Prompt: editable ontology-curation LLM prompt and run controls.
 - Curation: document ingestion, candidate extraction, candidate editing, local PPO matching, and external OLS matching.
@@ -126,7 +126,7 @@ The workflow supports:
 - review backend, database, Zotero, and LLM readiness in Application Status
 - save Zotero credentials and LLM/chatbot credentials in Configuration
 - test Zotero credentials, sync all configured Zotero records, load local test Zotero entries, or import local Zotero PDFs into Markdown
-- view synced/imported Zotero records, open them in Zotero when an item key is available, and inspect the Markdown record used by the UI
+- view synced/imported Zotero records, open them in Zotero when an item key is available, inspect raw/clean/LLM-context Markdown, and review metadata title matches, document state, extraction quality, document role, warnings, and automatic-extraction inclusion
 - inspect ontology source status from the active project, preferring its built/released ontology file and then its editable ontology file without silently falling back to global/demo ontology paths
 - inspect ontology classes in a searchable collapsible tree and inspect the curation meta-model graph
 - review, edit, save, reset, and run the ontology curation prompt before sending ontology/literature context to an LLM
@@ -155,9 +155,9 @@ Literature import, ingestion, linking, and Zotero sync workflows refresh the LLM
 literature/papers
 ```
 
-The folder is created automatically when needed. Each imported paper is saved as a separate `.md` file with YAML front matter for stable metadata (`id`, title, authors, year, DOI/PMID, source, URL, and import time), followed by human-readable Markdown sections for abstract, notes, and ontology-relevant extracted content. Filenames are deterministic and filesystem-safe, preferring DOI, PMID, stable literature ID, or a title-derived slug with a short digest.
+The folder is created automatically when needed. Each imported paper is saved as a separate canonical `.md` file with YAML front matter for stable metadata (`paper_id`, Zotero key/item key, PDF path/hash, title/authors/year/DOI, detected title/DOI, DOI/title match status, extraction engine attempts, extraction quality, document state, document role, warnings, and extraction inclusion flags), followed by human-readable Markdown sections for abstract, notes, and ontology-relevant extracted content. Filenames are deterministic and filesystem-safe, preferring DOI, PMID, stable literature ID, or a title-derived slug with a short digest.
 
-The SQLite tables are runtime cache and workflow state. Literature content handed to an LLM is loaded from the Markdown repository, combined into a single Markdown corpus headed `# Literature Corpus`, and separated by literature entry ID and source filename. The Literature page shows Markdown-oriented records and metadata for human review instead of exposing raw JSON.
+The SQLite tables are runtime cache and workflow state. Literature content handed to an LLM is loaded from the Markdown repository, validated, filtered, combined into a single Markdown corpus headed `# Literature Corpus`, and separated by literature entry ID and source filename. The Literature page shows Markdown-oriented records and metadata for human review instead of exposing raw JSON.
 
 The app also writes one compact LLM-ready Markdown file per paper under:
 
@@ -196,7 +196,7 @@ imported_at: "2026-06-02T12:00:00+00:00"
 ...
 ```
 
-The per-paper repository omits page-wise chunks, running headers/footers, page numbers, references, and publisher boilerplate where the local deterministic cleaner can identify them. Candidate extraction uses all valid Markdown files in this repository automatically. Malformed Markdown files are reported and skipped when at least one valid file is available; if none are valid, the UI asks you to import literature first. Reset the literature workspace from the Literature page with explicit confirmation, or from the CLI:
+The per-paper repository omits page-wise chunks, running headers/footers, page numbers, references, and publisher boilerplate where the local deterministic cleaner can identify them. Candidate extraction uses only records in the `ready_for_llm` state with usable extraction quality and appropriate domain/review roles. Records marked `metadata_mismatch`, `incomplete`, `blocked`, `needs_review`, `requires_manual_review`, `failed`, `methodology_article`, or `supplementary_information` are excluded from automatic domain extraction unless a curator updates the review metadata. Malformed Markdown files are reported and skipped when at least one valid file is available; if none are valid, the UI asks you to import literature first. The extraction API also supports `dry_run: true` to report included and excluded repository files plus estimated context size without extracting candidates. Reset the literature workspace from the Literature page with explicit confirmation, or from the CLI:
 
 ```powershell
 oca literature reset-repository --yes
@@ -220,6 +220,12 @@ literature/
   Paper-PDF/                 copied source PDFs
   Markdown/                  raw extracted Markdown
   papers/                    cleaned canonical per-paper Markdown
+  raw/                       preserved first raw Markdown rendering per paper
+  clean/                     deterministic cleaned Markdown per paper
+  context/                   structured LLM-context Markdown per paper
+  reports/                   JSON validation/cleanup reports
+  blocked/                   review/block marker reports
+  combined/                  domain/review/methodology/excluded context bundles
   combined_literature.md     generated combined LLM corpus
   metadata/
     literature_index.json
@@ -227,7 +233,7 @@ literature/
     cleanup_reports.json
 ```
 
-Per-paper Markdown front matter includes provenance fields such as `paper_id`, `zotero_key`, `source_pdf`, `raw_markdown`, `extraction_method`, `extraction_date`, `cleanup_version`, and `extraction_quality` when available, while retaining the older `id`, `source`, and `imported_at` fields for compatibility. Cleanup is conservative and records named rule counts/examples; DOI-containing scientific lines are not removed merely because they contain a DOI. The combined corpus includes explicit paper boundary comments and skips files marked `failed` or `requires_manual_review`.
+Per-paper Markdown front matter includes provenance fields such as `paper_id`, `zotero_key`, `zotero_item_key`, `pdf_path`, `pdf_sha256`, `source_filename`, `source_pdf`, `raw_markdown`, `extraction_method`, `extraction_date`, `cleanup_version`, `extraction_engine_used`, `extraction_engine_attempts`, and `extraction_quality` when available, plus `state`, `metadata_title`, `detected_title`, `zotero_doi`, `detected_doi`, `doi_match_status`, `title_similarity_score`, `metadata_match_status`, `document_role`, extraction metrics, warnings, `requires_manual_review`, `exclude_from_automatic_llm_extraction`, `include_in_llm_extraction`, and links to the raw/clean/context/report artifacts. The older `id`, `source`, and `imported_at` fields remain for compatibility. Cleanup is conservative and records named rule counts/examples; DOI-containing scientific lines are not removed merely because they contain a DOI. The combined corpus includes explicit paper boundary comments, structured LLM context, cleaned evidence text, and skips files that are not safe for automatic domain extraction. `oca literature doctor`, `validate`, `report`, `retry-extraction`, `regenerate-clean`, `regenerate-context`, and `build-combined-context` expose the same quality workflow from the CLI.
 
 ### Zotero from the Browser
 
@@ -237,8 +243,10 @@ In Configuration > Zotero Metadata Sync, enter:
 - Zotero user ID or group ID
 - Zotero API key, if needed for the target library
 - optional collection key
+- API base URL, using `http://127.0.0.1:23119/api` with library type `user`, library ID `0`, and no API key for Zotero Desktop's local API
 
 Use Zotero Connection to test the credentials, then click `Sync All Zotero Records`. The browser sync defaults to no limit and follows Zotero pagination until all records in the configured library or collection are retrieved. An advanced optional limit is available only for testing. Sync refreshes the Markdown files in `literature/papers`.
+The Zotero Metadata Sync controls are bound after the DOM is ready and use stable field IDs. If a required panel element is missing, the UI shows a reload message instead of throwing a null-selector error.
 
 If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
 
@@ -360,6 +368,13 @@ GET    /api/meta-ontology/graph
 GET    /api/literature
 POST   /api/literature
 POST   /api/literature/pipeline/run
+PATCH  /api/literature/repository/review
+GET    /api/literature/doctor
+GET    /api/literature/repository/report
+POST   /api/literature/context/build
+POST   /api/literature/repository/retry-extraction
+POST   /api/literature/repository/regenerate-clean
+POST   /api/literature/repository/regenerate-context
 POST   /api/curation/suggestions/run
 POST   /api/extraction/candidates
 GET    /api/candidates

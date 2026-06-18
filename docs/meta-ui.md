@@ -14,7 +14,7 @@ The top navigation labels are grouped by work area:
 - Ontology: active-project ontology source status and ontology browser.
 - Curation: candidate generation and candidate review.
 - Curation Prompt, Suggestions, Evaluation: project-scoped prompt/review/evaluation tools already present in the app.
-- LLM Settings: provider/API configuration and connection tests.
+- Settings: provider/API configuration and connection tests.
 - Export / ODK: approved candidate downloads and ODK-oriented export status.
 
 ## Active Project Visibility
@@ -25,7 +25,7 @@ The Dashboard shows a project hierarchy tree instead of the former meta-ontology
 
 The Ontology page is usable only downstream of the active project. Without an active project it shows a select-project message. After project selection, it refreshes to that project's ontology ID, base IRI, editable ontology path/status, built ontology path/status, ODK repository status, and selected ontology source.
 
-Project-dependent sections now show a visible no-active-project blocker rather than silently implying global context. Literature, Ontology, Curation, and Export / ODK each explain that a project should be selected first. LLM Settings remain global.
+Project-dependent sections now show a visible no-active-project blocker rather than silently implying global context. Literature, Ontology, Curation, and Export / ODK each explain that a project should be selected first. Settings remain global.
 
 ## Boundaries
 

@@ -1,0 +1,48 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-b0ce86c9f1-132b15c2.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-pdf-b0ce86c9f1-d18ebcc6.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 2,
+      "equation_isolated": 29,
+      "generated_boilerplate": 3,
+      "page_number": 68,
+      "publisher_boilerplate": 4,
+      "repeated_header_footer": 185,
+      "source_page_comment": 7
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated.",
+      "Metadata title does not match detected extracted title."
+    ]
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-pdf-b0ce86c9f1-d18ebcc6.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "doi:10.1016/j.bpc.2005.07.008",
+    "year": null,
+    "zotero_key": "zotero-pdf-b0ce86c9f1"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-pdf-b0ce86c9f1-d18ebcc6.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-pdf-b0ce86c9f1-d18ebcc6.md",
+  "updated_at": "2026-06-18T14:38:32.674618+00:00",
+  "validation": {
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated.",
+      "Metadata title does not match detected extracted title."
+    ],
+    "detected_title": "- **Source:** Shulgin und Ruckenstein - 2005 - Relationship between preferential interaction of a protein in an aqueous mixed solvent and its solub.pdf",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": true,
+    "extraction_quality": "metadata_mismatch",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "metadata_mismatch",
+    "metadata_title": "doi:10.1016/j.bpc.2005.07.008",
+    "requires_manual_review": true,
+    "title_similarity_score": 0.107
+  }
+}

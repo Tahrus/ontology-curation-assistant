@@ -1,0 +1,47 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-03d8f14985-a3af47ac.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-pdf-03d8f14985-6ea85b21.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 1,
+      "equation_isolated": 1,
+      "generated_boilerplate": 3,
+      "license_notice": 1,
+      "page_number": 44,
+      "publisher_boilerplate": 1,
+      "repeated_header_footer": 20,
+      "source_page_comment": 6
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated."
+    ]
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-pdf-03d8f14985-6ea85b21.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "1682-1687-1213-SCT-4-2025.docx",
+    "year": null,
+    "zotero_key": "zotero-pdf-03d8f14985"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-pdf-03d8f14985-6ea85b21.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-pdf-03d8f14985-6ea85b21.md",
+  "updated_at": "2026-06-18T14:38:32.599682+00:00",
+  "validation": {
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated."
+    ],
+    "detected_title": "- **Source:** Shahhoseyni et al. - 2025 - Hybrid machine-learning for dynamic plant-wide biomanufacturing.pdf",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "1682-1687-1213-SCT-4-2025.docx",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.205
+  }
+}

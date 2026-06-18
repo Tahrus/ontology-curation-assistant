@@ -1,0 +1,39 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1186-s40537-023-00747-y-38bd0938.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-lg2v9sdv-57f41d74.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-lg2v9sdv-57f41d74.md",
+  "metadata": {
+    "authors": [
+      "Matev\u017e Hribernik",
+      "Sa\u0161o Toma\u017ei\u010d",
+      "Anton Umek",
+      "Anton Kos"
+    ],
+    "doi": "10.1186/s40537-023-00747-y",
+    "source_filename": "",
+    "title": "Unified platform for storing, retrieving, and analysing biomechanical applications data using graph database",
+    "year": 2023,
+    "zotero_key": "zotero-LG2V9SDV"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-lg2v9sdv-57f41d74.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-lg2v9sdv-57f41d74.md",
+  "updated_at": "2026-06-18T14:38:27.127245+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Unified platform for storing, retrieving, and analysing biomechanical applications data using graph database",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

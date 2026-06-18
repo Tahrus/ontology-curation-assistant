@@ -1,0 +1,48 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-9fa9c88de6-3273a382.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-pdf-9fa9c88de6-2641a469.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 1,
+      "equation_isolated": 1,
+      "generated_boilerplate": 3,
+      "page_number": 2,
+      "publisher_boilerplate": 2,
+      "repeated_header_footer": 7,
+      "source_page_comment": 18
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated.",
+      "Metadata title does not match detected extracted title."
+    ]
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-pdf-9fa9c88de6-2641a469.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "PREFER_submission",
+    "year": null,
+    "zotero_key": "zotero-pdf-9fa9c88de6"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-pdf-9fa9c88de6-2641a469.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-pdf-9fa9c88de6-2641a469.md",
+  "updated_at": "2026-06-18T14:38:32.294138+00:00",
+  "validation": {
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated.",
+      "Metadata title does not match detected extracted title."
+    ],
+    "detected_title": "- **Source:** Amig\u00f3 et al. - 2026 - PREFER An Ontology for the PREcision FERmentation Community.pdf",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": true,
+    "extraction_quality": "metadata_mismatch",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "metadata_mismatch",
+    "metadata_title": "PREFER_submission",
+    "requires_manual_review": true,
+    "title_similarity_score": 0.233
+  }
+}

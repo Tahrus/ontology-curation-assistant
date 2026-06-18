@@ -1,0 +1,43 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-compchemeng-2025-109536-e1e7f7e9.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-8yjp272y-13c8d223.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-8yjp272y-13c8d223.md",
+  "metadata": {
+    "authors": [
+      "Margherita Geremia",
+      "Tiziana Marella",
+      "Elaheh Ardalani",
+      "Samira Beyramysoltan",
+      "Sayantan Chattoraj",
+      "Pierantonio Facco",
+      "Massimiliano Barolo",
+      "Fabrizio Bezzo"
+    ],
+    "doi": "10.1016/j.compchemeng.2025.109536",
+    "source_filename": "",
+    "title": "On the impact of mechanistic model quality and data availability in hybrid model development",
+    "year": 2026,
+    "zotero_key": "zotero-8YJP272Y"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-8yjp272y-13c8d223.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-8yjp272y-13c8d223.md",
+  "updated_at": "2026-06-18T14:38:27.048827+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "On the impact of mechanistic model quality and data availability in hybrid model development",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

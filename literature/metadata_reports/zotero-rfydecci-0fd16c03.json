@@ -1,0 +1,38 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-biotechadv-2016-11-005-61d022dd.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-rfydecci-0fd16c03.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-rfydecci-0fd16c03.md",
+  "metadata": {
+    "authors": [
+      "Raquel dos Santos",
+      "Ana Lu\u00edsa Carvalho",
+      "A. Cec\u00edlia A. Roque"
+    ],
+    "doi": "10.1016/j.biotechadv.2016.11.005",
+    "source_filename": "",
+    "title": "Renaissance of protein crystallization and precipitation in biopharmaceuticals purification",
+    "year": 2017,
+    "zotero_key": "zotero-RFYDECCI"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-rfydecci-0fd16c03.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-rfydecci-0fd16c03.md",
+  "updated_at": "2026-06-18T14:38:27.184117+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Renaissance of protein crystallization and precipitation in biopharmaceuticals purification",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

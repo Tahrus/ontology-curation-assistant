@@ -1,6 +1,6 @@
 # Current Project State
 
-Last reviewed: 2026-06-17
+Last reviewed: 2026-06-18
 
 ## Summary
 
@@ -21,7 +21,7 @@ Implemented endpoints:
 - Browser pages: `/`, `/config`, `/zotero`, `/literature`, `/ontology`, `/curation-prompt`, `/curation`, `/export`.
 - Project browser pages: `/projects`, `/suggestions`, and `/evaluation` for project creation/selection, structured project suggestions, expert review decisions, and evaluation metrics.
 - Browser UI includes client-side route handling for dashboard/header links, a persistent active-project banner, project hierarchy dashboard, page-scoped startup data loading, a visible startup/page error path, accessible button/link click feedback, long-running action busy states, a Light/Dark theme toggle persisted in local storage, and a smaller shared logo link back to the dashboard.
-- Browser Configuration includes provider/model dropdowns for Gemini, OpenAI, Anthropic, and custom OpenAI-compatible LLMs, preset defaults for model/base URL/env var/runtime settings, API key environment variable support, a `Test LLM connection` action with key-source and canonical provider-key diagnostics, and Docker/ODK diagnostics for mounted paths and tools.
+- Browser Configuration includes guarded Zotero metadata-sync controls, provider/model dropdowns for Gemini, OpenAI, Anthropic, and custom OpenAI-compatible LLMs, preset defaults for model/base URL/env var/runtime settings, API key environment variable support, a `Test LLM connection` action with key-source and canonical provider-key diagnostics, and Docker/ODK diagnostics for mounted paths and tools.
 - Configuration: `/api/config/status`, `/api/config/zotero`, `/api/config/llm`, `/api/config/ontology-path`, `/api/config/test-zotero`.
 - Literature pipeline configuration is exposed through `/api/config/literature`. The browser-facing literature pipeline configuration only requires the local Zotero literature source path; advanced output paths remain environment-backed. The combined Zotero/PDF/Markdown pipeline can be run through `POST /api/literature/pipeline/run`.
 - Saved API configurations: `/api/config/saved`, `/api/config/saved/{id}/activate`, and deletion.
@@ -36,7 +36,7 @@ Implemented endpoints:
 - LLM provider metadata and diagnostics: `/api/config/llm/providers`, `/api/config/llm/test`, and `/api/diagnostics/docker-odk`.
 - Project curation runs and structured suggestions: `/api/curation/prompt-strategies`, `/api/curation/runs`, `/api/curation/runs/{run_id}/suggestions`, `/api/suggestions`, and `/api/suggestions/{suggestion_id}/review`.
 - Evaluation: `/api/evaluation/compute` and `/api/evaluation/compare`.
-- Literature and candidates: `/api/literature`, `/api/extraction/candidates`, `/api/candidates`, `/api/candidates/{id}`, review, OLS matching, local ontology matching, match selection, graph-review proposal persistence, and decision endpoints. The default active candidate queue includes draft/in-review/deferred/needs-more-evidence records and excludes approved or rejected records.
+- Literature and candidates: `/api/literature`, `/api/literature/repository/review`, `/api/literature/doctor`, `/api/literature/repository/report`, `/api/literature/context/build`, literature regenerate/retry actions, `/api/extraction/candidates`, `/api/candidates`, `/api/candidates/{id}`, review, OLS matching, local ontology matching, match selection, graph-review proposal persistence, and decision endpoints. The default active candidate queue includes draft/in-review/deferred/needs-more-evidence records and excludes approved or rejected records.
 - Export: `/api/exports/approved.robot.tsv` and `/api/exports/approved.candidates.tsv`.
 - ODK implementation workflow: `POST /api/odk/workflow` defaults to dry-run and requires `production=true` when `dry_run=false`.
 
@@ -63,10 +63,11 @@ Implemented commands:
 - `oca zotero-link-documents <literature_dir>`: conservatively links already ingested documents to imported source records.
 - `oca zotero-config`: shows Zotero API sync configuration without printing the API key.
 - `oca zotero-sync`: syncs metadata from the Zotero Web API into local source records.
-- Literature-changing CLI workflows refresh the LLM-ready Markdown repository under `literature/papers` by default. Each paper is stored as a deterministic `.md` file with YAML front matter for stable metadata and Markdown sections for abstract, notes, and ontology-relevant extracted content.
-- Candidate extraction loads Markdown repository files and combines them into one Markdown corpus for the LLM. The former literature JSON sidecar has been removed and is no longer generated or read.
+- Literature-changing CLI workflows refresh the LLM-ready Markdown repository under `literature/papers` by default. Each paper is stored as a deterministic `.md` file with YAML front matter for stable metadata, metadata-match status, document role, automatic-extraction flags, and Markdown sections for abstract, notes, and ontology-relevant extracted content.
+- Candidate extraction loads Markdown repository files, requires usable `ready_for_llm` records for automatic domain extraction, excludes metadata mismatches, incomplete/blocked/needs-review/failed files, manual-review records, methodology articles, and supplementary files, and combines the remaining structured LLM context plus cleaned evidence into one Markdown corpus. The former literature JSON sidecar has been removed and is no longer generated or read.
 - `oca literature reset-repository --yes` and `POST /api/literature/repository/reset` reset the configured literature base directory recursively, recreate the empty directory, clear stored literature rows/extraction state, log deleted items, refuse unsafe root-like targets, unlink symlinks instead of following them, and leave ontology outputs, settings, GitHub configuration, and ODK files untouched when those outputs are outside the literature base.
 - `oca literature pipeline` runs the integrated combined literature pipeline from configured paths: Zotero storage PDF import, PDF-to-Markdown conversion with PyMuPDF, per-paper Markdown creation for PDF-only imports, generated full-text merge into per-paper Markdown, cleanup/diagnostic report writing, and final combined Markdown corpus creation from usable canonical per-paper Markdown. A CLI `--base-dir` override derives the original `Paper-PDF`, `Markdown`, `papers`, and `combined_literature.md` paths from that base unless a more specific path is supplied. The wrapper clears only `Paper-PDF` and `Markdown` under the configured literature base before invoking the integrated pipeline stages, so repeated runs refresh artifacts without duplicating copied PDFs.
+- `oca literature doctor/validate/report/retry-extraction/regenerate-clean/regenerate-context/build-combined-context` expose extractor availability, repository validation/reporting, per-paper artifact refresh, retry metadata, and role-specific combined context generation.
 - `oca llm-ontology-suggestions` creates a traceable ontology-suggestion prompt/export from the canonical Markdown literature repository. `--dry-run` needs no credentials and writes a schema-valid empty suggestion payload; non-dry-run mode requires configured provider-neutral LLM credentials and validates the required `suggestions` JSON shape.
 - `oca llm-test` tests the configured LLM provider with a tiny prompt and reports provider, canonical provider key, model, key presence/source, latency, and concise diagnostics.
 - `oca project create/list/select/show`: creates/selects project records and the local project folder layout.
@@ -149,12 +150,15 @@ Implemented:
 - Import from CSL JSON-like Zotero/Better BibTeX exports.
 - Import from a Zotero Web-API-like JSON item shape when present in exported files.
 - Metadata-only sync from Zotero user or group libraries through the Zotero Web API.
+- Zotero Desktop local API metadata sync when configured with library type `user`, library ID `0`, base URL `http://127.0.0.1:23119/api`, and an empty API key. The connection test fetches one item with the `Zotero-API-Version: 3` header and does not require a Zotero API key.
 - Direct local extraction from deposited Zotero PDF attachments after metadata sync/import. Parent items can be resolved by stored Zotero item key, stored Zotero URI, exact title, normalized title, or DOI. Child attachments are inspected through Zotero metadata, but extraction reads the local PDF file path directly rather than DOI, publisher, or web links.
 - Browser sync defaults to no limit and follows Zotero pagination until all configured records are fetched.
 - Browser literature records are shown by title with author/year/type/DOI/key metadata, an `Open in Zotero` URI only when a Zotero item key is valid and unambiguous, and an expandable JSON section for the corresponding record payload.
-- The browser literature view merges Zotero database rows with matching Markdown repository entries when available and also displays repository-only Markdown records created by the integrated PDF import pipeline. The detail panel shows Markdown content and readable metadata rather than raw JSON. Candidate extraction from a Zotero source prefers the Markdown record over legacy metadata snippets.
+- The browser literature view merges Zotero database rows with matching Markdown repository entries when available and also displays repository-only Markdown records created by the integrated PDF import pipeline. The detail panel shows raw, clean, and LLM-context Markdown plus readable metadata rather than raw JSON. Candidate extraction from a Zotero source prefers the Markdown record over legacy metadata snippets.
+- Literature review controls can filter by document role, document state, extraction quality, metadata mismatch, and manual-review status. Curators can update include/exclude, metadata-match status, role, manual-review flags, and state through `PATCH /api/literature/repository/review`, regenerate clean/context artifacts, record retry engines, block/unblock records, and build domain/review/methodology/excluded combined contexts.
 - Browser literature ingestion, test imports, and Zotero sync refresh the Markdown repository in `literature/papers`; the export folder is created automatically. Zotero sync also automatically triggers the Zotero PDF literature pipeline using the configured Zotero storage directory.
 - Optional collection sync through configured or CLI-provided collection keys.
+- Browser Zotero save/test/sync event handlers use stable element IDs, bind after the DOM is ready, report missing required panel elements clearly, and guard optional controls before calling nested selectors.
 - Secret-safe `zotero-config` output.
 - Pagination through Zotero `Link` headers.
 - API errors for missing config, authentication failures, not-found responses, network failures, and invalid JSON.
@@ -265,6 +269,7 @@ Implemented browser extraction:
 - Optional provider-neutral LLM calls when Gemini, OpenAI, Anthropic, or custom OpenAI-compatible provider/API key settings are configured. Provider presets and UI/CLI alias normalization live in `backend/app/llm/presets.py`; labels such as `Gemini API`, `Google Gemini`, `google_gemini`, `google-ai`, and `google_ai` resolve to the canonical `gemini` provider before config save, saved-config activation, connection tests, and real LLM requests.
 - The editable ontology curation prompt page assembles LLM requests in deterministic order: saved prompt, selected current ontology OBO content, `combined_literature.md`, and a JSON-only output requirement. Missing/empty literature, missing LLM credentials, or missing/non-OBO selected ontology files fail before the LLM call. Oversized literature is chunked explicitly using `OCA_LLM_CONTEXT_CHAR_LIMIT`; request traces and valid/invalid responses are written under `literature/curation_runs/` without API keys.
 - Browser extraction no longer requires selecting an individual literature document or paper. When no source is passed, it loads all valid LLM-ready Markdown files from the configured literature repository, skips malformed files with warnings, combines valid entries into one Markdown corpus, and returns a controlled import-literature-first message when no valid files are available.
+- Browser/API extraction supports `dry_run: true` to report included and excluded repository documents without persisting candidates.
 
 Not implemented yet:
 
@@ -361,6 +366,18 @@ Current test command:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
+Verified on 2026-06-18 for the Zotero Metadata Sync frontend guard/local API fix:
+
+- `node --check backend\app\static\app.js`
+- `.\.venv\Scripts\ruff.exe check backend\app\api\routes.py backend\tests\test_browser_api.py backend\tests\test_zotero_api_sync.py`
+- `.\.venv\Scripts\python.exe -m pytest backend\tests\test_browser_api.py backend\tests\test_zotero_api_sync.py` passed with 57 tests.
+
+Verified on 2026-06-18 for the canonical literature state/quality/context workflow update:
+
+- `node --check backend\app\static\app.js`
+- `.\.venv\Scripts\ruff.exe check backend\app\literature\quality.py backend\app\literature\repository.py backend\app\api\routes.py backend\app\cli.py backend\tests\test_entry_generation.py backend\tests\test_browser_api.py`
+- `.\.venv\Scripts\python.exe -m pytest backend\tests\test_entry_generation.py backend\tests\test_browser_api.py` passed with 78 tests.
+
 Verified on 2026-06-17 for the project-management scaffold task:
 
 - `node --check backend\app\static\app.js`
@@ -455,6 +472,7 @@ Covered by tests:
 - Permanent candidate rejection and restore
 - Static JavaScript regression coverage ensuring `.casefold()` is not used, current routes are present, theme persistence is wired, and literature Markdown/Zotero controls are rendered
 - Literature Markdown repository creation, stable paper IDs, front matter metadata, full-text export, hierarchical PDF text section extraction, page-range assignment, compact provenance, canonical schema migration, duplicate-section removal, metadata preservation, failure diagnostics, and Zotero key ambiguity handling
+- Literature metadata title/DOI validation, metadata-mismatch exclusion, incomplete extraction gating, role classification, canonical document states, raw/clean/context/report/blocked artifact writing, manual-review/state metadata updates, extractor doctor/report endpoints, combined context building, extraction dry-run context-size reporting, and short-document LLM context construction
 - Markdown repository loading, exact identifier/title matching, normalized-title ambiguity detection, section-first display fallback order, content hashes, and API exposure of canonical `content` diagnostics
 - Graph endpoint shape for ontology and meta-ontology views, plus persisted browser controls for text labels, node labels, edge labels, descriptions, and simplified views
 - Literature repository reset for existing Markdown files, nested files, empty repositories, missing repository paths, and stale sidecars, including preservation of unrelated ontology output files
@@ -482,6 +500,7 @@ The project is not yet a full ontology curation application. The following piece
 - Full production-grade AI/LLM extraction execution and retries beyond the current provider abstraction and basic retry setting
 - OCR for scanned/image-only PDFs
 - Reliable two-column reading-order reconstruction; current PyMuPDF extraction is best-effort and diagnostics can warn about quality issues
+- Actual multi-engine PDF extraction fallback execution is still limited; the current doctor/retry workflow detects/records engine availability and retry intent while the integrated pipeline remains PyMuPDF-first.
 - BFO validation; later support should target BFO 2020 terminology and identifiers
 - Static version-controlled relation catalogue for later prompt/validation constraints
 - Audit log persistence
@@ -505,11 +524,11 @@ The core safety boundary is already represented in code and tests:
 Implemented in this task:
 
 - Default compatible artefact folders remain `literature/Paper-PDF`, `literature/Markdown`, `literature/papers`, and `literature/combined_literature.md`.
-- Raw extracted Markdown is preserved separately from cleaned canonical per-paper Markdown.
-- Per-paper Markdown front matter now includes Phase 2 provenance fields where available, including `paper_id`, `zotero_key`, `source_pdf`, `raw_markdown`, `extraction_method`, `extraction_date`, `cleanup_version`, and `extraction_quality`, while retaining compatibility fields.
+- Raw extracted Markdown is preserved separately from cleaned canonical per-paper Markdown and structured LLM-context Markdown.
+- Per-paper Markdown front matter now includes canonical provenance and review fields where available, including `paper_id`, `zotero_key`, `zotero_item_key`, `pdf_path`, `pdf_sha256`, `source_filename`, `source_pdf`, `raw_markdown`, `extraction_method`, `extraction_date`, extraction engine metadata, `cleanup_version`, `state`, extraction metrics, `extraction_quality`, `metadata_match_status`, `doi_match_status`, `document_role`, `requires_manual_review`, warnings, and automatic-extraction include/exclude flags, while retaining compatibility fields.
 - Cleanup rules are explicit, named, test-covered, and conservative; DOI-containing scientific text is retained.
-- Cleanup and extraction diagnostics are written under `literature/metadata` and surfaced by the pipeline API/CLI as report paths and skipped-paper counts.
-- Combined literature is generated from usable canonical per-paper Markdown, includes paper boundary comments, de-duplicates by paper ID, excludes references by default for LLM context, and skips papers marked `failed` or `requires_manual_review`.
+- Cleanup and extraction diagnostics are written under `literature/metadata` and per-paper `reports`, and surfaced by the pipeline API/CLI as report paths and skipped-paper counts.
+- Combined literature is generated from usable canonical per-paper Markdown, includes paper boundary comments, de-duplicates by paper ID, excludes references by default for LLM context, includes cleaned evidence text, and skips papers marked `failed`, `incomplete`, `blocked`, `requires_manual_review`, `metadata_mismatch`, or unsuitable document roles. Role-specific context bundles are written under `literature/combined`.
 - Literature reset continues to clear the configured literature base directory, including generated metadata/diagnostic files.
 
 Baseline before these fixes on 2026-06-10: `.\.venv\Scripts\python.exe -m pytest` reported 138 passed and 2 failed, both due to the pre-existing path-default mismatch; `.\.venv\Scripts\ruff.exe check` reported four pre-existing lint errors in the draft Phase 2 files.

@@ -1,0 +1,45 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-222fd192fe-0c807fe0.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-pdf-222fd192fe-c7f79191.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 1,
+      "equation_isolated": 19,
+      "generated_boilerplate": 3,
+      "page_number": 89,
+      "repeated_header_footer": 6,
+      "source_page_comment": 38
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated."
+    ]
+  },
+  "document_role": "supplementary_information",
+  "llm_context_file": "literature\\llm_context\\zotero-pdf-222fd192fe-c7f79191.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "Ehtesham et al. - 2025 - Supplementary Information",
+    "year": null,
+    "zotero_key": "zotero-pdf-222fd192fe"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-pdf-222fd192fe-c7f79191.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-pdf-222fd192fe-c7f79191.md",
+  "updated_at": "2026-06-18T14:38:32.347243+00:00",
+  "validation": {
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated."
+    ],
+    "detected_title": "Ehtesham et al. - 2025 - Supplementary Information",
+    "document_role": "supplementary_information",
+    "exclude_from_automatic_llm_extraction": true,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "matched",
+    "metadata_title": "Ehtesham et al. - 2025 - Supplementary Information",
+    "requires_manual_review": false,
+    "title_similarity_score": 1.0
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1021-acsestwater-3c00131-8491431f.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-3ah3jsvm-c7b88c5e.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-3ah3jsvm-c7b88c5e.md",
+  "metadata": {
+    "authors": [
+      "Zhang Cheng",
+      "Avner Ronen",
+      "Heyang Yuan"
+    ],
+    "doi": "10.1021/acsestwater.3c00131",
+    "source_filename": "",
+    "title": "Hybrid Modeling of Engineered Biological Systems through Coupling Data-Driven Calibration of Kinetic Parameters with Mechanistic Prediction of System Performance",
+    "year": 2024,
+    "zotero_key": "zotero-3AH3JSVM"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-3ah3jsvm-c7b88c5e.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-3ah3jsvm-c7b88c5e.md",
+  "updated_at": "2026-06-18T14:38:27.059432+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Hybrid Modeling of Engineered Biological Systems through Coupling Data-Driven Calibration of Kinetic Parameters with Mechanistic Prediction of System Performance",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

@@ -11,6 +11,7 @@ from backend.app.config import get_settings
 from backend.app.db import session as db_session
 from backend.app.main import app
 from backend.app.models.db import AppSetting, CandidateTermRecord, LiteratureDocument, LiteratureSource
+from backend.app.literature.repository import load_literature_markdown, save_literature_markdown
 from backend.app.ontology.local import index_ontology_file, scan_ontology_folder
 from backend.app.ontology.ols import OlsLookupService, parse_ols_search_response
 
@@ -464,28 +465,26 @@ def test_literature_project_tags_update_and_project_count(client, tmp_path):
 
 def test_extract_candidates_uses_repository_without_picker(client):
     repository = Path("literature") / "papers"
-    repository.mkdir(parents=True)
-    (repository / "valid.md").write_text(
-        """---
-id: "repository-paper"
-title: "Repository paper"
-doi: "10.1000/repository"
-year: 2026
----
-
-# Repository paper
-
-## Abstract
-
-Preferential hydration is relevant.
-
-## Extracted ontology-relevant information
-
-### Introduction
-
-Preferential hydration stabilizes proteins in solution.
-""",
-        encoding="utf-8",
+    save_literature_markdown(
+        {
+            "id": "repository-paper",
+            "title": "Protein preferential hydration repository paper",
+            "doi": "10.1000/repository",
+            "year": 2026,
+            "sections": [
+                {
+                    "heading": "Title",
+                    "text": "Protein preferential hydration repository paper",
+                    "subsections": [],
+                },
+                {
+                    "heading": "Introduction",
+                    "text": "Preferential hydration stabilizes proteins in solution.",
+                    "subsections": [],
+                },
+            ],
+        },
+        repository,
     )
     (repository / "malformed.md").write_text("# no front matter", encoding="utf-8")
 
@@ -507,8 +506,121 @@ Preferential hydration stabilizes proteins in solution.
     assert document is not None
     assert document.suffix == ".md"
     assert "# Literature Corpus" in document.content
-    assert "Repository paper" in document.content
+    assert "repository paper" in document.content
     assert "10.1000/repository" in document.content
+
+
+def test_extraction_dry_run_reports_included_and_excluded_literature(client):
+    repository = Path("literature") / "papers"
+    save_literature_markdown(
+        {
+            "id": "domain-ok",
+            "title": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+            "authors": ["McCoy"],
+            "sections": [
+                {
+                    "heading": "Title",
+                    "text": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+                    "subsections": [],
+                },
+                {"heading": "Abstract", "text": "Protein aggregation and nucleation are modeled.", "subsections": []},
+            ],
+        },
+        repository,
+    )
+    save_literature_markdown(
+        {
+            "id": "methodology-skip",
+            "title": "Accelerating knowledge graph and ontology engineering with large language models",
+            "sections": [
+                {
+                    "heading": "Title",
+                    "text": "Accelerating knowledge graph and ontology engineering with large language models",
+                    "subsections": [],
+                },
+                {"heading": "Abstract", "text": "Ontology engineering prompts and evaluation.", "subsections": []},
+            ],
+        },
+        repository,
+    )
+
+    response = client.post("/api/extraction/candidates", json={"dry_run": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dry_run"] is True
+    assert len(payload["included_documents"]) == 1
+    assert payload["included_documents"][0]["document_role"] == "domain_article"
+    assert payload["estimated_context_size"] > 0
+    assert payload["excluded_documents"]
+
+
+def test_literature_review_endpoint_updates_repository_metadata(client):
+    repository = Path("literature") / "papers"
+    path = save_literature_markdown(
+        {
+            "id": "review-update",
+            "title": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+            "sections": [
+                {
+                    "heading": "Title",
+                    "text": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+                    "subsections": [],
+                },
+                {"heading": "Abstract", "text": "Nucleation and aggregation in protein precipitation.", "subsections": []},
+            ],
+        },
+        repository,
+    )
+
+    response = client.patch(
+        "/api/literature/repository/review",
+        json={"markdown_file": str(path), "document_role": "review_article", "include_in_llm_extraction": True},
+    )
+
+    assert response.status_code == 200
+    loaded = load_literature_markdown(path)
+    assert loaded["document_role"] == "review_article"
+    assert loaded["include_in_llm_extraction"] is True
+
+
+def test_literature_quality_api_actions_return_json(client):
+    repository = Path("literature") / "papers"
+    path = save_literature_markdown(
+        {
+            "id": "api-actions",
+            "title": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+            "sections": [
+                {
+                    "heading": "Title",
+                    "text": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+                    "subsections": [],
+                },
+                {"heading": "Abstract", "text": "Nucleation and aggregation in protein precipitation.", "subsections": []},
+            ],
+        },
+        repository,
+    )
+
+    doctor = client.get("/api/literature/doctor")
+    report = client.get("/api/literature/repository/report")
+    built = client.post("/api/literature/context/build", json={})
+    retry = client.post(
+        "/api/literature/repository/retry-extraction",
+        json={"markdown_file": str(path), "engine": "pymupdf"},
+    )
+    clean = client.post("/api/literature/repository/regenerate-clean", json={"markdown_file": str(path)})
+    context = client.post("/api/literature/repository/regenerate-context", json={"markdown_file": str(path)})
+
+    assert doctor.status_code == 200
+    assert "pymupdf" in doctor.json()["extractors"]
+    assert report.status_code == 200
+    assert report.json()["report"]["paper_count"] == 1
+    assert built.status_code == 200
+    assert Path(built.json()["domain_context_file"]).exists()
+    assert retry.status_code == 200
+    assert clean.status_code == 200
+    assert context.status_code == 200
 
 
 def test_extract_candidates_empty_repository_has_controlled_message(client):
@@ -812,12 +924,73 @@ def test_zotero_sync_accepts_optional_test_limit(client, monkeypatch):
     assert synced.status_code == 200
 
 
+def test_zotero_config_save_clears_optional_local_api_fields(client):
+    first = client.post(
+        "/api/config/zotero",
+        json={
+            "library_type": "user",
+            "library_id": "123",
+            "api_key": "old-key",
+            "collection_key": "COLL",
+            "base_url": "https://api.zotero.org",
+        },
+    )
+    assert first.status_code == 200
+
+    saved = client.post(
+        "/api/config/zotero",
+        json={
+            "library_type": "user",
+            "library_id": "0",
+            "api_key": "",
+            "collection_key": "",
+            "base_url": "http://127.0.0.1:23119/api",
+        },
+    )
+
+    assert saved.status_code == 200
+    status = client.get("/api/config/status").json()
+    assert status["zotero"]["configured"] is True
+    assert status["zotero"]["library_id"] == "0"
+    assert status["zotero"]["api_key"] == "missing"
+    assert status["zotero"]["base_url"] == "http://127.0.0.1:23119/api"
+
+
 def test_static_javascript_uses_safe_normalization():
     script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
 
     assert ".casefold(" not in script
     assert "function normalizeText" in script
     assert ".toLowerCase()" in script
+
+
+def test_zotero_sync_frontend_bindings_are_guarded():
+    static_dir = Path(__file__).parents[1] / "app" / "static"
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    script = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    for selector in [
+        "zotero-config-form",
+        "zotero-library-type",
+        "zotero-library-id",
+        "zotero-api-key",
+        "zotero-collection-key",
+        "zotero-api-base-url",
+        "test-zotero",
+        "sync-zotero",
+        "import-test-zotero",
+    ]:
+        assert f'id="{selector}"' in html
+
+    assert "function bindZoteroMetadataSync" in script
+    assert "onDomReady(() =>" in script
+    assert "bindZoteroMetadataSync();" in script
+    assert "Zotero configuration panel could not be found. Please reload the page." in script
+    assert 'console.error(`Missing Zotero sync form element: ${selector}`);' in script
+    assert 'document.querySelector("#zotero-config-form").addEventListener' not in script
+    assert 'document.querySelector("#test-zotero").addEventListener' not in script
+    assert 'document.querySelector("#sync-zotero").addEventListener' not in script
+    assert 'document.querySelector("#import-test-zotero").addEventListener' not in script
 
 
 def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_controls():
@@ -983,6 +1156,11 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "prefill-ppo-project" not in html
     assert "/api/projects/suggest-metadata" in script
     assert "/api/zotero/entries/${encodeURIComponent(entry.id)}/project-tags" in script
+    assert 'document.querySelector("#zotero-entries");\n  if (!list) return;' in script
+    assert 'document.querySelector("#zotero-filter")?.addEventListener("input", renderEntries)' in script
+    assert "/api/literature/context/build" in script
+    assert "/api/literature/repository/retry-extraction" in script
+    assert 'value="incomplete"' in html
     assert "project_tags" in script
     assert "Promise.all([loadStatus(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()])" not in script
     assert "20260602-md" in html

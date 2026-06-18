@@ -1,0 +1,40 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-48550-arxiv-2509-01536-a6c77a3b.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-nsu5w4ht-5feb169a.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "methodology_article",
+  "llm_context_file": "literature\\llm_context\\zotero-nsu5w4ht-5feb169a.md",
+  "metadata": {
+    "authors": [
+      "Ebrahim Norouzi",
+      "Nicole Jung",
+      "Anna M. Jacyszyn",
+      "J\u00f6rg Waitelonis",
+      "Harald Sack"
+    ],
+    "doi": "10.48550/arxiv.2509.01536",
+    "source_filename": "",
+    "title": "AI4DiTraRe: Building the BFO-Compliant Chemotion Knowledge Graph",
+    "year": 2025,
+    "zotero_key": "zotero-NSU5W4HT"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-nsu5w4ht-5feb169a.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-nsu5w4ht-5feb169a.md",
+  "updated_at": "2026-06-18T14:38:27.173014+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "methodology_article",
+    "exclude_from_automatic_llm_extraction": true,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "unknown",
+    "metadata_title": "AI4DiTraRe: Building the BFO-Compliant Chemotion Knowledge Graph",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

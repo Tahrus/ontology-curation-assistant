@@ -39,11 +39,18 @@ from backend.app.literature.exporter import (
 )
 from backend.app.literature.pipeline import run_literature_pipeline
 from backend.app.literature.repository import (
+    build_combined_context_files,
     load_llm_ready_repository_with_diagnostics,
+    literature_repository_report,
     literature_context_for_entry_generation,
+    regenerate_clean_markdown,
+    regenerate_llm_context,
     repository_status,
     reset_literature_repository,
+    retry_literature_extraction,
+    update_literature_review_metadata,
 )
+from backend.app.literature.quality import extractor_availability, should_include_for_automatic_llm
 from backend.app.models.core import ReviewStatus
 from backend.app.models.db import (
     AppSetting,
@@ -229,6 +236,37 @@ class ExtractionRequest(BaseModel):
     source_id: int | None = None
     guidance: str | None = None
     use_llm: bool = False
+    dry_run: bool = False
+
+
+class LiteratureReviewUpdatePayload(BaseModel):
+    markdown_file: str = Field(min_length=1)
+    include_in_llm_extraction: bool | None = None
+    metadata_match_status: Literal["matched", "weak_match", "metadata_mismatch", "unknown"] | None = None
+    document_role: Literal[
+        "domain_article",
+        "methodology_article",
+        "review_article",
+        "supplementary_information",
+        "unknown",
+    ] | None = None
+    requires_manual_review: bool | None = None
+    state: Literal[
+        "imported",
+        "extracted",
+        "extraction_failed",
+        "validation_failed",
+        "needs_review",
+        "cleaned",
+        "context_ready",
+        "ready_for_llm",
+        "blocked",
+    ] | None = None
+
+
+class LiteratureActionPayload(BaseModel):
+    markdown_file: str = Field(min_length=1)
+    engine: str | None = None
 
 
 class OlsSelection(BaseModel):
@@ -1079,6 +1117,12 @@ def _document_from_source(session: Session, source: LiteratureSource) -> Literat
     )
     markdown_text = None
     if markdown_paper is not None:
+        include, reason = should_include_for_automatic_llm(markdown_paper)
+        if not include:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Selected literature is excluded from automatic LLM extraction: {reason}",
+            )
         markdown_text = markdown_paper.get("markdown")
     content = markdown_text or "\n\n".join(
         filter(
@@ -1161,14 +1205,17 @@ def save_zotero_config(
     payload: ZoteroConfigPayload,
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
+    api_key = payload.api_key or ""
+    collection_key = payload.collection_key or ""
+    base_url = payload.base_url or ""
     set_runtime_values(
         session,
         {
             "zotero_library_type": payload.library_type,
             "zotero_library_id": payload.library_id,
-            "zotero_api_key": payload.api_key,
-            "zotero_collection_key": payload.collection_key,
-            "zotero_api_base_url": payload.base_url,
+            "zotero_api_key": api_key,
+            "zotero_collection_key": collection_key,
+            "zotero_api_base_url": base_url,
         },
     )
     _upsert_saved_config(
@@ -1178,9 +1225,9 @@ def save_zotero_config(
             "alias": f"Zotero {payload.library_type} {payload.library_id}",
             "library_type": payload.library_type,
             "library_id": payload.library_id,
-            "api_key": payload.api_key,
-            "collection_key": payload.collection_key,
-            "base_url": payload.base_url,
+            "api_key": api_key,
+            "collection_key": collection_key,
+            "base_url": base_url,
         },
     )
     return config_status(session)["zotero"]
@@ -1653,6 +1700,7 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "sections": (markdown_paper or {}).get("sections") or text_payload["sections"],
         "canonical_source": "markdown_repository" if markdown_paper else "database_metadata",
     }
+    review_status = _literature_review_status(markdown_paper or {})
     return {
         "id": source.id,
         "provider": source.provider,
@@ -1682,11 +1730,16 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "quality_flags": text_payload["quality_flags"],
         "markdown_file": markdown_file,
         "literature_markdown": (markdown_paper or {}).get("markdown"),
+        "raw_markdown": (markdown_paper or {}).get("raw_markdown_text"),
+        "clean_markdown": (markdown_paper or {}).get("clean_markdown"),
+        "llm_context_markdown": (markdown_paper or {}).get("llm_context_markdown"),
         "literature_metadata": markdown_metadata or None,
+        "literature_review": review_status,
         "literature_status": {
             "markdown_source_file": markdown_file,
             "section_count": len(content["sections"] or []),
             "has_markdown": markdown_paper is not None,
+            **review_status,
         },
     }
 
@@ -1696,6 +1749,7 @@ def _repository_paper_payload(paper: dict[str, Any], index: int) -> dict[str, An
     markdown_file = paper.get("source_file")
     sections = paper.get("sections") or []
     title = metadata.get("title") or paper.get("title") or Path(str(markdown_file or "")).stem
+    review_status = _literature_review_status(paper)
     return {
         "id": f"markdown-{index}",
         "provider": "markdown_repository",
@@ -1728,12 +1782,55 @@ def _repository_paper_payload(paper: dict[str, Any], index: int) -> dict[str, An
         "quality_flags": [],
         "markdown_file": markdown_file,
         "literature_markdown": paper.get("markdown"),
+        "raw_markdown": paper.get("raw_markdown_text"),
+        "clean_markdown": paper.get("clean_markdown"),
+        "llm_context_markdown": paper.get("llm_context_markdown"),
         "literature_metadata": metadata or None,
+        "literature_review": review_status,
         "literature_status": {
             "markdown_source_file": markdown_file,
             "section_count": len(sections),
             "has_markdown": True,
+            **review_status,
         },
+    }
+
+
+def _literature_review_status(paper: dict[str, Any]) -> dict[str, Any]:
+    include, reason = should_include_for_automatic_llm(paper)
+    return {
+        "metadata_title": paper.get("metadata_title") or (paper.get("metadata") or {}).get("metadata_title"),
+        "detected_title": paper.get("detected_title") or (paper.get("metadata") or {}).get("detected_title"),
+        "title_similarity_score": paper.get("title_similarity_score")
+        or (paper.get("metadata") or {}).get("title_similarity_score"),
+        "metadata_match_status": paper.get("metadata_match_status")
+        or (paper.get("metadata") or {}).get("metadata_match_status")
+        or "unknown",
+        "document_role": paper.get("document_role") or (paper.get("metadata") or {}).get("document_role") or "unknown",
+        "extraction_quality": paper.get("extraction_quality")
+        or (paper.get("metadata") or {}).get("extraction_quality")
+        or "unknown",
+        "state": paper.get("state") or (paper.get("metadata") or {}).get("state") or "unknown",
+        "zotero_title": paper.get("zotero_title") or (paper.get("metadata") or {}).get("zotero_title"),
+        "zotero_doi": paper.get("zotero_doi") or (paper.get("metadata") or {}).get("zotero_doi"),
+        "detected_doi": paper.get("detected_doi") or (paper.get("metadata") or {}).get("detected_doi"),
+        "doi_match_status": paper.get("doi_match_status") or (paper.get("metadata") or {}).get("doi_match_status"),
+        "extraction_engine_used": paper.get("extraction_engine_used")
+        or (paper.get("metadata") or {}).get("extraction_engine_used"),
+        "page_count_pdf": paper.get("page_count_pdf") or (paper.get("metadata") or {}).get("page_count_pdf"),
+        "page_count_extracted": paper.get("page_count_extracted")
+        or (paper.get("metadata") or {}).get("page_count_extracted"),
+        "word_count": paper.get("word_count") or (paper.get("metadata") or {}).get("word_count"),
+        "warnings": paper.get("warnings") or (paper.get("metadata") or {}).get("warnings") or [],
+        "requires_manual_review": bool(paper.get("requires_manual_review")),
+        "exclude_from_automatic_llm_extraction": bool(paper.get("exclude_from_automatic_llm_extraction")),
+        "include_in_llm_extraction": bool(paper.get("include_in_llm_extraction", include)),
+        "included_in_automatic_llm_extraction": include,
+        "automatic_llm_exclusion_reason": reason,
+        "raw_markdown_file": paper.get("raw_markdown_file") or (paper.get("metadata") or {}).get("raw_markdown_file"),
+        "clean_markdown_file": paper.get("clean_markdown_file") or (paper.get("metadata") or {}).get("clean_markdown_file"),
+        "llm_context_file": paper.get("llm_context_file") or (paper.get("metadata") or {}).get("llm_context_file"),
+        "metadata_report_file": paper.get("metadata_report_file") or (paper.get("metadata") or {}).get("metadata_report_file"),
     }
 
 
@@ -1779,6 +1876,87 @@ def update_zotero_entry_project_tags(
     session.commit()
     session.refresh(source)
     return _source_payload(source, session)
+
+
+@router.patch("/literature/repository/review")
+def update_literature_repository_review(
+    payload: LiteratureReviewUpdatePayload,
+) -> dict[str, Any]:
+    try:
+        paper = update_literature_review_metadata(
+            Path(payload.markdown_file),
+            include_in_llm_extraction=payload.include_in_llm_extraction,
+            metadata_match_status=payload.metadata_match_status,
+            document_role=payload.document_role,
+            requires_manual_review=payload.requires_manual_review,
+            state=payload.state,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "paper": {
+            "title": paper.get("title"),
+            "markdown_file": paper.get("source_file") or payload.markdown_file,
+            "literature_review": _literature_review_status(paper),
+        },
+    }
+
+
+@router.get("/literature/doctor")
+def literature_doctor() -> dict[str, Any]:
+    return {"ok": True, "extractors": extractor_availability().to_dict()}
+
+
+@router.get("/literature/repository/report")
+def read_literature_repository_report() -> dict[str, Any]:
+    return {"ok": True, "report": literature_repository_report()}
+
+
+@router.post("/literature/context/build")
+def build_literature_context() -> dict[str, Any]:
+    result = build_combined_context_files()
+    return {
+        "ok": True,
+        "output_dir": str(result.output_dir),
+        "domain_context_file": str(result.domain_context_file),
+        "review_context_file": str(result.review_context_file),
+        "methodology_context_file": str(result.methodology_context_file),
+        "excluded_report_file": str(result.excluded_report_file),
+        "domain_count": result.domain_count,
+        "review_count": result.review_count,
+        "methodology_count": result.methodology_count,
+        "excluded_count": result.excluded_count,
+    }
+
+
+@router.post("/literature/repository/regenerate-clean")
+def regenerate_literature_clean_markdown(payload: LiteratureActionPayload) -> dict[str, Any]:
+    try:
+        paper = regenerate_clean_markdown(Path(payload.markdown_file))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "paper": {"title": paper.get("title"), "literature_review": _literature_review_status(paper)}}
+
+
+@router.post("/literature/repository/regenerate-context")
+def regenerate_literature_context_markdown(payload: LiteratureActionPayload) -> dict[str, Any]:
+    try:
+        paper = regenerate_llm_context(Path(payload.markdown_file))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "paper": {"title": paper.get("title"), "literature_review": _literature_review_status(paper)}}
+
+
+@router.post("/literature/repository/retry-extraction")
+def retry_literature_repository_extraction(payload: LiteratureActionPayload) -> dict[str, Any]:
+    if not payload.engine:
+        raise HTTPException(status_code=400, detail="Extraction engine is required.")
+    try:
+        paper = retry_literature_extraction(Path(payload.markdown_file), engine=payload.engine)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "paper": {"title": paper.get("title"), "literature_review": _literature_review_status(paper)}}
 
 
 @router.post("/zotero/sync")
@@ -2229,6 +2407,30 @@ def extract_candidates(
         document = _document_from_source(session, source)
     else:
         text, repository_result = literature_context_for_entry_generation()
+        if payload.dry_run:
+            return {
+                "dry_run": True,
+                "would_extract": bool(repository_result.papers),
+                "estimated_context_size": len(text),
+                "included_documents": [
+                    {
+                        "id": paper.get("id") or paper.get("paper_id"),
+                        "title": paper.get("title"),
+                        "source_file": paper.get("source_file"),
+                        "state": paper.get("state"),
+                        "document_role": paper.get("document_role"),
+                        "metadata_match_status": paper.get("metadata_match_status"),
+                        "extraction_quality": paper.get("extraction_quality"),
+                    }
+                    for paper in repository_result.papers
+                ],
+                "excluded_documents": repository_result.skipped_files,
+                "message": (
+                    "Valid literature is available for automatic extraction."
+                    if repository_result.papers
+                    else "No valid literature is available for automatic extraction."
+                ),
+            }
         if not repository_result.papers:
             detail = "No valid literature Markdown files are available. Import literature first."
             if repository_result.skipped_files:

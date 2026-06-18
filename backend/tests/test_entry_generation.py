@@ -22,6 +22,7 @@ from backend.app.literature.pipeline import (
 from backend.app.literature.cleanup import clean_page_text_with_report
 from backend.app.literature.diagnostics import generate_diagnostics
 from backend.app.literature.repository import (
+    build_combined_context_files,
     clean_extracted_text,
     combine_literature_markdown,
     display_literature_markdown,
@@ -267,6 +268,195 @@ def test_literature_markdown_front_matter_tracks_phase2_provenance(tmp_path):
     assert "<!-- normalized_section: methods -->" in text
     assert loaded["zotero_key"] == "KEY123"
     assert loaded["raw_markdown"].endswith("raw.md")
+
+
+def test_literature_quality_matched_methodology_paper_is_not_domain_extraction_context(tmp_path):
+    paper = {
+        "id": "methodology-paper",
+        "title": "Accelerating knowledge graph and ontology engineering with large language models",
+        "authors": ["Method Author"],
+        "year": 2025,
+        "extraction_date": "2026-06-18T00:00:00+00:00",
+        "imported_at": "2026-06-18T00:00:00+00:00",
+        "abstract": "Large language models can support ontology engineering workflows.",
+        "sections": [
+            {
+                "heading": "Title",
+                "text": "Accelerating knowledge graph and ontology engineering with large language models",
+                "subsections": [],
+            },
+            {
+                "heading": "Abstract",
+                "text": "This methodology paper discusses ontology alignment, entity disambiguation, prompts, and evaluation.",
+                "subsections": [],
+            },
+        ],
+    }
+    raw_before = display_literature_markdown(paper)
+
+    path = save_literature_markdown(paper, tmp_path / "literature" / "papers")
+    loaded = load_literature_markdown(path)
+    repository = load_llm_ready_repository_with_diagnostics(tmp_path / "literature" / "papers")
+
+    assert Path(loaded["raw_markdown_file"]).read_text(encoding="utf-8") == raw_before
+    assert loaded["metadata_match_status"] == "matched"
+    assert loaded["document_role"] == "methodology_article"
+    assert loaded["include_in_llm_extraction"] is False
+    assert loaded["exclude_from_automatic_llm_extraction"] is True
+    assert repository.papers == []
+    assert repository.skipped_files[0]["error"] == "user_or_role_excluded"
+    assert "Concepts that are methodology/tool concepts" in loaded["llm_context_markdown"]
+
+
+def test_literature_quality_detects_metadata_mismatch_and_excludes_file(tmp_path):
+    paper = {
+        "id": "mismatch-paper",
+        "title": "Large Language Models for Ontology Engineering: A Systematic Literature Review",
+        "authors": ["Review Author"],
+        "year": 2025,
+        "sections": [
+            {
+                "heading": "Front matter",
+                "text": "Distribution Kinetics Modeling of Nucleation, Growth, and Aggregation Processes\nMcCoy 2001",
+                "subsections": [],
+            },
+            {
+                "heading": "Abstract",
+                "text": "Population balance modeling describes nucleation, growth, and aggregation processes.",
+                "subsections": [],
+            },
+        ],
+    }
+
+    path = save_literature_markdown(paper, tmp_path / "literature" / "papers")
+    loaded = load_literature_markdown(path)
+    repository = load_llm_ready_repository_with_diagnostics(tmp_path / "literature" / "papers")
+
+    assert loaded["detected_title"] == "Distribution Kinetics Modeling of Nucleation, Growth, and Aggregation Processes"
+    assert loaded["metadata_match_status"] == "metadata_mismatch"
+    assert loaded["extraction_quality"] == "metadata_mismatch"
+    assert loaded["requires_manual_review"] is True
+    assert loaded["exclude_from_automatic_llm_extraction"] is True
+    assert repository.papers == []
+    assert repository.skipped_files[0]["error"] == "extraction_quality=metadata_mismatch"
+
+
+def test_literature_quality_blocks_incomplete_pdf_extraction(tmp_path):
+    pdf_path = tmp_path / "short.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 placeholder")
+    paper = {
+        "id": "incomplete-paper",
+        "title": "Figure 1. Table 2. References",
+        "source_pdf": str(pdf_path),
+        "pdf_path": str(pdf_path),
+        "page_count_pdf": 12,
+        "sections": [
+            {
+                "heading": "Title",
+                "text": "Protein recovery extraction",
+                "subsections": [],
+            },
+            {
+                "heading": "Fragment",
+                "text": "Figure 1. Table 2. References.",
+                "subsections": [],
+            },
+        ],
+    }
+
+    path = save_literature_markdown(paper, tmp_path / "literature" / "papers")
+    loaded = load_literature_markdown(path)
+    repository = load_llm_ready_repository_with_diagnostics(tmp_path / "literature" / "papers")
+
+    assert loaded["extraction_quality"] == "incomplete"
+    assert loaded["state"] == "needs_review"
+    assert loaded["requires_manual_review"] is True
+    assert loaded["warnings"]
+    assert repository.papers == []
+    assert repository.skipped_files[0]["error"] == "extraction_quality=incomplete"
+
+
+def test_literature_quality_cleans_noisy_supplementary_or_methodology_context(tmp_path):
+    paper = {
+        "id": "noisy-supplement",
+        "title": "Scientific knowledge graph and ontology generation using open large language models",
+        "authors": ["Graph Author"],
+        "year": 2026,
+        "sections": [
+            {
+                "heading": "Title",
+                "text": "Scientific knowledge graph and ontology generation using open large language models",
+                "subsections": [],
+            },
+            {
+                "heading": "Supplementary Information",
+                "text": (
+                    "LLM-ready full-text Markdown\n"
+                    "This Markdown file was generated from a PDF\n"
+                    "Images omitted\n"
+                    "Table 1  Metric  Value\n"
+                    "alpha = beta + gamma\n"
+                    "The supplement describes prompt workflow details and evaluation tables."
+                ),
+                "subsections": [],
+            },
+        ],
+    }
+
+    path = save_literature_markdown(paper, tmp_path / "literature" / "papers")
+    loaded = load_literature_markdown(path)
+    clean = loaded["clean_markdown"]
+    context = loaded["llm_context_markdown"]
+
+    assert loaded["document_role"] in {"supplementary_information", "methodology_article"}
+    assert "LLM-ready full-text Markdown" not in clean
+    assert "This Markdown file was generated from a PDF" not in clean
+    assert "<!-- table requires manual review -->" in clean
+    assert "```math" in clean
+    assert "## Bibliographic metadata" in context
+    assert "Distinguish target-domain ontology concepts" in context
+    assert "Invented Journal" not in context
+
+
+def test_build_combined_context_splits_domain_review_methodology_and_excluded(tmp_path):
+    repository = tmp_path / "literature" / "papers"
+    for paper in [
+        {
+            "id": "domain-paper",
+            "title": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes",
+            "sections": [
+                {"heading": "Title", "text": "Distribution Kinetics Modeling of Nucleation Growth and Aggregation Processes", "subsections": []},
+                {"heading": "Abstract", "text": "Protein aggregation and nucleation are modeled.", "subsections": []},
+            ],
+        },
+        {
+            "id": "review-paper",
+            "title": "Review of protein aggregation in bioprocessing",
+            "sections": [
+                {"heading": "Title", "text": "Review of protein aggregation in bioprocessing", "subsections": []},
+                {"heading": "Abstract", "text": "This review summarizes aggregation and precipitation literature.", "subsections": []},
+            ],
+        },
+        {
+            "id": "method-paper",
+            "title": "Ontology engineering with large language models",
+            "sections": [
+                {"heading": "Title", "text": "Ontology engineering with large language models", "subsections": []},
+                {"heading": "Abstract", "text": "Ontology engineering prompts, alignment, and evaluation are described.", "subsections": []},
+            ],
+        },
+    ]:
+        save_literature_markdown(paper, repository)
+
+    result = build_combined_context_files(repository)
+
+    assert result.domain_count == 1
+    assert result.review_count == 1
+    assert result.methodology_count == 1
+    assert "domain-paper" in result.domain_context_file.read_text(encoding="utf-8")
+    assert "review-paper" in result.review_context_file.read_text(encoding="utf-8")
+    assert "method-paper" in result.methodology_context_file.read_text(encoding="utf-8")
+    assert result.excluded_count >= 1
 
 
 def test_cleanup_removes_known_boilerplate_without_removing_doi_text():

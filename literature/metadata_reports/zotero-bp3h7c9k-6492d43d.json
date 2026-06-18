@@ -1,0 +1,41 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-csbj-2024-10-014-954b9e61.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-bp3h7c9k-6492d43d.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-bp3h7c9k-6492d43d.md",
+  "metadata": {
+    "authors": [
+      "Mattia Miotto",
+      "Nina Warner",
+      "Giancarlo Ruocco",
+      "Gian Gaetano Tartaglia",
+      "Oren A. Scherman",
+      "Edoardo Milanetti"
+    ],
+    "doi": "10.1016/j.csbj.2024.10.014",
+    "source_filename": "",
+    "title": "Osmolyte-induced protein stability changes explained by graph theory",
+    "year": 2024,
+    "zotero_key": "zotero-BP3H7C9K"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-bp3h7c9k-6492d43d.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-bp3h7c9k-6492d43d.md",
+  "updated_at": "2026-06-18T14:38:27.094699+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Osmolyte-induced protein stability changes explained by graph theory",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

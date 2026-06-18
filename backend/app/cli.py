@@ -662,6 +662,103 @@ def literature_reset_repository(
         console.print(f"deleted {item}")
 
 
+def _find_literature_markdown_by_id(paper_id: str) -> Path:
+    from backend.app.literature.repository import load_literature_markdown
+
+    root = Path(get_settings().literature_repository_path)
+    for path in sorted(root.rglob("*.md")) if root.exists() else []:
+        if {"raw", "clean", "context", "reports", "blocked", "combined"} & set(path.relative_to(root).parts):
+            continue
+        try:
+            paper = load_literature_markdown(path)
+        except (OSError, ValueError):
+            continue
+        if paper_id in {str(paper.get("paper_id") or ""), str(paper.get("id") or ""), path.stem}:
+            return path
+    raise typer.BadParameter(f"No literature Markdown record found for paper id: {paper_id}")
+
+
+@literature_app.command("doctor")
+def literature_doctor() -> None:
+    """Report local PDF/Markdown extractor availability."""
+    from backend.app.literature.quality import extractor_availability
+
+    for name, available in extractor_availability().to_dict().items():
+        console.print(f"[bold]{name}:[/bold] {'available' if available else 'missing'}")
+
+
+@literature_app.command("validate")
+def literature_validate() -> None:
+    """Validate the literature repository and print skipped-file diagnostics."""
+    from backend.app.literature.repository import validate_literature_repository
+
+    result = validate_literature_repository()
+    console.print(f"[bold]Loaded LLM-ready papers:[/bold] {len(result.papers)}")
+    console.print(f"[bold]Skipped papers:[/bold] {len(result.skipped_files)}")
+    for skipped in result.skipped_files:
+        console.print(f"[yellow]skipped[/yellow] {skipped.get('path')}: {skipped.get('error')}")
+
+
+@literature_app.command("retry-extraction")
+def literature_retry_extraction(
+    paper_id: str = typer.Argument(..., help="Canonical paper id, legacy id, or Markdown stem."),
+    engine: str = typer.Option(..., help="Extractor engine to record for retry, e.g. grobid, docling, marker, pymupdf."),
+) -> None:
+    """Retry or re-score a literature extraction with a selected engine marker."""
+    from backend.app.literature.repository import retry_literature_extraction
+
+    path = _find_literature_markdown_by_id(paper_id)
+    paper = retry_literature_extraction(path, engine=engine)
+    console.print(f"[green]Retried extraction:[/green] {paper.get('paper_id') or paper.get('id')} via {engine}")
+
+
+@literature_app.command("regenerate-clean")
+def literature_regenerate_clean(
+    paper_id: str = typer.Argument(..., help="Canonical paper id, legacy id, or Markdown stem."),
+) -> None:
+    """Regenerate the clean Markdown artifact for one literature record."""
+    from backend.app.literature.repository import regenerate_clean_markdown
+
+    paper = regenerate_clean_markdown(_find_literature_markdown_by_id(paper_id))
+    console.print(f"[green]Regenerated clean Markdown:[/green] {paper.get('clean_markdown_file')}")
+
+
+@literature_app.command("regenerate-context")
+def literature_regenerate_context(
+    paper_id: str = typer.Argument(..., help="Canonical paper id, legacy id, or Markdown stem."),
+) -> None:
+    """Regenerate the LLM-context Markdown artifact for one literature record."""
+    from backend.app.literature.repository import regenerate_llm_context
+
+    paper = regenerate_llm_context(_find_literature_markdown_by_id(paper_id))
+    console.print(f"[green]Regenerated LLM context:[/green] {paper.get('llm_context_file')}")
+
+
+@literature_app.command("build-combined-context")
+def literature_build_combined_context() -> None:
+    """Build role-specific combined context files and the excluded-report file."""
+    from backend.app.literature.repository import build_combined_context_files
+
+    result = build_combined_context_files()
+    console.print(f"[green]Domain context:[/green] {result.domain_context_file} ({result.domain_count})")
+    console.print(f"[green]Review context:[/green] {result.review_context_file} ({result.review_count})")
+    console.print(f"[green]Methodology context:[/green] {result.methodology_context_file} ({result.methodology_count})")
+    console.print(f"[yellow]Excluded report:[/yellow] {result.excluded_report_file} ({result.excluded_count})")
+
+
+@literature_app.command("report")
+def literature_report() -> None:
+    """Print canonical literature state and quality counts."""
+    from backend.app.literature.repository import literature_repository_report
+
+    report = literature_repository_report()
+    console.print(f"[bold]Papers:[/bold] {report['paper_count']}")
+    for category, counts in report["counts"].items():
+        console.print(f"[bold]{category}[/bold]")
+        for name, count in sorted(counts.items()):
+            console.print(f"  {name}: {count}")
+
+
 @app.command("extract-candidates")
 def extract_candidates(
     document_id: int = typer.Argument(..., help="ID of the literature document to extract from."),

@@ -1,0 +1,40 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-69997-sct-174465-63882467.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-v85yr859-c9475640.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-v85yr859-c9475640.md",
+  "metadata": {
+    "authors": [
+      "Shabnam Shahhoseyni",
+      "Arijit Chakraborty",
+      "Mohammad Reza Boskabadi",
+      "Venkat Venkatasubramanian",
+      "Seyed Soheil Mansouri"
+    ],
+    "doi": "10.69997/sct.174465",
+    "source_filename": "",
+    "title": "Hybrid machine-learning for dynamic plant-wide biomanufacturing",
+    "year": 2025,
+    "zotero_key": "zotero-V85YR859"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-v85yr859-c9475640.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-v85yr859-c9475640.md",
+  "updated_at": "2026-06-18T14:38:27.113808+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Hybrid machine-learning for dynamic plant-wide biomanufacturing",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

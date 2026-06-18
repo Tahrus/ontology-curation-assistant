@@ -10,11 +10,22 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.config import get_settings
+from backend.app.literature.quality import (
+    DEFAULT_LLM_EXTRACTION_ROLES,
+    DOCUMENT_ROLES,
+    DOCUMENT_STATES,
+    METADATA_MATCH_STATUSES,
+    analyze_literature_markdown,
+    enrich_literature_markdown,
+    extractor_availability,
+    should_include_for_automatic_llm,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 REFERENCE_HEADINGS = {"references", "bibliography", "literature_cited"}
-UNUSABLE_EXTRACTION_QUALITIES = {"failed", "requires_manual_review"}
+UNUSABLE_EXTRACTION_QUALITIES = {"failed", "requires_manual_review", "metadata_mismatch", "incomplete"}
+UNUSABLE_STATES = {"blocked", "extraction_failed", "validation_failed"}
 SCIENTIFIC_HEADINGS = {
     "abstract",
     "summary",
@@ -48,6 +59,19 @@ class LiteratureRepositoryLoadResult:
     papers: list[dict[str, Any]]
     loaded_files: list[Path] = field(default_factory=list)
     skipped_files: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CombinedContextBuildResult:
+    output_dir: Path
+    domain_context_file: Path
+    review_context_file: Path
+    methodology_context_file: Path
+    excluded_report_file: Path
+    domain_count: int
+    review_count: int
+    methodology_count: int
+    excluded_count: int
 
 
 def reset_literature_repository(path: Path | None = None) -> LiteratureResetResult:
@@ -90,6 +114,30 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _artifact_base_dir(repository_path: Path) -> Path:
+    return repository_path.parent if repository_path.name in {"papers", "repository"} else repository_path
+
+
+def _read_optional_text(path_value: Any) -> str | None:
+    if not path_value:
+        return None
+    try:
+        path = Path(str(path_value))
+        if path.exists() and path.is_file():
+            return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return None
+
+
+def _metadata_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() in {"1", "true", "yes", "y"}
 
 
 def _clear_directory_contents(path: Path) -> list[str]:
@@ -140,7 +188,22 @@ def load_llm_ready_repository_with_diagnostics(
     papers = []
     loaded_files = []
     skipped_files = []
+    artifact_dirs = {
+        "raw_markdown",
+        "clean_markdown",
+        "llm_context",
+        "metadata_reports",
+        "rejected_or_review_required",
+        "raw",
+        "clean",
+        "context",
+        "reports",
+        "blocked",
+        "combined",
+    }
     for path in sorted(root.rglob("*.md")):
+        if artifact_dirs & set(path.relative_to(root).parts):
+            continue
         try:
             paper = load_literature_markdown(path)
         except (OSError, ValueError) as exc:
@@ -148,11 +211,18 @@ def load_llm_ready_repository_with_diagnostics(
             skipped_files.append({"path": str(path), "error": str(exc)})
             continue
         paper["source_file"] = str(path)
+        include, reason = should_include_for_automatic_llm(paper)
+        if str(paper.get("state") or "").casefold() in UNUSABLE_STATES:
+            reason = f"document_state={paper.get('state')}"
+            include = False
         if str(paper.get("extraction_quality") or "").casefold() in UNUSABLE_EXTRACTION_QUALITIES:
+            reason = f"extraction_quality={paper.get('extraction_quality')}"
+            include = False
+        if not include:
             skipped_files.append(
                 {
                     "path": str(path),
-                    "error": f"extraction_quality={paper.get('extraction_quality')}",
+                    "error": reason,
                 }
             )
             continue
@@ -179,6 +249,14 @@ def save_literature_markdown(paper: dict[str, Any], repository_path: Path | None
     root.mkdir(parents=True, exist_ok=True)
     normalized = _paper_with_id(paper)
     path = root / filesystem_safe_paper_filename(normalized)
+    raw_markdown = display_literature_markdown(normalized)
+    quality_fields = enrich_literature_markdown(
+        normalized,
+        raw_markdown,
+        base_dir=_artifact_base_dir(root),
+        canonical_path=path,
+    )
+    normalized.update(quality_fields)
     path.write_text(display_literature_markdown(normalized), encoding="utf-8")
     return path
 
@@ -211,6 +289,54 @@ def load_literature_markdown(path: Path) -> dict[str, Any]:
         "extraction_date": extraction_date,
         "cleanup_version": metadata.get("cleanup_version") or "",
         "extraction_quality": metadata.get("extraction_quality") or "unknown",
+        "state": metadata.get("state") or "unknown",
+        "metadata_title": metadata.get("metadata_title") or metadata.get("title") or "",
+        "detected_title": metadata.get("detected_title") or "",
+        "detected_authors": metadata.get("detected_authors") or [],
+        "detected_doi": metadata.get("detected_doi") or "",
+        "title_similarity_score": metadata.get("title_similarity_score"),
+        "doi_match_status": metadata.get("doi_match_status") or "unknown",
+        "metadata_match_status": metadata.get("metadata_match_status") or "unknown",
+        "document_role": metadata.get("document_role") or "unknown",
+        "requires_manual_review": _metadata_bool(metadata.get("requires_manual_review")),
+        "exclude_from_llm_extraction": _metadata_bool(metadata.get("exclude_from_llm_extraction")),
+        "exclude_from_automatic_llm_extraction": _metadata_bool(
+            metadata.get("exclude_from_automatic_llm_extraction")
+        ),
+        "include_in_llm_extraction": _metadata_bool(metadata.get("include_in_llm_extraction"), default=True),
+        "raw_markdown_file": metadata.get("raw_markdown_file") or "",
+        "clean_markdown_file": metadata.get("clean_markdown_file") or "",
+        "llm_context_file": metadata.get("llm_context_file") or "",
+        "metadata_report_file": metadata.get("metadata_report_file") or "",
+        "quality_version": metadata.get("quality_version") or "",
+        "pdf_path": metadata.get("pdf_path") or metadata.get("source_pdf") or "",
+        "pdf_sha256": metadata.get("pdf_sha256") or "",
+        "source_filename": metadata.get("source_filename") or "",
+        "zotero_title": metadata.get("zotero_title") or metadata.get("metadata_title") or metadata.get("title") or "",
+        "zotero_authors": metadata.get("zotero_authors") or metadata.get("authors") or [],
+        "zotero_year": metadata.get("zotero_year") or metadata.get("year"),
+        "zotero_doi": metadata.get("zotero_doi") or metadata.get("doi") or "",
+        "zotero_item_key": metadata.get("zotero_item_key") or metadata.get("zotero_key") or "",
+        "extraction_engine_used": metadata.get("extraction_engine_used") or metadata.get("extraction_method") or "",
+        "extraction_engine_attempts": metadata.get("extraction_engine_attempts") or [],
+        "page_count_pdf": metadata.get("page_count_pdf") or 0,
+        "page_count_extracted": metadata.get("page_count_extracted") or 0,
+        "word_count": metadata.get("word_count") or 0,
+        "words_per_page": metadata.get("words_per_page") or 0,
+        "pages_with_text": metadata.get("pages_with_text") or 0,
+        "section_count": metadata.get("section_count") or 0,
+        "reference_count": metadata.get("reference_count") or 0,
+        "abstract_detected": _metadata_bool(metadata.get("abstract_detected")),
+        "references_detected": _metadata_bool(metadata.get("references_detected")),
+        "title_detected": _metadata_bool(metadata.get("title_detected")),
+        "repeated_header_footer_score": metadata.get("repeated_header_footer_score") or 0,
+        "table_equation_artifact_score": metadata.get("table_equation_artifact_score") or 0,
+        "warnings": metadata.get("warnings") or metadata.get("cleanup_warnings") or [],
+        "created_at": metadata.get("created_at") or "",
+        "updated_at": metadata.get("updated_at") or "",
+        "llm_context_markdown": _read_optional_text(metadata.get("llm_context_file")),
+        "clean_markdown": _read_optional_text(metadata.get("clean_markdown_file")),
+        "raw_markdown_text": _read_optional_text(metadata.get("raw_markdown_file")),
         # Keep old field names for backward compatibility:
         "source": extraction_method,
         "url": metadata.get("url") or "",
@@ -222,6 +348,11 @@ def load_literature_markdown(path: Path) -> dict[str, Any]:
         "markdown": text,
         "metadata": metadata,
     }
+    if not metadata.get("quality_version"):
+        quality = analyze_literature_markdown(paper, text)
+        paper.update(quality.metadata)
+        paper["clean_markdown"] = quality.clean_markdown
+        paper["llm_context_markdown"] = quality.llm_context_markdown
     _validate_llm_ready_paper(paper)
     return paper
 
@@ -236,9 +367,14 @@ def combine_literature_markdown(papers: list[dict[str, Any]], *, include_referen
             continue
         seen_ids.add(entry_id)
         source_file = paper.get("source_file") or filesystem_safe_paper_filename(paper)
-        markdown = paper.get("markdown") or display_literature_markdown(paper)
+        include, _reason = should_include_for_automatic_llm(paper)
+        if not include:
+            continue
+        markdown = paper.get("llm_context_markdown") or paper.get("markdown") or display_literature_markdown(paper)
+        evidence = paper.get("clean_markdown") or paper.get("markdown") or display_literature_markdown(paper)
         if not include_references:
             markdown = _strip_reference_section_from_markdown(markdown)
+            evidence = _strip_reference_section_from_markdown(evidence)
         blocks.append(
             "\n".join(
                 [
@@ -250,11 +386,185 @@ def combine_literature_markdown(papers: list[dict[str, Any]], *, include_referen
                     "",
                     markdown.strip(),
                     "",
+                    "## Clean Markdown Evidence",
+                    "",
+                    evidence.strip(),
+                    "",
                     f"<!-- END_PAPER: {entry_id} -->",
                 ]
             )
         )
     return "\n\n---\n\n".join(blocks)
+
+
+def build_combined_context_files(
+    repository_path: Path | None = None,
+    *,
+    output_dir: Path | None = None,
+) -> CombinedContextBuildResult:
+    """Build role-specific combined context files from repository records."""
+    root = Path(repository_path or get_settings().literature_repository_path)
+    base = _artifact_base_dir(root)
+    target = Path(output_dir or base / "combined")
+    target.mkdir(parents=True, exist_ok=True)
+
+    all_papers = []
+    excluded = []
+    if root.exists():
+        artifact_dirs = {"raw", "clean", "context", "reports", "blocked", "combined", "raw_markdown", "clean_markdown", "llm_context", "metadata_reports"}
+        for path in sorted(root.rglob("*.md")):
+            if artifact_dirs & set(path.relative_to(root).parts):
+                continue
+            try:
+                paper = load_literature_markdown(path)
+            except (OSError, ValueError) as exc:
+                excluded.append({"path": str(path), "reason": str(exc)})
+                continue
+            paper["source_file"] = str(path)
+            include, reason = should_include_for_automatic_llm(paper)
+            if include:
+                all_papers.append(paper)
+            else:
+                excluded.append({
+                    "path": str(path),
+                    "title": str(paper.get("title") or ""),
+                    "state": str(paper.get("state") or ""),
+                    "document_role": str(paper.get("document_role") or ""),
+                    "extraction_quality": str(paper.get("extraction_quality") or ""),
+                    "reason": reason,
+                })
+
+    domain = [paper for paper in all_papers if paper.get("document_role") == "domain_article"]
+    review = [paper for paper in all_papers if paper.get("document_role") == "review_article"]
+    methodology_candidates = [
+        paper
+        for paper in _load_all_repository_papers(root)
+        if paper.get("document_role") == "methodology_article"
+        and paper.get("state") in {"context_ready", "ready_for_llm"}
+        and not paper.get("requires_manual_review")
+    ]
+
+    domain_file = target / "combined_domain_context.md"
+    review_file = target / "combined_review_context.md"
+    methodology_file = target / "combined_methodology_context.md"
+    excluded_file = target / "combined_excluded_report.md"
+    domain_file.write_text(_combine_context_blocks(domain, title="Combined Domain Context"), encoding="utf-8")
+    review_file.write_text(_combine_context_blocks(review, title="Combined Review Context"), encoding="utf-8")
+    methodology_file.write_text(
+        _combine_context_blocks(methodology_candidates, title="Combined Methodology Context"),
+        encoding="utf-8",
+    )
+    excluded_file.write_text(_excluded_report(excluded), encoding="utf-8")
+
+    return CombinedContextBuildResult(
+        output_dir=target,
+        domain_context_file=domain_file,
+        review_context_file=review_file,
+        methodology_context_file=methodology_file,
+        excluded_report_file=excluded_file,
+        domain_count=len(domain),
+        review_count=len(review),
+        methodology_count=len(methodology_candidates),
+        excluded_count=len(excluded),
+    )
+
+
+def literature_repository_report(repository_path: Path | None = None) -> dict[str, Any]:
+    papers = _load_all_repository_papers(Path(repository_path or get_settings().literature_repository_path))
+    counts = {"state": {}, "extraction_quality": {}, "document_role": {}}
+    for paper in papers:
+        for key in counts:
+            value = str(paper.get(key) or "unknown")
+            counts[key][value] = counts[key].get(value, 0) + 1
+    return {
+        "paper_count": len(papers),
+        "counts": counts,
+        "extractors": extractor_availability().to_dict(),
+    }
+
+
+def validate_literature_repository(repository_path: Path | None = None) -> LiteratureRepositoryLoadResult:
+    """Load the repository to refresh validation diagnostics."""
+    return load_llm_ready_repository_with_diagnostics(repository_path)
+
+
+def _load_all_repository_papers(root: Path) -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+    artifact_dirs = {
+        "raw",
+        "clean",
+        "context",
+        "reports",
+        "blocked",
+        "combined",
+        "raw_markdown",
+        "clean_markdown",
+        "llm_context",
+        "metadata_reports",
+        "rejected_or_review_required",
+    }
+    papers: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*.md")):
+        if artifact_dirs & set(path.relative_to(root).parts):
+            continue
+        try:
+            paper = load_literature_markdown(path)
+        except (OSError, ValueError):
+            continue
+        paper["source_file"] = str(path)
+        papers.append(paper)
+    return papers
+
+
+def _combine_context_blocks(papers: list[dict[str, Any]], *, title: str) -> str:
+    blocks = [f"# {title}", ""]
+    if not papers:
+        blocks.append("No papers qualified for this context.")
+        return "\n".join(blocks).strip() + "\n"
+    for index, paper in enumerate(papers, start=1):
+        entry_id = paper.get("paper_id") or paper.get("id") or f"literature-{index}"
+        context = paper.get("llm_context_markdown") or paper.get("clean_markdown") or paper.get("markdown") or ""
+        blocks.extend(
+            [
+                f"<!-- BEGIN_PAPER: {entry_id} -->",
+                "",
+                f"## {paper.get('title') or entry_id}",
+                "",
+                f"- Paper ID: `{entry_id}`",
+                f"- State: `{paper.get('state') or 'unknown'}`",
+                f"- Document role: `{paper.get('document_role') or 'unknown'}`",
+                f"- Extraction quality: `{paper.get('extraction_quality') or 'unknown'}`",
+                "",
+                context.strip(),
+                "",
+                f"<!-- END_PAPER: {entry_id} -->",
+                "",
+            ]
+        )
+    return "\n".join(blocks).strip() + "\n"
+
+
+def _excluded_report(excluded: list[dict[str, Any]]) -> str:
+    lines = ["# Excluded Literature Report", ""]
+    if not excluded:
+        lines.append("No literature records were excluded.")
+        return "\n".join(lines).strip() + "\n"
+    for item in excluded:
+        title = item.get("title") or Path(str(item.get("path") or "literature")).name
+        lines.extend(
+            [
+                f"## {title}",
+                "",
+                f"- Path: `{item.get('path') or ''}`",
+                f"- Reason: `{item.get('reason') or 'unknown'}`",
+                f"- State: `{item.get('state') or ''}`",
+                f"- Document role: `{item.get('document_role') or ''}`",
+                f"- Extraction quality: `{item.get('extraction_quality') or ''}`",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip() + "\n"
 
 
 def display_literature_markdown(paper: dict[str, Any]) -> str:
@@ -276,6 +586,14 @@ def display_literature_markdown(paper: dict[str, Any]) -> str:
     extraction_date = normalized.get("extraction_date") or normalized.get("imported_at") or datetime.now(timezone.utc).isoformat()
     cleanup_version = normalized.get("cleanup_version") or "phase2-cleanup-v1"
     extraction_quality = normalized.get("extraction_quality") or "usable"
+    state = normalized.get("state") or "imported"
+    metadata_match_status = normalized.get("metadata_match_status") or "unknown"
+    document_role = normalized.get("document_role") or "unknown"
+    requires_manual_review = bool(normalized.get("requires_manual_review"))
+    exclude_from_automatic_llm_extraction = bool(normalized.get("exclude_from_automatic_llm_extraction"))
+    include_in_llm_extraction = normalized.get("include_in_llm_extraction")
+    if include_in_llm_extraction is None:
+        include_in_llm_extraction = document_role in DEFAULT_LLM_EXTRACTION_ROLES and not requires_manual_review
 
     front_matter = _front_matter(
         {
@@ -293,6 +611,49 @@ def display_literature_markdown(paper: dict[str, Any]) -> str:
             "extraction_date": extraction_date,
             "cleanup_version": cleanup_version,
             "extraction_quality": extraction_quality,
+            "state": state,
+            "zotero_item_key": normalized.get("zotero_item_key") or zotero_key,
+            "pdf_path": normalized.get("pdf_path") or source_pdf,
+            "pdf_sha256": normalized.get("pdf_sha256") or "",
+            "source_filename": normalized.get("source_filename") or "",
+            "zotero_title": normalized.get("zotero_title") or title,
+            "zotero_authors": normalized.get("zotero_authors") or authors,
+            "zotero_year": normalized.get("zotero_year") or year,
+            "zotero_doi": normalized.get("zotero_doi") or doi,
+            "metadata_title": normalized.get("metadata_title") or title,
+            "detected_title": normalized.get("detected_title") or "",
+            "detected_authors": normalized.get("detected_authors") or [],
+            "detected_doi": normalized.get("detected_doi") or "",
+            "title_similarity_score": normalized.get("title_similarity_score"),
+            "doi_match_status": normalized.get("doi_match_status") or "unknown",
+            "metadata_match_status": metadata_match_status,
+            "document_role": document_role,
+            "extraction_engine_used": normalized.get("extraction_engine_used") or extraction_method,
+            "extraction_engine_attempts": normalized.get("extraction_engine_attempts") or [],
+            "page_count_pdf": normalized.get("page_count_pdf") or 0,
+            "page_count_extracted": normalized.get("page_count_extracted") or 0,
+            "word_count": normalized.get("word_count") or 0,
+            "words_per_page": normalized.get("words_per_page") or 0,
+            "pages_with_text": normalized.get("pages_with_text") or 0,
+            "section_count": normalized.get("section_count") or 0,
+            "reference_count": normalized.get("reference_count") or 0,
+            "abstract_detected": bool(normalized.get("abstract_detected")),
+            "references_detected": bool(normalized.get("references_detected")),
+            "title_detected": bool(normalized.get("title_detected")),
+            "repeated_header_footer_score": normalized.get("repeated_header_footer_score") or 0,
+            "table_equation_artifact_score": normalized.get("table_equation_artifact_score") or 0,
+            "requires_manual_review": requires_manual_review,
+            "exclude_from_llm_extraction": bool(normalized.get("exclude_from_llm_extraction")),
+            "exclude_from_automatic_llm_extraction": exclude_from_automatic_llm_extraction,
+            "include_in_llm_extraction": bool(include_in_llm_extraction),
+            "warnings": normalized.get("warnings") or normalized.get("cleanup_warnings") or [],
+            "created_at": normalized.get("created_at") or extraction_date,
+            "updated_at": normalized.get("updated_at") or extraction_date,
+            "raw_markdown_file": normalized.get("raw_markdown_file") or "",
+            "clean_markdown_file": normalized.get("clean_markdown_file") or "",
+            "llm_context_file": normalized.get("llm_context_file") or "",
+            "metadata_report_file": normalized.get("metadata_report_file") or "",
+            "quality_version": normalized.get("quality_version") or "",
             # Maintain backward compatibility fields for tests:
             "id": paper_id,
             "source": extraction_method,
@@ -536,7 +897,7 @@ def _strip_reference_text(text: str) -> str:
 
 def _strip_reference_section_from_markdown(text: str) -> str:
     return re.split(
-        r"(?im)^##{2,3}\s*(references|bibliography|literature cited)\s*$",
+        r"(?im)^(?:#{2,4}\s*(references|bibliography|literature cited)\s*|<!--\s*normalized_section:\s*references\s*-->)$",
         text,
         maxsplit=1,
     )[0].rstrip()
@@ -623,6 +984,100 @@ def repository_status(path: Path | None = None) -> dict[str, Any]:
     }
 
 
+def update_literature_review_metadata(
+    markdown_file: Path,
+    *,
+    include_in_llm_extraction: bool | None = None,
+    metadata_match_status: str | None = None,
+    document_role: str | None = None,
+    requires_manual_review: bool | None = None,
+    state: str | None = None,
+) -> dict[str, Any]:
+    """Update curator review fields in a canonical literature Markdown file."""
+    target = _repository_markdown_path(markdown_file)
+    paper = load_literature_markdown(target)
+    if metadata_match_status is not None:
+        if metadata_match_status not in METADATA_MATCH_STATUSES:
+            raise ValueError(f"Unsupported metadata match status: {metadata_match_status}")
+        paper["metadata_match_status"] = metadata_match_status
+        if metadata_match_status in {"matched", "weak_match"}:
+            paper["extraction_quality"] = "usable"
+    if document_role is not None:
+        if document_role not in DOCUMENT_ROLES:
+            raise ValueError(f"Unsupported document role: {document_role}")
+        paper["document_role"] = document_role
+    if requires_manual_review is not None:
+        paper["requires_manual_review"] = requires_manual_review
+    if state is not None:
+        if state not in DOCUMENT_STATES:
+            raise ValueError(f"Unsupported document state: {state}")
+        paper["state"] = state
+    if include_in_llm_extraction is not None:
+        paper["include_in_llm_extraction"] = include_in_llm_extraction
+        paper["exclude_from_automatic_llm_extraction"] = not include_in_llm_extraction
+        paper["exclude_from_llm_extraction"] = not include_in_llm_extraction
+    if paper.get("metadata_match_status") == "metadata_mismatch":
+        paper["requires_manual_review"] = True
+        paper["exclude_from_automatic_llm_extraction"] = True
+        paper["include_in_llm_extraction"] = False
+        paper["extraction_quality"] = "metadata_mismatch"
+        paper["state"] = "blocked"
+    target.write_text(display_literature_markdown(paper), encoding="utf-8")
+    return load_literature_markdown(target)
+
+
+def regenerate_clean_markdown(markdown_file: Path) -> dict[str, Any]:
+    markdown_file = _repository_markdown_path(markdown_file)
+    paper = load_literature_markdown(markdown_file)
+    quality = analyze_literature_markdown(paper, paper.get("markdown") or display_literature_markdown(paper))
+    clean_path = str(paper.get("clean_markdown_file") or "")
+    if clean_path:
+        clean_file = Path(clean_path)
+        clean_file.parent.mkdir(parents=True, exist_ok=True)
+        clean_file.write_text(quality.clean_markdown, encoding="utf-8")
+    paper.update(quality.metadata)
+    paper["clean_markdown"] = quality.clean_markdown
+    markdown_file.write_text(display_literature_markdown(paper), encoding="utf-8")
+    return load_literature_markdown(markdown_file)
+
+
+def regenerate_llm_context(markdown_file: Path) -> dict[str, Any]:
+    markdown_file = _repository_markdown_path(markdown_file)
+    paper = load_literature_markdown(markdown_file)
+    quality = analyze_literature_markdown(paper, paper.get("markdown") or display_literature_markdown(paper))
+    context_path = str(paper.get("llm_context_file") or "")
+    if context_path:
+        context_file = Path(context_path)
+        context_file.parent.mkdir(parents=True, exist_ok=True)
+        context_file.write_text(quality.llm_context_markdown, encoding="utf-8")
+    paper.update(quality.metadata)
+    paper["llm_context_markdown"] = quality.llm_context_markdown
+    markdown_file.write_text(display_literature_markdown(paper), encoding="utf-8")
+    return load_literature_markdown(markdown_file)
+
+
+def retry_literature_extraction(markdown_file: Path, *, engine: str) -> dict[str, Any]:
+    markdown_file = _repository_markdown_path(markdown_file)
+    paper = load_literature_markdown(markdown_file)
+    attempts = list(paper.get("extraction_engine_attempts") or [])
+    attempts.append(engine)
+    paper["extraction_engine_attempts"] = attempts
+    paper["extraction_engine_used"] = engine
+    paper["warnings"] = sorted(set([*(paper.get("warnings") or []), f"Extraction retry requested with engine: {engine}."]))
+    markdown_file.write_text(display_literature_markdown(paper), encoding="utf-8")
+    return regenerate_clean_markdown(markdown_file)
+
+
+def _repository_markdown_path(markdown_file: Path) -> Path:
+    root = Path(get_settings().literature_repository_path).resolve()
+    target = Path(markdown_file).resolve()
+    if not _is_relative_to(target, root):
+        raise ValueError("Literature actions are limited to the configured Markdown repository.")
+    if not target.exists() or target.suffix.lower() != ".md":
+        raise ValueError(f"Literature Markdown file was not found: {markdown_file}")
+    return target
+
+
 def _validate_llm_ready_paper(paper: Any) -> None:
     if not isinstance(paper, dict):
         raise ValueError("Literature Markdown must describe an object.")
@@ -676,8 +1131,12 @@ def _front_matter(values: dict[str, Any]) -> str:
 
 
 def _yaml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        return f"{value:.3f}".rstrip("0").rstrip(".")
     text = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{text}"'
 
@@ -723,6 +1182,10 @@ def _unquote_yaml_scalar(value: str) -> Any:
         return text[1:-1].replace('\\"', '"').replace("\\\\", "\\")
     if text == "null":
         return None
+    if text in {"true", "false"}:
+        return text == "true"
+    if re.fullmatch(r"\d+\.\d+", text):
+        return float(text)
     if re.fullmatch(r"\d{4}", text):
         return int(text)
     return text
@@ -737,13 +1200,18 @@ def _markdown_section(body: str, heading: str) -> str:
 def _sections_from_markdown(body: str) -> list[dict[str, Any]]:
     relevant = _markdown_section(body, "Extracted ontology-relevant information")
     if not relevant:
-        return []
+        relevant = body
     matches = list(re.finditer(r"(?m)^###\s+(.+?)\s*$", relevant))
+    if not matches:
+        matches = list(re.finditer(r"(?m)^##\s+(.+?)\s*$", relevant))
     if not matches:
         return [{"heading": "Extracted ontology-relevant information", "text": relevant, "subsections": []}]
     sections = []
     for index, match in enumerate(matches):
+        heading = match.group(1).strip()
+        if heading in {"Abstract", "Notes", "Extracted ontology-relevant information"}:
+            continue
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(relevant)
-        sections.append({"heading": match.group(1).strip(), "text": relevant[start:end].strip(), "subsections": []})
+        sections.append({"heading": heading, "text": relevant[start:end].strip(), "subsections": []})
     return sections

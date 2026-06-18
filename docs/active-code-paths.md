@@ -11,7 +11,7 @@ This document identifies the files and functions used by the running Ontology Cu
 - Static browser files: `app.mount("/static", StaticFiles(directory=static_dir), name="static")`
 - Browser page serving: `browser_app()` for `/` and `browser_page(page_name)` for `/config`, `/projects`, `/zotero`, `/literature`, `/ontology`, `/curation-prompt`, `/curation`, `/suggestions`, `/evaluation`, and `/export`
 
-## LLM Settings And Connection Test
+## Settings And LLM Connection Test
 
 - LLM settings route: `save_llm_config()` in `backend/app/api/routes.py`, route `POST /api/config/llm`
 - Provider catalog route: `llm_provider_catalog()` in `backend/app/api/routes.py`, route `GET /api/config/llm/providers`
@@ -48,7 +48,7 @@ The response includes `provider`, canonical `provider_key`, `model`, `api_key_fo
 
 `create_llm_client()` normalizes the configured provider before dispatching. This is the active protection against display labels such as `Gemini API` reaching the dispatcher.
 
-## Saved LLM Settings
+## Saved LLM Configurations
 
 - Runtime settings table model: `AppSetting` in `backend/app/models/db.py`
 - Runtime setting reads/writes: `get_runtime_value()` and `set_runtime_values()` in `backend/app/services/runtime_config.py`

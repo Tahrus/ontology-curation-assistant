@@ -1,0 +1,47 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-56a4b5f500-6a208ebb.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-pdf-56a4b5f500-bed3b70d.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 1,
+      "equation_isolated": 1,
+      "generated_boilerplate": 3,
+      "page_number": 26,
+      "repeated_header_footer": 98,
+      "source_page_comment": 7
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated.",
+      "Metadata title does not match detected extracted title."
+    ]
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-pdf-56a4b5f500-bed3b70d.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "No Job Name",
+    "year": null,
+    "zotero_key": "zotero-pdf-56a4b5f500"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-pdf-56a4b5f500-bed3b70d.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-pdf-56a4b5f500-bed3b70d.md",
+  "updated_at": "2026-06-18T14:38:32.229353+00:00",
+  "validation": {
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated.",
+      "Metadata title does not match detected extracted title."
+    ],
+    "detected_title": "- **Source:** Aburi und Smith - 2004 - A Combined Simulation and Kirkwood\u2212Buff Approach to Quantify Cosolvent Effects on the Conformational.pdf",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": true,
+    "extraction_quality": "metadata_mismatch",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "metadata_mismatch",
+    "metadata_title": "No Job Name",
+    "requires_manual_review": true,
+    "title_similarity_score": 0.098
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1021-jp036582z-1bdb94e9.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-se33nc8k-7933ef52.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-se33nc8k-7933ef52.md",
+  "metadata": {
+    "authors": [
+      "Mahalaxmi Aburi",
+      "Paul E. Smith"
+    ],
+    "doi": "10.1021/jp036582z",
+    "source_filename": "",
+    "title": "A Combined Simulation and Kirkwood\u2212Buff Approach to Quantify Cosolvent Effects on the Conformational Preferences of Peptides in Solution",
+    "year": 2004,
+    "zotero_key": "zotero-SE33NC8K"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-se33nc8k-7933ef52.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-se33nc8k-7933ef52.md",
+  "updated_at": "2026-06-18T14:38:27.072128+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "A Combined Simulation and Kirkwood\u2212Buff Approach to Quantify Cosolvent Effects on the Conformational Preferences of Peptides in Solution",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

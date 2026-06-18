@@ -105,10 +105,6 @@ def _slug(value: str) -> str:
     return slug[:80] or "zotero-literature"
 
 
-def _quote_yaml(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def _title_from_generated_markdown(path: Path) -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
     for line in text.splitlines():
@@ -184,32 +180,31 @@ def create_paper_markdown_files_from_generated(generated_md_dir: Path, papers_di
             continue
 
         digest = hashlib.sha1(str(generated_path).encode("utf-8")).hexdigest()[:10]
-        output_path = papers_dir / f"{_slug(title)}-{digest}.md"
         imported_at = datetime.now(timezone.utc).isoformat()
-        front_matter = "\n".join(
-            [
-                "---",
-                f"paper_id: {_quote_yaml(f'zotero-pdf-{digest}')}",
-                "zotero_key: \"\"",
-                f"id: {_quote_yaml(f'zotero-pdf-{digest}')}",
-                f"title: {_quote_yaml(title)}",
-                "authors:",
-                "year: null",
-                "journal: \"\"",
-                "doi: \"\"",
-                "source_pdf: \"\"",
-                f"raw_markdown: {_quote_yaml(str(generated_path))}",
-                "source: \"Zotero literature pipeline\"",
-                f"source_pdf_markdown: {_quote_yaml(str(generated_path))}",
-                "extraction_method: \"PyMuPDF via BibPipelineCombined\"",
-                f"imported_at: {_quote_yaml(imported_at)}",
-                f"extraction_date: {_quote_yaml(imported_at)}",
-                "cleanup_version: \"phase2-cleanup-v1\"",
-                "extraction_quality: \"usable\"",
-                "---",
-            ]
+        from backend.app.literature.repository import save_literature_markdown
+
+        save_literature_markdown(
+            {
+                "paper_id": f"zotero-pdf-{digest}",
+                "id": f"zotero-pdf-{digest}",
+                "title": title,
+                "authors": [],
+                "year": None,
+                "journal": "",
+                "doi": "",
+                "source_pdf": "",
+                "raw_markdown": str(generated_path),
+                "source": "Zotero literature pipeline",
+                "source_pdf_markdown": str(generated_path),
+                "extraction_method": "PyMuPDF via BibPipelineCombined",
+                "imported_at": imported_at,
+                "extraction_date": imported_at,
+                "cleanup_version": "phase2-cleanup-v1",
+                "extraction_quality": "usable",
+                "sections": [{"heading": "Full text", "text": generated_text, "subsections": []}],
+            },
+            papers_dir,
         )
-        output_path.write_text(f"{front_matter}\n\n{generated_text}\n", encoding="utf-8")
         existing_titles.add(normalized_title)
         created += 1
     return created
@@ -288,8 +283,19 @@ def run_literature_pipeline(config: LiteraturePipelineConfig) -> LiteraturePipel
 
     from backend.app.literature.repository import (
         combine_literature_markdown,
+        display_literature_markdown,
+        load_literature_markdown,
         load_llm_ready_repository_with_diagnostics,
     )
+
+    for paper_path in sorted(config.papers_dir.glob("*.md")):
+        try:
+            paper = load_literature_markdown(paper_path)
+            paper["extraction_method"] = "Zotero literature pipeline"
+            paper["source"] = "Zotero literature pipeline"
+            paper_path.write_text(display_literature_markdown(paper), encoding="utf-8")
+        except (OSError, ValueError):
+            continue
 
     repository_result = load_llm_ready_repository_with_diagnostics(config.papers_dir)
     combined_markdown_count = len(repository_result.papers)

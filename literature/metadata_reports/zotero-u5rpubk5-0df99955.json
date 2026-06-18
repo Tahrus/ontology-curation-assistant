@@ -1,0 +1,40 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-compchemeng-2025-109193-074bdbe5.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-u5rpubk5-0df99955.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\llm_context\\zotero-u5rpubk5-0df99955.md",
+  "metadata": {
+    "authors": [
+      "Amirkiarash Ehtesham",
+      "Abhishek Sivaram",
+      "Sara Danielle Siegel",
+      "John van Zanten",
+      "Seyed Soheil Mansouri"
+    ],
+    "doi": "10.1016/j.compchemeng.2025.109193",
+    "source_filename": "",
+    "title": "Dynamics of batch protein precipitation",
+    "year": 2025,
+    "zotero_key": "zotero-U5RPUBK5"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-u5rpubk5-0df99955.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-u5rpubk5-0df99955.md",
+  "updated_at": "2026-06-18T14:38:26.974572+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "domain_article",
+    "exclude_from_automatic_llm_extraction": false,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Dynamics of batch protein precipitation",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

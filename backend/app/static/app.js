@@ -43,6 +43,14 @@ const APP_ROUTES = {
 };
 
 const ACTIVE_CANDIDATE_STATUSES = new Set(["new", "in_review", "needs_more_evidence", "deferred"]);
+const LITERATURE_DOCUMENT_ROLES = [
+  "domain_article",
+  "methodology_article",
+  "review_article",
+  "supplementary_information",
+  "unknown",
+];
+const LITERATURE_RETRY_ENGINES = ["grobid", "docling", "marker", "pymupdf4llm", "pymupdf", "ocr"];
 
 function normalizeText(value) {
   return String(value ?? "").normalize("NFKC").toLowerCase();
@@ -243,6 +251,44 @@ function setError(selector, message) {
   node.classList.add("error");
 }
 
+function onDomReady(callback) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", callback, { once: true });
+  } else {
+    callback();
+  }
+}
+
+function reportMissingZoteroElement(selector, message = "Zotero configuration panel could not be found. Please reload the page.") {
+  console.error(`Missing Zotero sync form element: ${selector}`);
+  setError("#zotero-message", message);
+  setAppStatus(message, "error");
+}
+
+function requiredZoteroElement(selector, message) {
+  const element = document.querySelector(selector);
+  if (!element) {
+    reportMissingZoteroElement(selector, message);
+  }
+  return element;
+}
+
+function zoteroInputValue(selector, { required = false, label = selector } = {}) {
+  const input = document.querySelector(selector);
+  if (!input) {
+    const message = required
+      ? "Zotero configuration panel could not be found. Please reload the page."
+      : `Optional Zotero field ${selector} is not present; continuing without ${label}.`;
+    console.error(`Missing Zotero sync form element: ${selector}`);
+    if (required) {
+      setError("#zotero-message", message);
+      throw new Error(message);
+    }
+    return "";
+  }
+  return input.value || "";
+}
+
 function projectErrorMessage(operation, error, nextAction = "Review the project fields and try again.") {
   const detail = error?.detail || error?.message || "The project operation did not complete.";
   let likelyCause = "A project setting could not be saved or loaded.";
@@ -268,6 +314,7 @@ function setProjectError(operation, error, nextAction) {
 
 function setAppStatus(message, kind = "") {
   const node = document.querySelector("#app-status");
+  if (!node) return;
   node.textContent = message;
   node.classList.remove("success", "error");
   if (kind) node.classList.add(kind);
@@ -1121,12 +1168,22 @@ async function loadEntries() {
 
 function renderEntries() {
   const list = document.querySelector("#zotero-entries");
+  if (!list) return;
   list.innerHTML = "";
 
   const query = normalizeText(document.querySelector("#zotero-filter")?.value);
+  const reviewFilter = document.querySelector("#literature-review-filter")?.value || "all";
   state.entries.filter((entry) => {
-    if (!query) return true;
-    return searchableText(entry).includes(query);
+    const review = entry.literature_review || entry.literature_status || {};
+    const matchesText = !query || searchableText(entry).includes(query);
+    const matchesReview =
+      reviewFilter === "all" ||
+      review.state === reviewFilter ||
+      review.document_role === reviewFilter ||
+      review.metadata_match_status === reviewFilter ||
+      review.extraction_quality === reviewFilter ||
+      (reviewFilter === "requires_manual_review" && review.requires_manual_review);
+    return matchesText && matchesReview;
   }).forEach((entry) => {
     const authors = (Array.isArray(entry.creators) ? entry.creators : [])
       .map((creator) => [creator?.given, creator?.family].filter(Boolean).map(safeText).join(" "))
@@ -1149,9 +1206,30 @@ function renderEntries() {
       entry.doi ? `DOI ${entry.doi}` : "",
       entry.provider_item_key ? `Zotero key ${entry.provider_item_key}` : "",
     ].filter(Boolean).map(safeText).join(" | ") || "No bibliographic metadata available.";
+    const review = entry.literature_review || entry.literature_status || {};
+    const reviewMeta = document.createElement("div");
+    reviewMeta.className = "status-grid literature-quality-grid";
+    [
+      ["Metadata title", review.metadata_title || entry.title],
+      ["Detected title", review.detected_title || "unknown"],
+      ["Title match", `${review.metadata_match_status || "unknown"}${review.title_similarity_score !== undefined && review.title_similarity_score !== null ? ` (${review.title_similarity_score})` : ""}`],
+      ["State", review.state || "unknown"],
+      ["Document role", review.document_role || "unknown"],
+      ["Extraction quality", review.extraction_quality || "unknown"],
+      ["Engine", review.extraction_engine_used || "unknown"],
+      ["DOI match", review.doi_match_status || "unknown"],
+      ["Words", review.word_count || "unknown"],
+      ["Manual review", review.requires_manual_review ? "yes" : "no"],
+      ["Included in LLM extraction", review.included_in_automatic_llm_extraction ? "yes" : "no"],
+    ].forEach(([label, value]) => {
+      const item = document.createElement("div");
+      item.className = "status-card";
+      item.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span>`;
+      reviewMeta.append(item);
+    });
     const abstract = document.createElement("p");
     abstract.textContent = sectionPreviewText(entry);
-    text.append(title, meta, abstract);
+    text.append(title, meta, reviewMeta, abstract);
 
     const actions = document.createElement("div");
     actions.className = "button-row";
@@ -1205,6 +1283,95 @@ function renderEntries() {
       : "No project tags";
 
     actions.append(zoteroLink, tagSelect, saveTags, tagMeta);
+    if (entry.markdown_file) {
+      const toggleInclude = document.createElement("button");
+      toggleInclude.type = "button";
+      toggleInclude.textContent = review.include_in_llm_extraction ? "Exclude from LLM extraction" : "Include in LLM extraction";
+      toggleInclude.addEventListener("click", async (event) => {
+        await updateLiteratureReview(
+          entry,
+          { include_in_llm_extraction: !review.include_in_llm_extraction },
+          event.currentTarget
+        );
+      });
+      const approveWeak = document.createElement("button");
+      approveWeak.type = "button";
+      approveWeak.className = "secondary";
+      approveWeak.textContent = "Approve title match";
+      approveWeak.disabled = !["weak_match", "metadata_mismatch", "unknown"].includes(review.metadata_match_status);
+      approveWeak.addEventListener("click", async (event) => {
+        await updateLiteratureReview(
+          entry,
+          {
+            metadata_match_status: "matched",
+            requires_manual_review: false,
+            include_in_llm_extraction: ["domain_article", "review_article"].includes(review.document_role),
+          },
+          event.currentTarget
+        );
+      });
+      const roleSelect = document.createElement("select");
+      roleSelect.setAttribute("aria-label", "Document role");
+      LITERATURE_DOCUMENT_ROLES.forEach((role) => {
+        const option = document.createElement("option");
+        option.value = role;
+        option.textContent = role;
+        option.selected = role === review.document_role;
+        roleSelect.append(option);
+      });
+      const saveRole = document.createElement("button");
+      saveRole.type = "button";
+      saveRole.textContent = "Save role";
+      saveRole.addEventListener("click", async (event) => {
+        await updateLiteratureReview(entry, { document_role: roleSelect.value }, event.currentTarget);
+      });
+      const blockButton = document.createElement("button");
+      blockButton.type = "button";
+      blockButton.className = "secondary";
+      blockButton.textContent = review.state === "blocked" ? "Unblock" : "Block";
+      blockButton.addEventListener("click", async (event) => {
+        const blocked = review.state === "blocked";
+        await updateLiteratureReview(
+          entry,
+          {
+            state: blocked ? "ready_for_llm" : "blocked",
+            include_in_llm_extraction: blocked,
+            requires_manual_review: !blocked,
+          },
+          event.currentTarget
+        );
+      });
+      const regenerateClean = literatureActionButton(entry, "Regenerate clean", "/api/literature/repository/regenerate-clean");
+      const regenerateContext = literatureActionButton(entry, "Regenerate context", "/api/literature/repository/regenerate-context");
+      const retryEngine = document.createElement("select");
+      retryEngine.setAttribute("aria-label", "Retry extraction engine");
+      LITERATURE_RETRY_ENGINES.forEach((engine) => {
+        const option = document.createElement("option");
+        option.value = engine;
+        option.textContent = engine;
+        retryEngine.append(option);
+      });
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.className = "secondary";
+      retryButton.textContent = "Retry extraction";
+      retryButton.addEventListener("click", async (event) => {
+        await runLiteratureRepositoryAction(entry, "/api/literature/repository/retry-extraction", event.currentTarget, {
+          engine: retryEngine.value,
+        });
+      });
+      actions.append(
+        toggleInclude,
+        approveWeak,
+        roleSelect,
+        saveRole,
+        blockButton,
+        regenerateClean,
+        regenerateContext,
+        retryEngine,
+        retryButton
+      );
+    }
     header.append(text, actions);
 
     const details = document.createElement("details");
@@ -1218,8 +1385,19 @@ function renderEntries() {
     const diagnostics = document.createElement("div");
     diagnostics.className = "json-diagnostics";
     diagnostics.innerHTML = "";
+    if (Array.isArray(review.warnings) && review.warnings.length) {
+      const warningList = document.createElement("ul");
+      warningList.className = "section-heading-list";
+      review.warnings.forEach((warning) => {
+        const item = document.createElement("li");
+        item.textContent = warning;
+        warningList.append(item);
+      });
+      diagnostics.append(warningList);
+    }
     [
       ["Markdown file", entry.literature_status?.markdown_source_file],
+      ["Quality report", review.metadata_report_file],
       ["Extraction status", content.extraction_status || pdfText.status],
       ["Canonical source", content.canonical_source || pdfText.source],
       ["Structure", "Markdown sections"],
@@ -1242,7 +1420,19 @@ function renderEntries() {
     const pre = document.createElement("pre");
     pre.className = "markdown-preview";
     pre.textContent = markdownText;
-    details.append(summary, diagnostics, pre);
+    const cleanPre = document.createElement("pre");
+    cleanPre.className = "markdown-preview";
+    cleanPre.textContent = entry.clean_markdown || "Clean Markdown artifact is not available yet.";
+    const contextPre = document.createElement("pre");
+    contextPre.className = "markdown-preview";
+    contextPre.textContent = entry.llm_context_markdown || "LLM context artifact is not available yet.";
+    details.append(
+      summary,
+      diagnostics,
+      previewBlock("Raw / canonical Markdown", pre),
+      previewBlock("Clean Markdown", cleanPre),
+      previewBlock("LLM context Markdown", contextPre)
+    );
 
     record.append(header, details);
     list.append(record);
@@ -1250,6 +1440,56 @@ function renderEntries() {
   if (!list.children.length) {
     list.innerHTML = '<p class="message">No literature records found.</p>';
   }
+}
+
+function literatureActionButton(entry, label, endpoint) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  button.textContent = label;
+  button.addEventListener("click", async (event) => {
+    await runLiteratureRepositoryAction(entry, endpoint, event.currentTarget);
+  });
+  return button;
+}
+
+async function runLiteratureRepositoryAction(entry, endpoint, button, extra = {}) {
+  if (!entry.markdown_file) {
+    setError("#literature-repository-message", "This literature record does not have a Markdown file to update.");
+    return;
+  }
+  await withButtonFeedback(button, "Working", async () => {
+    await api(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ markdown_file: entry.markdown_file, ...extra }),
+    });
+    await loadEntries();
+    setSuccess("#literature-repository-message", "Literature artifact action completed.");
+  }).catch((error) => setError("#literature-repository-message", error.message));
+}
+
+function previewBlock(label, pre) {
+  const wrapper = document.createElement("details");
+  wrapper.open = label === "Raw / canonical Markdown";
+  const summary = document.createElement("summary");
+  summary.textContent = label;
+  wrapper.append(summary, pre);
+  return wrapper;
+}
+
+async function updateLiteratureReview(entry, updates, button) {
+  if (!entry.markdown_file) {
+    setError("#literature-repository-message", "This literature record does not have a Markdown file to update.");
+    return;
+  }
+  await withButtonFeedback(button, "Saving review", async () => {
+    await api("/api/literature/repository/review", {
+      method: "PATCH",
+      body: JSON.stringify({ markdown_file: entry.markdown_file, ...updates }),
+    });
+    await loadEntries();
+    setSuccess("#literature-repository-message", "Literature review metadata saved.");
+  }).catch((error) => setError("#literature-repository-message", error.message));
 }
 
 async function loadCandidates() {
@@ -1750,31 +1990,97 @@ function renderOlsMatches(node, candidate) {
   });
 }
 
-document.querySelector("#zotero-config-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = event.currentTarget.querySelector('button[type="submit"]');
-  const payload = formPayload(event.currentTarget);
-  try {
-    await withButtonFeedback(button, "Saving", async () => {
-      await api("/api/config/zotero", {
-        method: "POST",
-        body: JSON.stringify({
-          library_type: payload.library_type,
-          library_id: payload.library_id,
-          api_key: payload.api_key || null,
-          collection_key: payload.collection_key || null,
-          base_url: payload.base_url || null,
-        }),
-      });
-      event.currentTarget.querySelector('[name="api_key"]').value = "";
-      await loadStatus();
-      await loadSavedConfigs();
-      setSuccess("#zotero-message", "Zotero configuration saved.");
+function bindZoteroMetadataSync() {
+  const configForm = requiredZoteroElement("#zotero-config-form");
+  if (configForm) {
+    configForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.currentTarget.querySelector('button[type="submit"]');
+      if (!button) {
+        reportMissingZoteroElement('#zotero-config-form button[type="submit"]');
+        return;
+      }
+      try {
+        await withButtonFeedback(button, "Saving", async () => {
+          const payload = {
+            library_type: zoteroInputValue("#zotero-library-type", { required: true, label: "library type" }),
+            library_id: zoteroInputValue("#zotero-library-id", { required: true, label: "library ID" }),
+            api_key: zoteroInputValue("#zotero-api-key", { label: "API key" }) || null,
+            collection_key: zoteroInputValue("#zotero-collection-key", { label: "collection key" }) || null,
+            base_url: zoteroInputValue("#zotero-api-base-url", { label: "API base URL" }) || null,
+          };
+          await api("/api/config/zotero", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          const apiKeyInput = document.querySelector("#zotero-api-key");
+          if (apiKeyInput) apiKeyInput.value = "";
+          await loadStatus();
+          await loadSavedConfigs();
+          setSuccess("#zotero-message", "Zotero configuration saved.");
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
     });
-  } catch (error) {
-    setError("#zotero-message", error.message);
   }
-});
+
+  const testButton = requiredZoteroElement("#test-zotero");
+  if (testButton) {
+    testButton.addEventListener("click", async (event) => {
+      try {
+        await withButtonFeedback(event.currentTarget, "Testing", async () => {
+          const result = await api("/api/config/test-zotero", { method: "POST", body: "{}" });
+          setSuccess("#zotero-message", `Zotero connection ok. Items seen: ${result.items_seen}`);
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
+    });
+  }
+
+  const syncButton = requiredZoteroElement("#sync-zotero");
+  if (syncButton) {
+    syncButton.addEventListener("click", async (event) => {
+      try {
+        await withButtonFeedback(event.currentTarget, "Syncing", async () => {
+          const limitToggle = document.querySelector("#zotero-use-limit");
+          const limitInput = document.querySelector("#zotero-limit");
+          if (!limitToggle || !limitInput) {
+            reportMissingZoteroElement(!limitToggle ? "#zotero-use-limit" : "#zotero-limit");
+            return;
+          }
+          const limit = limitToggle.checked ? Number(limitInput.value || 0) || null : null;
+          const result = await api("/api/zotero/sync", {
+            method: "POST",
+            body: JSON.stringify({ limit }),
+          });
+          setSuccess("#zotero-message", `Fetched ${result.fetched}; inserted ${result.inserted}; updated ${result.updated}; skipped ${result.skipped}.`);
+          await loadEntries();
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
+    });
+  }
+
+  const importTestButton = document.querySelector("#import-test-zotero");
+  if (!importTestButton) {
+    console.error("Missing Zotero sync form element: #import-test-zotero");
+  } else {
+    importTestButton.addEventListener("click", async (event) => {
+      try {
+        await withButtonFeedback(event.currentTarget, "Loading", async () => {
+          const result = await api("/api/zotero/import-test", { method: "POST", body: "{}" });
+          setSuccess("#zotero-message", `Test entries loaded. Inserted ${result.inserted}; updated ${result.updated}.`);
+          await loadEntries();
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
+    });
+  }
+}
 
 document.querySelector("#llm-config-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1840,7 +2146,7 @@ document.querySelector("#load-docker-odk-diagnostics")?.addEventListener("click"
   }
 });
 
-document.querySelector("#literature-config-form").addEventListener("submit", async (event) => {
+document.querySelector("#literature-config-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"]');
   const payload = formPayload(event.currentTarget);
@@ -1921,34 +2227,6 @@ async function loadSavedConfigs() {
     list.innerHTML = '<p class="message">No saved configurations yet.</p>';
   }
 }
-
-document.querySelector("#test-zotero").addEventListener("click", async (event) => {
-  try {
-    await withButtonFeedback(event.currentTarget, "Testing", async () => {
-      const result = await api("/api/config/test-zotero", { method: "POST", body: "{}" });
-      setSuccess("#zotero-message", `Zotero connection ok. Items seen: ${result.items_seen}`);
-    });
-  } catch (error) {
-    setError("#zotero-message", error.message);
-  }
-});
-
-document.querySelector("#sync-zotero").addEventListener("click", async (event) => {
-  try {
-    await withButtonFeedback(event.currentTarget, "Syncing", async () => {
-      const useLimit = document.querySelector("#zotero-use-limit").checked;
-      const limit = useLimit ? Number(document.querySelector("#zotero-limit").value || 0) || null : null;
-      const result = await api("/api/zotero/sync", {
-        method: "POST",
-        body: JSON.stringify({ limit }),
-      });
-      setSuccess("#zotero-message", `Fetched ${result.fetched}; inserted ${result.inserted}; updated ${result.updated}; skipped ${result.skipped}.`);
-      await loadEntries();
-    });
-  } catch (error) {
-    setError("#zotero-message", error.message);
-  }
-});
 
 async function loadOntologyStatus() {
   try {
@@ -2926,7 +3204,8 @@ document.querySelector("#graph-relation-target-search")?.addEventListener("chang
   });
 });
 
-document.querySelector("#zotero-filter").addEventListener("input", renderEntries);
+document.querySelector("#zotero-filter")?.addEventListener("input", renderEntries);
+document.querySelector("#literature-review-filter")?.addEventListener("change", renderEntries);
 
 document.querySelector("#curation-prompt-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2982,7 +3261,21 @@ document.querySelector("#run-curation-suggestions").addEventListener("click", as
   }
 });
 
-document.querySelector("#reset-literature-repository").addEventListener("click", async (event) => {
+document.querySelector("#build-literature-context")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Building", async () => {
+      const result = await api("/api/literature/context/build", { method: "POST", body: "{}" });
+      setSuccess(
+        "#literature-repository-message",
+        `Built combined context: domain ${result.domain_count}, review ${result.review_count}, methodology ${result.methodology_count}, excluded ${result.excluded_count}.`
+      );
+    });
+  } catch (error) {
+    setError("#literature-repository-message", error.message);
+  }
+});
+
+document.querySelector("#reset-literature-repository")?.addEventListener("click", async (event) => {
   const confirmed = window.confirm("Reset the local LLM-ready literature repository?");
   if (!confirmed) return;
   try {
@@ -2996,18 +3289,6 @@ document.querySelector("#reset-literature-repository").addEventListener("click",
     });
   } catch (error) {
     setError("#literature-repository-message", error.message);
-  }
-});
-
-document.querySelector("#import-test-zotero").addEventListener("click", async (event) => {
-  try {
-    await withButtonFeedback(event.currentTarget, "Loading", async () => {
-      const result = await api("/api/zotero/import-test", { method: "POST", body: "{}" });
-      setSuccess("#zotero-message", `Test entries loaded. Inserted ${result.inserted}; updated ${result.updated}.`);
-      await loadEntries();
-    });
-  } catch (error) {
-    setError("#zotero-message", error.message);
   }
 });
 
@@ -3326,9 +3607,6 @@ document.querySelector("#theme-dark").addEventListener("click", () => {
   setAppStatus("Theme set to dark.", "success");
 });
 
-applyTheme();
-showCurrentPage();
-
 async function initializeWorkspace() {
   try {
     await loadStatus();
@@ -3343,4 +3621,9 @@ async function initializeWorkspace() {
   }
 }
 
-initializeWorkspace();
+onDomReady(() => {
+  bindZoteroMetadataSync();
+  applyTheme();
+  showCurrentPage();
+  initializeWorkspace();
+});

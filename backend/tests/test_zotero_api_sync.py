@@ -114,6 +114,30 @@ def test_zotero_api_header_construction_and_config_output(monkeypatch) -> None:
     assert "super-secret" not in result.output
 
 
+def test_zotero_local_api_test_request_uses_user_zero_without_api_key() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["headers"] = dict(request.headers)
+        return httpx.Response(200, json=[])
+
+    client = ZoteroApiClient(
+        ZoteroApiConfig(
+            library_type="user",
+            library_id="0",
+            api_key="",
+            base_url="http://127.0.0.1:23119/api",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert client.fetch_items(limit=1) == []
+    assert seen["url"] == "http://127.0.0.1:23119/api/users/0/items?limit=1"
+    assert seen["headers"]["zotero-api-version"] == "3"
+    assert "zotero-api-key" not in seen["headers"]
+
+
 def test_zotero_api_json_normalization_skips_non_bibliographic_items() -> None:
     source = parse_source_item(zotero_item())
     attachment = parse_source_item(
@@ -327,4 +351,3 @@ def test_zotero_sync_triggers_pipeline_automatically(isolated_db, monkeypatch, t
     assert result.exit_code == 0
     assert len(calls) == 1
     assert calls[0].zotero_literature_storage_path == tmp_path / "storage"
-

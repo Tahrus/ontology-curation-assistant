@@ -1,0 +1,41 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-48550-arxiv-2509-19057-74d82d79.md",
+  "clean_markdown_file": "literature\\clean_markdown\\zotero-dyaeyh3y-bb9b9182.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "methodology_article",
+  "llm_context_file": "literature\\llm_context\\zotero-dyaeyh3y-bb9b9182.md",
+  "metadata": {
+    "authors": [
+      "Olawumi Olasunkanmi",
+      "Mathew Satusky",
+      "Hong Yi",
+      "Chris Bizon",
+      "Harlin Lee",
+      "Stanley Ahalt"
+    ],
+    "doi": "10.48550/arxiv.2509.19057",
+    "source_filename": "",
+    "title": "RELATE: Relation Extraction in Biomedical Abstracts with LLMs and Ontology Constraints",
+    "year": 2025,
+    "zotero_key": "zotero-DYAEYH3Y"
+  },
+  "metadata_report_file": "literature\\metadata_reports\\zotero-dyaeyh3y-bb9b9182.json",
+  "raw_markdown_file": "literature\\raw_markdown\\zotero-dyaeyh3y-bb9b9182.md",
+  "updated_at": "2026-06-18T14:38:27.139867+00:00",
+  "validation": {
+    "cleanup_warnings": [],
+    "detected_title": "",
+    "document_role": "methodology_article",
+    "exclude_from_automatic_llm_extraction": true,
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "unknown",
+    "metadata_title": "RELATE: Relation Extraction in Biomedical Abstracts with LLMs and Ontology Constraints",
+    "requires_manual_review": false,
+    "title_similarity_score": 0.0
+  }
+}

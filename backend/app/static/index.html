@@ -24,7 +24,7 @@
         <a href="/curation-prompt" data-nav="curation-prompt">Curation Prompt</a>
         <a href="/suggestions" data-nav="suggestions">Suggestions</a>
         <a href="/evaluation" data-nav="evaluation">Evaluation</a>
-        <a href="/config" data-nav="config">LLM Settings</a>
+        <a href="/config" data-nav="config">Settings</a>
         <a href="/export" data-nav="export">Export / ODK</a>
       </nav>
       <div class="theme-control" role="group" aria-label="Theme">
@@ -170,27 +170,27 @@
         <p class="warning">Development warning: credentials are stored locally in this project database and are masked in API responses.</p>
         <form id="zotero-config-form" class="stack">
           <label>Library type
-            <select name="library_type" required>
+            <select id="zotero-library-type" name="library_type" required>
               <option value="user">user</option>
               <option value="group">group</option>
             </select>
             <span class="helper">Use `user` for a personal library or `group` for a Zotero group library.</span>
           </label>
           <label>Library ID
-            <input name="library_id" placeholder="Zotero user ID or group ID" required />
+            <input id="zotero-library-id" name="library_id" placeholder="Zotero user ID or group ID" required />
             <span class="helper">Numeric user ID or group ID for API metadata sync.</span>
           </label>
           <label>API key
-            <input name="api_key" type="password" placeholder="Zotero API key" />
-            <span class="helper">Required only for private libraries or collections.</span>
+            <input id="zotero-api-key" name="api_key" type="password" placeholder="Zotero API key" />
+            <span class="helper">Leave blank for Zotero Desktop local API libraries that do not require a key.</span>
           </label>
           <label>Collection key
-            <input name="collection_key" placeholder="Optional collection key" />
+            <input id="zotero-collection-key" name="collection_key" placeholder="Optional collection key" />
             <span class="helper">Leave blank to sync the whole configured library.</span>
           </label>
           <label>API base URL
-            <input name="base_url" placeholder="https://api.zotero.org" />
-            <span class="helper">Usually leave this as the Zotero default.</span>
+            <input id="zotero-api-base-url" name="base_url" placeholder="http://127.0.0.1:23119/api" />
+            <span class="helper">Use `http://127.0.0.1:23119/api` for the Zotero Desktop local API.</span>
           </label>
           <button type="submit">Save Zotero sync configuration</button>
         </form>
@@ -288,10 +288,26 @@
         </p>
         <div id="literature-project-blocker" class="project-blocker warning"></div>
         <div class="button-row">
+          <button id="build-literature-context" type="button" class="secondary">Build Combined Context</button>
           <button id="reset-literature-repository" type="button" class="danger">Reset Literature Repository</button>
         </div>
         <p id="literature-repository-message" class="message" role="status" aria-live="polite"></p>
         <input id="zotero-filter" placeholder="Search title, author, DOI, key, or year" />
+        <label>Review filter
+          <select id="literature-review-filter">
+            <option value="all">All literature</option>
+            <option value="domain_article">Domain articles</option>
+            <option value="methodology_article">Methodology articles</option>
+            <option value="review_article">Review articles</option>
+            <option value="supplementary_information">Supplementary information</option>
+            <option value="ready_for_llm">Ready for LLM</option>
+            <option value="blocked">Blocked</option>
+            <option value="needs_review">Needs review</option>
+            <option value="incomplete">Incomplete extraction</option>
+            <option value="metadata_mismatch">Metadata mismatches</option>
+            <option value="requires_manual_review">Requires manual review</option>
+          </select>
+        </label>
         <div id="zotero-entries" class="table-list"></div>
       </section>
 
