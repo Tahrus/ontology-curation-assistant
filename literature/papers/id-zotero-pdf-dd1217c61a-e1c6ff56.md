@@ -10,25 +10,56 @@ source_pdf: "literature\\Markdown\\Hribernik et al. - 2023 - Unified platform fo
 raw_markdown: "literature\\Markdown\\Hribernik et al. - 2023 - Unified platform for storing, retrieving, and analysing biomechanical applications data using graph.md"
 source_collection: ""
 extraction_method: "Zotero literature pipeline"
-extraction_date: "2026-06-18T14:38:32.354153+00:00"
+extraction_date: "2026-06-19T07:26:27.095451+00:00"
 cleanup_version: "phase2-cleanup-v1"
 extraction_quality: "usable"
+state: "ready_for_llm"
+zotero_item_key: ""
+pdf_path: "literature\\Markdown\\Hribernik et al. - 2023 - Unified platform for storing, retrieving, and analysing biomechanical applications data using graph.md"
+pdf_sha256: ""
+source_filename: ""
+zotero_title: "Hribernik et al. - 2023 - Unified platform for storing, retrieving, and analysing biomechanical applications data using graph"
+zotero_authors:
+zotero_year: null
+zotero_doi: ""
 metadata_title: "Hribernik et al. - 2023 - Unified platform for storing, retrieving, and analysing biomechanical applications data using graph"
 detected_title: "Hribernik et al. - 2023 - Unified platform for storing, retrieving, and analysing biomechanical applications data using graph"
+detected_authors:
+detected_doi: "10.1186/s40537-023-00747-y"
 title_similarity_score: "1"
+doi_match_status: "unknown"
 metadata_match_status: "matched"
 document_role: "domain_article"
+extraction_engine_used: "PyMuPDF via BibPipelineCombined"
+extraction_engine_attempts:
+  - "canonical_markdown"
+page_count_pdf: "0"
+page_count_extracted: "18"
+word_count: 8155
+words_per_page: 453.1
+pages_with_text: "18"
+section_count: "7"
+reference_count: "1"
+abstract_detected: true
+references_detected: true
+title_detected: true
+repeated_header_footer_score: 0.3
+table_equation_artifact_score: "0"
 requires_manual_review: false
+exclude_from_llm_extraction: false
 exclude_from_automatic_llm_extraction: false
 include_in_llm_extraction: true
-raw_markdown_file: "literature\\raw_markdown\\zotero-pdf-dd1217c61a-b0de662b.md"
-clean_markdown_file: "literature\\clean_markdown\\zotero-pdf-dd1217c61a-b0de662b.md"
-llm_context_file: "literature\\llm_context\\zotero-pdf-dd1217c61a-b0de662b.md"
-metadata_report_file: "literature\\metadata_reports\\zotero-pdf-dd1217c61a-b0de662b.json"
+warnings:
+created_at: "2026-06-19T07:26:27.165931+00:00"
+updated_at: "2026-06-19T07:26:27.165931+00:00"
+raw_markdown_file: "literature\\raw\\zotero-pdf-dd1217c61a-b0de662b.md"
+clean_markdown_file: "literature\\clean\\zotero-pdf-dd1217c61a-b0de662b.md"
+llm_context_file: "literature\\context\\zotero-pdf-dd1217c61a-b0de662b.md"
+metadata_report_file: "literature\\reports\\zotero-pdf-dd1217c61a-b0de662b.json"
 quality_version: "literature-quality-v1"
 id: "zotero-pdf-dd1217c61a"
 source: "Zotero literature pipeline"
-imported_at: "2026-06-18T14:38:32.354153+00:00"
+imported_at: "2026-06-19T07:26:27.095451+00:00"
 ---
 
 # Hribernik et al. - 2023 - Unified platform for storing, retrieving, and analysing biomechanical applications data using graph

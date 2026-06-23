@@ -10,25 +10,57 @@ source_pdf: "literature\\Markdown\\Shulgin und Ruckenstein - 2006 - A Protein Mo
 raw_markdown: "literature\\Markdown\\Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo.md"
 source_collection: ""
 extraction_method: "Zotero literature pipeline"
-extraction_date: "2026-06-18T14:38:32.678615+00:00"
+extraction_date: "2026-06-19T07:26:28.204424+00:00"
 cleanup_version: "phase2-cleanup-v1"
 extraction_quality: "usable"
+state: "ready_for_llm"
+zotero_item_key: ""
+pdf_path: "literature\\Markdown\\Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo.md"
+pdf_sha256: ""
+source_filename: ""
+zotero_title: "Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo"
+zotero_authors:
+zotero_year: null
+zotero_doi: ""
 metadata_title: "Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo"
 detected_title: "Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo"
+detected_authors:
+detected_doi: "10.1529/biophysj.105.074112"
 title_similarity_score: "1"
+doi_match_status: "unknown"
 metadata_match_status: "matched"
 document_role: "domain_article"
+extraction_engine_used: "PyMuPDF via BibPipelineCombined"
+extraction_engine_attempts:
+  - "canonical_markdown"
+page_count_pdf: "0"
+page_count_extracted: "4"
+word_count: 1924
+words_per_page: "481"
+pages_with_text: "4"
+section_count: "6"
+reference_count: "1"
+abstract_detected: true
+references_detected: true
+title_detected: true
+repeated_header_footer_score: "1"
+table_equation_artifact_score: 0.6
 requires_manual_review: false
+exclude_from_llm_extraction: false
 exclude_from_automatic_llm_extraction: false
 include_in_llm_extraction: true
-raw_markdown_file: "literature\\raw_markdown\\zotero-pdf-d8b0e58d59-f8f9c788.md"
-clean_markdown_file: "literature\\clean_markdown\\zotero-pdf-d8b0e58d59-f8f9c788.md"
-llm_context_file: "literature\\llm_context\\zotero-pdf-d8b0e58d59-f8f9c788.md"
-metadata_report_file: "literature\\metadata_reports\\zotero-pdf-d8b0e58d59-f8f9c788.json"
+warnings:
+  - "Equation-like fragments were isolated."
+created_at: "2026-06-19T07:26:28.245395+00:00"
+updated_at: "2026-06-19T07:26:28.245395+00:00"
+raw_markdown_file: "literature\\raw\\zotero-pdf-d8b0e58d59-f8f9c788.md"
+clean_markdown_file: "literature\\clean\\zotero-pdf-d8b0e58d59-f8f9c788.md"
+llm_context_file: "literature\\context\\zotero-pdf-d8b0e58d59-f8f9c788.md"
+metadata_report_file: "literature\\reports\\zotero-pdf-d8b0e58d59-f8f9c788.json"
 quality_version: "literature-quality-v1"
 id: "zotero-pdf-d8b0e58d59"
 source: "Zotero literature pipeline"
-imported_at: "2026-06-18T14:38:32.678615+00:00"
+imported_at: "2026-06-19T07:26:28.204424+00:00"
 ---
 
 # Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo

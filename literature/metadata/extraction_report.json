@@ -54,15 +54,15 @@
     "number_of_sections": 2,
     "reference_section_detected": true,
     "duplicate_text_warnings": [
+      "R. dos Santos et al. / Biotechnology Advances 35 (...",
       "CaCl2 precipitation: 120–150 mM CaCl2, 300 mM Na2H...",
-      "Caprylic acid precipitation: 1% caprylic acid in 1...",
-      "R. dos Santos et al. / Biotechnology Advances 35 (..."
+      "Caprylic acid precipitation: 1% caprylic acid in 1..."
     ],
     "possible_scanned_document": false,
     "extraction_success": true,
     "cleanup_warnings": [
       "Abstract section not detected.",
-      "Suspiciously repeated paragraphs/lines detected: ['CaCl2 precipitation: 120–150 mM CaCl2, 300 mM Na2H...', 'Caprylic acid precipitation: 1% caprylic acid in 1...', 'R. dos Santos et al. / Biotechnology Advances 35 (...']",
+      "Suspiciously repeated paragraphs/lines detected: ['R. dos Santos et al. / Biotechnology Advances 35 (...', 'CaCl2 precipitation: 120–150 mM CaCl2, 300 mM Na2H...', 'Caprylic acid precipitation: 1% caprylic acid in 1...']",
       "cleanup:copyright_notice removed 1 line(s)",
       "cleanup:isolated_page_number removed 21 line(s)"
     ],
@@ -110,7 +110,7 @@
     "extraction_success": true,
     "cleanup_warnings": [
       "Abstract section not detected.",
-      "Suspiciously repeated paragraphs/lines detected: ['N. Ba\\x02s et al. / Chemical Engineering Science 64 (...', 'the number density based fragment size distributio...']",
+      "Suspiciously repeated paragraphs/lines detected: ['the number density based fragment size distributio...', 'N. Ba\\x02s et al. / Chemical Engineering Science 64 (...']",
       "cleanup:copyright_notice removed 1 line(s)",
       "cleanup:isolated_page_number removed 91 line(s)"
     ],
@@ -289,7 +289,7 @@
     "extraction_success": true,
     "cleanup_warnings": [
       "References section not detected.",
-      "Suspiciously repeated paragraphs/lines detected: ['Engineering, Temple University, Philadelphia, Penn...', 'prior system outputs and microbial population abun...']",
+      "Suspiciously repeated paragraphs/lines detected: ['prior system outputs and microbial population abun...', 'Engineering, Temple University, Philadelphia, Penn...']",
       "cleanup:copyright_notice removed 1 line(s)",
       "cleanup:isolated_page_number removed 11 line(s)"
     ],
@@ -330,9 +330,9 @@
     "number_of_sections": 2,
     "reference_section_detected": false,
     "duplicate_text_warnings": [
+      "contributions from anions and cations (ν ) ν+ + ν-...",
       "a All values were obtained from the simulations as...",
       "nm in eq 1. The preferential binding has been deco...",
-      "contributions from anions and cations (ν ) ν+ + ν-...",
       ") Ns+ - (F+/Fw) Nsw, etc. Changes in accessible su..."
     ],
     "possible_scanned_document": false,
@@ -340,7 +340,7 @@
     "cleanup_warnings": [
       "Abstract section not detected.",
       "References section not detected.",
-      "Suspiciously repeated paragraphs/lines detected: ['contributions from anions and cations (ν ) ν+ + ν-...', 'a All values were obtained from the simulations as...', 'nm in eq 1. The preferential binding has been deco...']",
+      "Suspiciously repeated paragraphs/lines detected: ['contributions from anions and cations (ν ) ν+ + ν-...', 'a All values were obtained from the simulations as...', ') Ns+ - (F+/Fw) Nsw, etc. Changes in accessible su...']",
       "cleanup:copyright_notice removed 1 line(s)",
       "cleanup:isolated_page_number removed 26 line(s)"
     ],
@@ -602,26 +602,46 @@
     "paper_id": "zotero-pdf-dd1217c61a",
     "title": "zotero-pdf-dd1217c61a"
   },
-  "zotero-XHWN5GGA": {
+  "zotero-pdf-f3bf4dddb5": {
     "pdf_found": true,
-    "page_count": 8,
-    "extracted_character_count": 36729,
-    "cleaned_character_count": 36351,
+    "page_count": 57,
+    "extracted_character_count": 196520,
+    "cleaned_character_count": 195514,
     "title_detected": true,
-    "abstract_detected": false,
+    "abstract_detected": true,
     "number_of_sections": 2,
     "reference_section_detected": true,
     "duplicate_text_warnings": [],
     "possible_scanned_document": false,
     "extraction_success": true,
     "cleanup_warnings": [
-      "Abstract section not detected.",
-      "cleanup:copyright_notice removed 1 line(s)",
-      "cleanup:isolated_page_number removed 8 line(s)"
+      "Suspiciously repeated paragraphs/lines detected: ['DOREMUS, Polifonia, DemCare, Odeuropa, NORIAO, FIB...', 'Airlines Customer Satisfaction43, Amazon Ratings44...']",
+      "cleanup:isolated_page_number removed 69 line(s)"
     ],
     "errors": [],
     "final_usability_status": "usable_with_warnings",
-    "paper_id": "zotero-XHWN5GGA",
-    "title": "zotero-XHWN5GGA"
+    "paper_id": "zotero-pdf-f3bf4dddb5",
+    "title": "zotero-pdf-f3bf4dddb5"
+  },
+  "zotero-Y59FLW5I": {
+    "pdf_found": true,
+    "page_count": 57,
+    "extracted_character_count": 196520,
+    "cleaned_character_count": 195514,
+    "title_detected": true,
+    "abstract_detected": true,
+    "number_of_sections": 2,
+    "reference_section_detected": true,
+    "duplicate_text_warnings": [],
+    "possible_scanned_document": false,
+    "extraction_success": true,
+    "cleanup_warnings": [
+      "Suspiciously repeated paragraphs/lines detected: ['DOREMUS, Polifonia, DemCare, Odeuropa, NORIAO, FIB...', 'Airlines Customer Satisfaction43, Amazon Ratings44...']",
+      "cleanup:isolated_page_number removed 69 line(s)"
+    ],
+    "errors": [],
+    "final_usability_status": "usable_with_warnings",
+    "paper_id": "zotero-Y59FLW5I",
+    "title": "zotero-Y59FLW5I"
   }
 }

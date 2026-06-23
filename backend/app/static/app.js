@@ -1204,6 +1204,7 @@ function renderEntries() {
       entry.year,
       entry.publication_venue || entry.journal || entry.item_type,
       entry.doi ? `DOI ${entry.doi}` : "",
+      entry.pii ? `PII ${entry.pii}` : "",
       entry.provider_item_key ? `Zotero key ${entry.provider_item_key}` : "",
     ].filter(Boolean).map(safeText).join(" | ") || "No bibliographic metadata available.";
     const review = entry.literature_review || entry.literature_status || {};
@@ -1214,6 +1215,9 @@ function renderEntries() {
       ["Detected title", review.detected_title || "unknown"],
       ["Title match", `${review.metadata_match_status || "unknown"}${review.title_similarity_score !== undefined && review.title_similarity_score !== null ? ` (${review.title_similarity_score})` : ""}`],
       ["State", review.state || "unknown"],
+      ["Source type", entry.source_type || review.source_type || entry.provider || "unknown"],
+      ["Import status", entry.import_status || review.import_status || "unknown"],
+      ["Duplicate status", entry.duplicate_status || review.duplicate_status || "unknown"],
       ["Document role", review.document_role || "unknown"],
       ["Extraction quality", review.extraction_quality || "unknown"],
       ["Engine", review.extraction_engine_used || "unknown"],
@@ -2170,10 +2174,15 @@ document.querySelector("#run-literature-pipeline").addEventListener("click", asy
   try {
     setMessage("#literature-import-message", "Importing Zotero PDFs and generating Markdown...");
     await withButtonFeedback(event.currentTarget, "Importing", async () => {
-      const result = await api("/api/literature/pipeline/run", { method: "POST", body: "{}" });
+      const form = document.querySelector("#literature-config-form");
+      const values = formPayload(form);
+      const body = values.local_literature_source_path
+        ? { pdf_dir: values.local_literature_source_path }
+        : { zotero_storage: values.zotero_literature_storage_path };
+      const result = await api("/api/literature/import", { method: "POST", body: JSON.stringify(body) });
       setSuccess(
         "#literature-import-message",
-        `Import complete. Copied ${result.copied_pdf_count} PDF(s), generated ${result.converted_markdown_count} Markdown file(s), combined ${result.combined_markdown_count} literature record(s).`
+        `Import complete. Scanned ${result.files_scanned}; imported ${result.imported}; duplicates reused ${result.duplicates}; failed ${result.failed}. Combined: ${result.combined_output_file}`
       );
       await loadStatus();
       await loadEntries();
@@ -3264,11 +3273,35 @@ document.querySelector("#run-curation-suggestions").addEventListener("click", as
 document.querySelector("#build-literature-context")?.addEventListener("click", async (event) => {
   try {
     await withButtonFeedback(event.currentTarget, "Building", async () => {
-      const result = await api("/api/literature/context/build", { method: "POST", body: "{}" });
+      const result = await api("/api/literature/build-combined", { method: "POST", body: "{}" });
       setSuccess(
         "#literature-repository-message",
-        `Built combined context: domain ${result.domain_count}, review ${result.review_count}, methodology ${result.methodology_count}, excluded ${result.excluded_count}.`
+        `Built ${result.count} canonical paper(s): ${result.combined_output_file}`
       );
+    });
+  } catch (error) {
+    setError("#literature-repository-message", error.message);
+  }
+});
+
+document.querySelector("#scan-literature-duplicates")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Scanning", async () => {
+      const result = await api("/api/literature/deduplicate", { method: "POST", body: JSON.stringify({ apply: false }) });
+      setSuccess("#literature-repository-message", `Duplicate scan complete: ${result.suspected_duplicates} suspected duplicate(s).`);
+    });
+  } catch (error) {
+    setError("#literature-repository-message", error.message);
+  }
+});
+
+document.querySelector("#apply-literature-deduplication")?.addEventListener("click", async (event) => {
+  if (!window.confirm("Merge duplicate literature entries after creating a full backup?")) return;
+  try {
+    await withButtonFeedback(event.currentTarget, "Deduplicating", async () => {
+      const result = await api("/api/literature/deduplicate", { method: "POST", body: JSON.stringify({ apply: true, confirm: true }) });
+      setSuccess("#literature-repository-message", `Deduplication complete. Backup: ${result.backup || "not needed"}`);
+      await loadEntries();
     });
   } catch (error) {
     setError("#literature-repository-message", error.message);

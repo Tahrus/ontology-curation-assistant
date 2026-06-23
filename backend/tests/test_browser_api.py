@@ -833,16 +833,16 @@ def test_api_literature_pipeline_import_displays_processed_markdown_entry(client
     assert run.json()["copied_pdf_count"] == 1
     assert run.json()["converted_markdown_count"] == 1
     assert Path(run.json()["combined_output_file"]).exists()
-    copied = list((Path("literature") / "Paper-PDF").glob("*.pdf"))
-    generated = list((Path("literature") / "Markdown").glob("*.md"))
-    papers = list((Path("literature") / "papers").glob("*.md"))
-    assert copied and copied[0].name == "Protein Import.pdf"
+    copied = list((Path("literature") / "sources").glob("*.pdf"))
+    generated = list((Path("literature") / "markdown").glob("*.md"))
+    metadata = list((Path("literature") / "metadata").glob("*.json"))
+    assert copied
     assert generated
-    assert papers
+    assert metadata
     assert entries.status_code == 200
     entry = entries.json()[0]
     assert entry["title"]
-    assert entry["markdown_file"] == str(papers[0])
+    assert entry["markdown_file"] == str(generated[0])
     assert "Preferential hydration imported" in entry["literature_markdown"]
     assert not (Path("literature") / "literature.json").exists()
 
@@ -1036,7 +1036,7 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert 'aria-live="polite"' in html
     assert 'role="status"' in html
     assert "zotero_literature_storage_path" in script
-    assert "/api/literature/pipeline/run" in script
+    assert "/api/literature/import" in script
     assert "Importing Zotero PDFs and generating Markdown" in script
     assert "button.disabled = true" in script
     assert "aria-busy" in script
@@ -1046,7 +1046,9 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "is-clicked" in styles
     assert "Error:" in script
     assert "complete." in script
-    assert "copied_pdf_count" in script
+    assert "files_scanned" in script
+    assert "duplicates" in script
+    assert "combined_output_file" in script
     assert "data-graph-controls" in html
     assert 'id="dashboard-project-hierarchy"' in html
     assert 'id="dashboard-project-tree"' in html
@@ -1158,7 +1160,7 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "/api/zotero/entries/${encodeURIComponent(entry.id)}/project-tags" in script
     assert 'document.querySelector("#zotero-entries");\n  if (!list) return;' in script
     assert 'document.querySelector("#zotero-filter")?.addEventListener("input", renderEntries)' in script
-    assert "/api/literature/context/build" in script
+    assert "/api/literature/build-combined" in script
     assert "/api/literature/repository/retry-extraction" in script
     assert 'value="incomplete"' in html
     assert "project_tags" in script

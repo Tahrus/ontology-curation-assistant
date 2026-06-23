@@ -88,8 +88,10 @@ def project_layout(project_path: Path) -> dict[str, Path]:
     return {
         "root": project_path,
         "literature": project_path / "literature",
+        "literature_sources": project_path / "literature" / "sources",
         "literature_pdf": project_path / "literature" / "pdf",
         "literature_markdown": project_path / "literature" / "markdown",
+        "literature_metadata": project_path / "literature" / "metadata",
         "literature_diagnostics": project_path / "literature" / "diagnostics",
         "ontology": project_path / "ontology",
         "ontology_odk": project_path / "ontology" / "odk",

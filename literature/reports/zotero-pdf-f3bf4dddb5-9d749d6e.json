@@ -1,0 +1,97 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-f3bf4dddb5-1340e23b.md",
+  "clean_markdown_file": "literature\\clean\\zotero-pdf-f3bf4dddb5-9d749d6e.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 1,
+      "equation_isolated": 3,
+      "generated_boilerplate": 3,
+      "page_number": 69,
+      "publisher_boilerplate": 28,
+      "repeated_header_footer": 886,
+      "source_page_comment": 57
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated."
+    ]
+  },
+  "document_role": "review_article",
+  "llm_context_file": "literature\\context\\zotero-pdf-f3bf4dddb5-9d749d6e.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "Large Language Models for Ontology Engineering A Systematic Literature Review  www.semantic-web-jo",
+    "year": null,
+    "zotero_key": "zotero-pdf-f3bf4dddb5"
+  },
+  "metadata_report_file": "literature\\reports\\zotero-pdf-f3bf4dddb5-9d749d6e.json",
+  "quality_metrics": {
+    "abstract_detected": true,
+    "incomplete": false,
+    "page_count_extracted": 57,
+    "page_count_pdf": 0,
+    "pages_with_text": 57,
+    "reference_count": 1,
+    "references_detected": true,
+    "repeated_header_footer_score": 1.0,
+    "section_count": 10,
+    "table_equation_artifact_score": 0.3,
+    "warnings": [],
+    "word_count": 23610,
+    "words_per_page": 414.2
+  },
+  "raw_markdown_file": "literature\\raw\\zotero-pdf-f3bf4dddb5-9d749d6e.md",
+  "updated_at": "2026-06-19T07:26:27.913928+00:00",
+  "validation": {
+    "abstract_detected": true,
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated."
+    ],
+    "created_at": "2026-06-19T07:26:27.777921+00:00",
+    "detected_authors": [],
+    "detected_doi": "10.1177/ToBeAssigned",
+    "detected_title": "Large Language Models for Ontology Engineering A Systematic Literature Review  www.semantic-web-jo",
+    "document_role": "review_article",
+    "doi_match_status": "unknown",
+    "exclude_from_automatic_llm_extraction": false,
+    "exclude_from_llm_extraction": false,
+    "extraction_engine_attempts": [
+      "canonical_markdown"
+    ],
+    "extraction_engine_used": "PyMuPDF via BibPipelineCombined",
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "matched",
+    "metadata_title": "Large Language Models for Ontology Engineering A Systematic Literature Review  www.semantic-web-jo",
+    "page_count_extracted": 57,
+    "page_count_pdf": 0,
+    "pages_with_text": 57,
+    "paper_id": "zotero-pdf-f3bf4dddb5",
+    "pdf_path": "",
+    "pdf_sha256": "",
+    "reference_count": 1,
+    "references_detected": true,
+    "repeated_header_footer_score": 1.0,
+    "requires_manual_review": false,
+    "section_count": 10,
+    "source_filename": "",
+    "state": "ready_for_llm",
+    "table_equation_artifact_score": 0.3,
+    "title_detected": true,
+    "title_similarity_score": 1.0,
+    "updated_at": "2026-06-19T07:26:27.777921+00:00",
+    "warnings": [
+      "Equation-like fragments were isolated."
+    ],
+    "word_count": 23610,
+    "words_per_page": 414.2,
+    "zotero_authors": [],
+    "zotero_doi": "",
+    "zotero_item_key": "",
+    "zotero_key": "",
+    "zotero_title": "Large Language Models for Ontology Engineering A Systematic Literature Review  www.semantic-web-jo",
+    "zotero_year": null
+  }
+}

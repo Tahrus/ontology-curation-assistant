@@ -204,36 +204,35 @@ oca literature reset-repository --yes
 
 The reset clears every file and subfolder under the configured `OCA_LITERATURE_BASE_DIR` literature directory, recreates the empty directory, and clears the runtime literature/candidate cache. It refuses unsafe reset targets such as filesystem roots and unlinks symlinks instead of following them.
 
-Run the integrated Zotero PDF-to-Markdown pipeline from the browser by setting `Zotero literature source` on the Configuration page and clicking `Import Zotero PDFs`, or from the CLI:
+The default literature pipeline is project-scoped. Select an active project, open Literature, choose a Zotero `storage` directory or local PDF/XML/Markdown folder, and import. Equivalent CLI commands are:
 
 ```powershell
-oca literature pipeline
-oca literature pipeline --zotero-storage-dir "C:\Users\<USER>\Zotero\storage" --combined-output-file .\literature\combined_literature.md
+oca literature import --project protein-precipitation --zotero-storage "C:\Users\<USER>\Zotero\storage"
+oca literature import --project protein-precipitation --pdf-dir .\pdfs
+oca literature list --project protein-precipitation
+oca literature deduplicate --project protein-precipitation --dry-run
+oca literature deduplicate --project protein-precipitation --apply
+oca literature build-combined --project protein-precipitation
+oca literature migrate-old --project protein-precipitation --dry-run
+oca literature migrate-old --project protein-precipitation --apply
+oca literature reset --project protein-precipitation --yes
 ```
 
-The pipeline copies PDFs from the configured Zotero literature storage path into `literature/Paper-PDF`, converts those PDFs to raw section-structured Markdown in `literature/Markdown`, creates or refreshes cleaned canonical per-paper Markdown records under `literature/papers`, and writes one comprehensive combined Markdown corpus at `literature/combined_literature.md` from the canonical per-paper files. It fails with clear text if the Zotero source is missing, does not exist, contains no PDFs, copies no PDFs, generates no Markdown, or cannot write the combined corpus. It does not create or use a literature JSON sidecar. Before each import run, the wrapper clears only the configured copied-PDF and generated-Markdown working folders under the literature base directory; repeated sync/import runs refresh artifacts instead of creating duplicate `_1` files.
+The implementation migrated from `literatur_test_2` now lives in `backend/app/literature/canonical.py`; OCA never imports the external test directory at runtime. It normalizes DOI and PII, prefers PII for canonical names, uses exact normalized titles to bridge DOI-only and PII-only imports, preserves curation fields on re-import, parses Elsevier/ScienceDirect XML when present, and falls back to PyMuPDF for ordinary PDFs. `backend/app/literature/pipeline.py` is a backwards-compatible wrapper; `BibPipelineCombined.py` is legacy and is not called by the default path.
 
 The default literature artefacts are:
 
 ```text
-literature/
-  Paper-PDF/                 copied source PDFs
-  Markdown/                  raw extracted Markdown
-  papers/                    cleaned canonical per-paper Markdown
-  raw/                       preserved first raw Markdown rendering per paper
-  clean/                     deterministic cleaned Markdown per paper
-  context/                   structured LLM-context Markdown per paper
-  reports/                   JSON validation/cleanup reports
-  blocked/                   review/block marker reports
-  combined/                  domain/review/methodology/excluded context bundles
-  combined_literature.md     generated combined LLM corpus
-  metadata/
-    literature_index.json
-    extraction_report.json
-    cleanup_reports.json
+projects/<project_slug>/literature/
+  sources/                   retained source PDF/XML/Markdown files
+  markdown/                  canonical minimal-header LLM Markdown
+  metadata/                  rich JSON metadata and preserved curation fields
+  combined_literature.md     canonical papers, each included once
+  backups/                   deduplication and migration backups
+  archive/                   archived legacy files
 ```
 
-Per-paper Markdown front matter includes provenance fields such as `paper_id`, `zotero_key`, `zotero_item_key`, `pdf_path`, `pdf_sha256`, `source_filename`, `source_pdf`, `raw_markdown`, `extraction_method`, `extraction_date`, `cleanup_version`, `extraction_engine_used`, `extraction_engine_attempts`, and `extraction_quality` when available, plus `state`, `metadata_title`, `detected_title`, `zotero_doi`, `detected_doi`, `doi_match_status`, `title_similarity_score`, `metadata_match_status`, `document_role`, extraction metrics, warnings, `requires_manual_review`, `exclude_from_automatic_llm_extraction`, `include_in_llm_extraction`, and links to the raw/clean/context/report artifacts. The older `id`, `source`, and `imported_at` fields remain for compatibility. Cleanup is conservative and records named rule counts/examples; DOI-containing scientific lines are not removed merely because they contain a DOI. The combined corpus includes explicit paper boundary comments, structured LLM context, cleaned evidence text, and skips files that are not safe for automatic domain extraction. `oca literature doctor`, `validate`, `report`, `retry-extraction`, `regenerate-clean`, `regenerate-context`, and `build-combined-context` expose the same quality workflow from the CLI.
+LLM-facing Markdown contains no YAML front matter. It begins with one title, one normalized PII line when available, one optional normalized DOI line, then the paper content. Rich provenance and human fields remain in JSON metadata. Apply-mode deduplication and migration create backups first; migration archives legacy files rather than deleting them.
 
 ### Zotero from the Browser
 
@@ -250,7 +249,7 @@ The Zotero Metadata Sync controls are bound after the DOM is ready and use stabl
 
 If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
 
-In Configuration > Literature Pipeline Configuration, only `Zotero literature source` is required for the integrated PDF import flow. Point it at the local Zotero `storage` folder, then click `Import Zotero PDFs`. Advanced output paths still come from environment settings when needed, but they are not exposed in the routine browser workflow.
+On the Literature page, confirm the active project and Zotero storage path (or enter a local source folder), then click `Import Zotero PDFs / local folder into active project`. The page reports scanned, imported, reused duplicate, and failed counts and exposes combined rebuild, duplicate dry-run/apply, Markdown viewing, and project-only reset.
 
 ### LLM / Chatbot Configuration
 
@@ -550,11 +549,11 @@ oca zotero-sync --library-type group --library-id 123456 --collection COLLECTION
 
 Configure API sync with `OCA_ZOTERO_LIBRARY_TYPE`, `OCA_ZOTERO_LIBRARY_ID`, optional `OCA_ZOTERO_API_KEY`, optional `OCA_ZOTERO_COLLECTION_KEY`, and `OCA_ZOTERO_API_BASE_URL`. Sync imports metadata only; it does not download attachments or write to Zotero.
 
-The routine browser literature pipeline configuration uses:
+The no-project compatibility pipeline can still read:
 
 - `OCA_ZOTERO_LITERATURE_STORAGE_PATH`: Zotero `storage` folder read by the integrated literature pipeline.
 
-Advanced path settings are available through environment configuration:
+The following paths are legacy/global compatibility settings; active-project imports derive `sources`, `markdown`, `metadata`, and `combined_literature.md` from the project's literature repository:
 
 - `OCA_ZOTERO_LINKED_ATTACHMENT_BASE_DIR`: optional base folder for relative linked-file attachment paths.
 - `OCA_LITERATURE_BASE_DIR`: base folder for the integrated combined literature pipeline, defaulting to `literature`.
@@ -566,14 +565,14 @@ Advanced path settings are available through environment configuration:
 
 For the Zotero local API, set `OCA_ZOTERO_API_BASE_URL=http://localhost:23119/api` with the relevant user or group library ID.
 
-Run the integrated configurable pipeline:
+The legacy command name remains routed to the canonical implementation:
 
 ```powershell
 oca literature pipeline
 oca literature pipeline --zotero-storage-dir "C:\Users\<USER>\Zotero\storage" --combined-output-file .\literature\combined_literature.md
 ```
 
-The pipeline copies PDFs from the configured Zotero literature storage path, converts them to raw Markdown with PyMuPDF, creates cleaned canonical per-paper Markdown records when the import starts from PDFs only, merges matching generated full text into `literature/papers`, writes diagnostics under `literature/metadata`, and writes the combined LLM-ready Markdown corpus from usable canonical papers. Passing `--base-dir` to the CLI derives the original expected subfolders (`Paper-PDF`, `Markdown`, `papers`, and `combined_literature.md`) from that base unless a more specific folder option is supplied.
+Prefer `oca literature import --project ...`; `oca literature pipeline` is retained only for command compatibility and now writes the canonical layout rather than invoking `BibPipelineCombined`.
 
 Later BFO support should target BFO 2020 terminology and identifiers. Later relation validation should use a version-controlled static YAML or JSON relation catalogue in this repository, with optional checks against ontology imports.
 

@@ -1,0 +1,93 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-compchemeng-2024-108860-0708ce6b.md",
+  "clean_markdown_file": "literature\\clean\\zotero-8dj4gk5b-7f3eb77b.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\context\\zotero-8dj4gk5b-7f3eb77b.md",
+  "metadata": {
+    "authors": [
+      "Wendi Zhang",
+      "Todd Przybycien",
+      "Jan Michael Breuer",
+      "Eric von Lieres"
+    ],
+    "doi": "10.1016/j.compchemeng.2024.108860",
+    "source_filename": "",
+    "title": "Solving crystallization/precipitation population balance models in CADET, Part II: Size-based Smoluchowski coagulation and fragmentation equations in batch and continuous modes",
+    "year": 2025,
+    "zotero_key": "zotero-8DJ4GK5B"
+  },
+  "metadata_report_file": "literature\\reports\\zotero-8dj4gk5b-7f3eb77b.json",
+  "quality_metrics": {
+    "abstract_detected": true,
+    "incomplete": false,
+    "page_count_extracted": 1,
+    "page_count_pdf": 0,
+    "pages_with_text": 1,
+    "reference_count": 0,
+    "references_detected": false,
+    "repeated_header_footer_score": 0.0,
+    "section_count": 3,
+    "table_equation_artifact_score": 0.0,
+    "warnings": [],
+    "word_count": 169,
+    "words_per_page": 169.0
+  },
+  "raw_markdown_file": "literature\\raw\\zotero-8dj4gk5b-7f3eb77b.md",
+  "updated_at": "2026-06-22T14:09:45.514559+00:00",
+  "validation": {
+    "abstract_detected": true,
+    "cleanup_warnings": [],
+    "created_at": "2026-06-22T14:09:45.512109+00:00",
+    "detected_authors": [],
+    "detected_doi": "",
+    "detected_title": "",
+    "document_role": "domain_article",
+    "doi_match_status": "unknown",
+    "exclude_from_automatic_llm_extraction": false,
+    "exclude_from_llm_extraction": false,
+    "extraction_engine_attempts": [
+      "canonical_markdown"
+    ],
+    "extraction_engine_used": "canonical_markdown",
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Solving crystallization/precipitation population balance models in CADET, Part II: Size-based Smoluchowski coagulation and fragmentation equations in batch and continuous modes",
+    "page_count_extracted": 1,
+    "page_count_pdf": 0,
+    "pages_with_text": 1,
+    "paper_id": "zotero-8DJ4GK5B",
+    "pdf_path": "",
+    "pdf_sha256": "",
+    "reference_count": 0,
+    "references_detected": false,
+    "repeated_header_footer_score": 0.0,
+    "requires_manual_review": false,
+    "section_count": 3,
+    "source_filename": "",
+    "state": "ready_for_llm",
+    "table_equation_artifact_score": 0.0,
+    "title_detected": false,
+    "title_similarity_score": 0.0,
+    "updated_at": "2026-06-22T14:09:45.512109+00:00",
+    "warnings": [],
+    "word_count": 169,
+    "words_per_page": 169.0,
+    "zotero_authors": [
+      "Wendi Zhang",
+      "Todd Przybycien",
+      "Jan Michael Breuer",
+      "Eric von Lieres"
+    ],
+    "zotero_doi": "10.1016/j.compchemeng.2024.108860",
+    "zotero_item_key": "",
+    "zotero_key": "",
+    "zotero_title": "Solving crystallization/precipitation population balance models in CADET, Part II: Size-based Smoluchowski coagulation and fragmentation equations in batch and continuous modes",
+    "zotero_year": 2025
+  }
+}

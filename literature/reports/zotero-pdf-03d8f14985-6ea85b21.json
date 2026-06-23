@@ -1,0 +1,98 @@
+{
+  "canonical_markdown_file": "literature\\papers\\id-zotero-pdf-03d8f14985-a3af47ac.md",
+  "clean_markdown_file": "literature\\clean\\zotero-pdf-03d8f14985-6ea85b21.md",
+  "cleanup": {
+    "rule_counts": {
+      "duplicate_title": 1,
+      "equation_isolated": 1,
+      "generated_boilerplate": 3,
+      "license_notice": 1,
+      "page_number": 44,
+      "publisher_boilerplate": 1,
+      "repeated_header_footer": 20,
+      "source_page_comment": 6
+    },
+    "status": "cleaned_with_warnings",
+    "warnings": [
+      "Equation-like fragments were isolated."
+    ]
+  },
+  "document_role": "domain_article",
+  "llm_context_file": "literature\\context\\zotero-pdf-03d8f14985-6ea85b21.md",
+  "metadata": {
+    "authors": [],
+    "doi": "",
+    "source_filename": "",
+    "title": "1682-1687-1213-SCT-4-2025.docx",
+    "year": null,
+    "zotero_key": "zotero-pdf-03d8f14985"
+  },
+  "metadata_report_file": "literature\\reports\\zotero-pdf-03d8f14985-6ea85b21.json",
+  "quality_metrics": {
+    "abstract_detected": true,
+    "incomplete": false,
+    "page_count_extracted": 6,
+    "page_count_pdf": 0,
+    "pages_with_text": 6,
+    "reference_count": 1,
+    "references_detected": true,
+    "repeated_header_footer_score": 0.9,
+    "section_count": 7,
+    "table_equation_artifact_score": 0.1,
+    "warnings": [],
+    "word_count": 3146,
+    "words_per_page": 524.3
+  },
+  "raw_markdown_file": "literature\\raw\\zotero-pdf-03d8f14985-6ea85b21.md",
+  "updated_at": "2026-06-19T07:26:28.093721+00:00",
+  "validation": {
+    "abstract_detected": true,
+    "cleanup_warnings": [
+      "Equation-like fragments were isolated."
+    ],
+    "created_at": "2026-06-19T07:26:28.077696+00:00",
+    "detected_authors": [],
+    "detected_doi": "10.69997/sct.174465",
+    "detected_title": "- **Source:** Shahhoseyni et al. - 2025 - Hybrid machine-learning for dynamic plant-wide biomanufacturing.pdf",
+    "document_role": "domain_article",
+    "doi_match_status": "unknown",
+    "exclude_from_automatic_llm_extraction": false,
+    "exclude_from_llm_extraction": false,
+    "extraction_engine_attempts": [
+      "canonical_markdown"
+    ],
+    "extraction_engine_used": "PyMuPDF via BibPipelineCombined",
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": true,
+    "metadata_match_status": "unknown",
+    "metadata_title": "1682-1687-1213-SCT-4-2025.docx",
+    "page_count_extracted": 6,
+    "page_count_pdf": 0,
+    "pages_with_text": 6,
+    "paper_id": "zotero-pdf-03d8f14985",
+    "pdf_path": "",
+    "pdf_sha256": "",
+    "reference_count": 1,
+    "references_detected": true,
+    "repeated_header_footer_score": 0.9,
+    "requires_manual_review": false,
+    "section_count": 7,
+    "source_filename": "",
+    "state": "ready_for_llm",
+    "table_equation_artifact_score": 0.1,
+    "title_detected": true,
+    "title_similarity_score": 0.205,
+    "updated_at": "2026-06-19T07:26:28.077696+00:00",
+    "warnings": [
+      "Equation-like fragments were isolated."
+    ],
+    "word_count": 3146,
+    "words_per_page": 524.3,
+    "zotero_authors": [],
+    "zotero_doi": "",
+    "zotero_item_key": "",
+    "zotero_key": "",
+    "zotero_title": "1682-1687-1213-SCT-4-2025.docx",
+    "zotero_year": null
+  }
+}

@@ -254,20 +254,24 @@
         <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
       </section>
 
-      <section class="panel page-section" data-page="config" id="literature-pipeline-config-section">
-        <h2>Literature Pipeline Configuration</h2>
+      <section class="panel page-section" data-page="zotero" id="literature-pipeline-config-section">
+        <h2>Project Literature Import</h2>
         <p class="description">
-          Configure the local Zotero `storage` folder used as the PDF source for the integrated import pipeline.
+          Import into the active project's canonical repository. DOI/PII normalization prevents duplicate papers and publisher XML is preferred when present.
         </p>
         <form id="literature-config-form" class="stack">
           <label>Zotero literature source
             <input name="zotero_literature_storage_path" placeholder="C:\Users\<USER>\Zotero\storage" />
             <span class="helper">Folder containing Zotero attachment subfolders. PDFs are copied from here before Markdown generation.</span>
           </label>
-          <button type="submit">Save literature pipeline configuration</button>
+          <label>Local PDF/XML folder
+            <input name="local_literature_source_path" placeholder="C:\path\to\literature" />
+            <span class="helper">Optional alternative to Zotero storage for a one-off local import.</span>
+          </label>
+          <button type="submit">Save Zotero storage path</button>
         </form>
         <div class="button-row">
-          <button id="run-literature-pipeline" type="button">Import Zotero PDFs and generate Markdown</button>
+          <button id="run-literature-pipeline" type="button">Import Zotero PDFs / local folder into active project</button>
         </div>
         <p id="literature-config-message" class="message" role="status" aria-live="polite"></p>
         <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
@@ -289,6 +293,8 @@
         <div id="literature-project-blocker" class="project-blocker warning"></div>
         <div class="button-row">
           <button id="build-literature-context" type="button" class="secondary">Build Combined Context</button>
+          <button id="scan-literature-duplicates" type="button" class="secondary">Scan Duplicates</button>
+          <button id="apply-literature-deduplication" type="button" class="danger">Apply Deduplication</button>
           <button id="reset-literature-repository" type="button" class="danger">Reset Literature Repository</button>
         </div>
         <p id="literature-repository-message" class="message" role="status" aria-live="polite"></p>

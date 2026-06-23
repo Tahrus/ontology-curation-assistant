@@ -38,6 +38,16 @@ from backend.app.literature.exporter import (
     zotero_select_uri,
 )
 from backend.app.literature.pipeline import run_literature_pipeline
+from backend.app.literature.canonical import (
+    RepositoryPaths,
+    build_combined as build_canonical_combined,
+    deduplicate as deduplicate_canonical,
+    import_directory as import_canonical_directory,
+    list_entries as list_canonical_entries,
+    migrate_old as migrate_old_literature,
+    reset_repository as reset_canonical_repository,
+    write_project_settings,
+)
 from backend.app.literature.repository import (
     build_combined_context_files,
     load_llm_ready_repository_with_diagnostics,
@@ -185,6 +195,20 @@ class LiteratureResetPayload(BaseModel):
 
 class LiteraturePipelineConfigPayload(BaseModel):
     zotero_literature_storage_path: str | None = None
+
+
+class CanonicalLiteratureImportPayload(BaseModel):
+    project: str | int | None = None
+    zotero_storage: str | None = None
+    pdf_dir: str | None = None
+    keep_sources: bool = True
+    overwrite: bool = False
+
+
+class CanonicalLiteratureActionPayload(BaseModel):
+    project: str | int | None = None
+    apply: bool = False
+    confirm: bool = False
 
 
 class CurationPromptPayload(BaseModel):
@@ -1492,6 +1516,89 @@ def save_literature_config(
     return literature
 
 
+def _canonical_project_paths(session: Session, project_ref: str | int | None = None) -> tuple[Project, RepositoryPaths]:
+    project = get_project(session, project_ref)
+    root = Path(project.literature_repository_path or (Path(project.local_path) / "literature"))
+    return project, RepositoryPaths.from_root(root)
+
+
+def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
+    markdown = Path(item["markdown_file"]).read_text(encoding="utf-8", errors="replace") if item.get("markdown_file") else None
+    return {
+        "id": f"canonical-{item['canonical_id']}",
+        "provider": item.get("source_type") or "canonical_pipeline",
+        "title": item.get("title"),
+        "pii": item.get("pii"),
+        "doi": item.get("doi"),
+        "source_type": item.get("source_type"),
+        "import_status": item.get("import_status"),
+        "duplicate_status": item.get("duplicate_status"),
+        "markdown_available": item.get("markdown_available"),
+        "markdown_file": item.get("markdown_file"),
+        "literature_markdown": markdown,
+        "clean_markdown": markdown,
+        "llm_context_markdown": markdown,
+        "full_text": markdown,
+        "content": {"sections": [], "canonical_source": "canonical_pipeline"},
+        "creators": [], "project_tags": item.get("project_tags") or [],
+        "literature_status": {
+            "state": item.get("state") or "ready_for_llm",
+            "source_type": item.get("source_type"),
+            "import_status": item.get("import_status"),
+            "duplicate_status": item.get("duplicate_status"),
+            "markdown_source_file": item.get("markdown_file"),
+            "has_markdown": bool(item.get("markdown_file")),
+        },
+    }
+
+
+@router.get("/literature/canonical")
+def list_canonical_literature(project: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
+    selected, paths = _canonical_project_paths(session, project)
+    return {"project": selected.slug, "repository": str(paths.root), "entries": [_canonical_entry_payload(item) for item in list_canonical_entries(paths)], "combined_output_file": str(paths.combined)}
+
+
+@router.post("/literature/import")
+def import_canonical_literature(payload: CanonicalLiteratureImportPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    project, paths = _canonical_project_paths(session, payload.project)
+    source_value = payload.zotero_storage or payload.pdf_dir
+    if not source_value:
+        settings: dict[str, Any] = {}
+        source_config = paths.root / "source_config.json"
+        if source_config.exists():
+            settings = json.loads(source_config.read_text(encoding="utf-8"))
+        source_value = settings.get("source_path")
+    if not source_value:
+        raise HTTPException(status_code=400, detail="Provide zotero_storage or pdf_dir for the active project.")
+    source_type = "zotero_storage" if payload.zotero_storage else "local_pdf_folder"
+    try:
+        result = import_canonical_directory(paths, Path(source_value), source_type=source_type, keep_sources=payload.keep_sources, overwrite=payload.overwrite)
+        write_project_settings(paths, zotero_storage_path=payload.zotero_storage, literature_source_directory=source_value, keep_temporary_pdfs=payload.keep_sources, overwrite_existing_markdown=payload.overwrite, preserve_curated_metadata=True)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "project": project.slug, **result.to_dict()}
+
+
+@router.post("/literature/build-combined")
+def build_canonical_literature(payload: CanonicalLiteratureActionPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    project, paths = _canonical_project_paths(session, payload.project)
+    return {"ok": True, "project": project.slug, "count": build_canonical_combined(paths), "combined_output_file": str(paths.combined)}
+
+
+@router.post("/literature/deduplicate")
+def deduplicate_canonical_literature(payload: CanonicalLiteratureActionPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    if payload.apply and not payload.confirm:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required to apply deduplication.")
+    project, paths = _canonical_project_paths(session, payload.project)
+    return {"ok": True, "project": project.slug, **deduplicate_canonical(paths, apply=payload.apply)}
+
+
+@router.post("/literature/migrate-old")
+def migrate_canonical_literature(payload: CanonicalLiteratureActionPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    project, paths = _canonical_project_paths(session, payload.project)
+    return {"ok": True, "project": project.slug, **migrate_old_literature(paths, apply=payload.apply)}
+
+
 @router.post("/config/test-zotero")
 def test_zotero_config(session: Session = Depends(get_session)) -> dict[str, object]:
     config = zotero_config(session)
@@ -1574,27 +1681,37 @@ def reset_literature_repository_action(
 ) -> dict[str, Any]:
     if not payload.confirm:
         raise HTTPException(status_code=400, detail="Explicit confirmation is required to reset literature.")
-    result = reset_literature_repository()
-    if not result.ok:
-        raise HTTPException(status_code=500, detail=result.message)
-    _clear_stored_literature(session)
-    return {
-        "ok": result.ok,
-        "path": str(result.path),
-        "deleted": result.deleted,
-        "message": result.message,
-    }
+    try:
+        project, paths = _canonical_project_paths(session)
+    except LookupError:
+        result = reset_literature_repository()
+        if not result.ok:
+            raise HTTPException(status_code=500, detail=result.message)
+        _clear_stored_literature(session)
+        return {"ok": result.ok, "path": str(result.path), "deleted": result.deleted, "message": result.message}
+    try:
+        result = reset_canonical_repository(paths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**result, "project": project.slug, "message": "Active project literature repository reset."}
 
 
 @router.post("/literature/pipeline/run")
 def run_literature_pipeline_action(session: Session = Depends(get_session)) -> dict[str, Any]:
     config = literature_pipeline_config(session)
+    project = None
+    try:
+        project, paths = _canonical_project_paths(session)
+        config = type(config)(zotero_literature_storage_path=config.zotero_literature_storage_path, base_dir=paths.root, pdf_dir=paths.sources, generated_md_dir=paths.markdown, papers_dir=paths.markdown, combined_output_file=paths.combined, fuzzy_min_score=config.fuzzy_min_score)
+    except LookupError:
+        pass
     try:
         result = run_literature_pipeline(config)
     except (FileNotFoundError, ImportError, OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "ok": True,
+        "project": project.slug if project else None,
         "combined_output_file": str(result.combined_output_file),
         "combined_output_exists": result.combined_output_file.exists(),
         "copied_pdf_count": result.copied_pdf_count,
@@ -1852,6 +1969,18 @@ def list_zotero_entries(session: Session = Depends(get_session)) -> list[dict[st
         if paper.get("source_file") in matched_markdown_files:
             continue
         entries.append(_repository_paper_payload(paper, index))
+    try:
+        _, canonical_paths = _canonical_project_paths(session)
+        canonical_files = {entry.get("markdown_file") for entry in entries}
+        entries.extend(
+            _canonical_entry_payload(item)
+            for item in list_canonical_entries(canonical_paths)
+            if item.get("markdown_file") not in canonical_files
+        )
+    except LookupError:
+        canonical_paths = RepositoryPaths.from_root(Path(get_settings().literature_base_dir))
+        canonical_files = {entry.get("markdown_file") for entry in entries}
+        entries.extend(_canonical_entry_payload(item) for item in list_canonical_entries(canonical_paths) if item.get("markdown_file") not in canonical_files)
     return entries
 
 

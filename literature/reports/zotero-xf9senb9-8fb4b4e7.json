@@ -1,0 +1,89 @@
+{
+  "canonical_markdown_file": "literature\\papers\\doi-10-1016-j-websem-2025-100862-ff59c4ad.md",
+  "clean_markdown_file": "literature\\clean\\zotero-xf9senb9-8fb4b4e7.md",
+  "cleanup": {
+    "rule_counts": {},
+    "status": "cleaned",
+    "warnings": []
+  },
+  "document_role": "methodology_article",
+  "llm_context_file": "literature\\context\\zotero-xf9senb9-8fb4b4e7.md",
+  "metadata": {
+    "authors": [
+      "Cogan Shimizu",
+      "Pascal Hitzler"
+    ],
+    "doi": "10.1016/j.websem.2025.100862",
+    "source_filename": "",
+    "title": "Accelerating knowledge graph and ontology engineering with large language models",
+    "year": 2025,
+    "zotero_key": "zotero-XF9SENB9"
+  },
+  "metadata_report_file": "literature\\reports\\zotero-xf9senb9-8fb4b4e7.json",
+  "quality_metrics": {
+    "abstract_detected": true,
+    "incomplete": false,
+    "page_count_extracted": 1,
+    "page_count_pdf": 0,
+    "pages_with_text": 1,
+    "reference_count": 0,
+    "references_detected": false,
+    "repeated_header_footer_score": 0.0,
+    "section_count": 3,
+    "table_equation_artifact_score": 0.0,
+    "warnings": [],
+    "word_count": 73,
+    "words_per_page": 73.0
+  },
+  "raw_markdown_file": "literature\\raw\\zotero-xf9senb9-8fb4b4e7.md",
+  "updated_at": "2026-06-22T14:09:45.508329+00:00",
+  "validation": {
+    "abstract_detected": true,
+    "cleanup_warnings": [],
+    "created_at": "2026-06-22T14:09:45.506152+00:00",
+    "detected_authors": [],
+    "detected_doi": "",
+    "detected_title": "",
+    "document_role": "methodology_article",
+    "doi_match_status": "unknown",
+    "exclude_from_automatic_llm_extraction": true,
+    "exclude_from_llm_extraction": true,
+    "extraction_engine_attempts": [
+      "canonical_markdown"
+    ],
+    "extraction_engine_used": "canonical_markdown",
+    "extraction_quality": "usable",
+    "include_in_llm_extraction": false,
+    "metadata_match_status": "unknown",
+    "metadata_title": "Accelerating knowledge graph and ontology engineering with large language models",
+    "page_count_extracted": 1,
+    "page_count_pdf": 0,
+    "pages_with_text": 1,
+    "paper_id": "zotero-XF9SENB9",
+    "pdf_path": "",
+    "pdf_sha256": "",
+    "reference_count": 0,
+    "references_detected": false,
+    "repeated_header_footer_score": 0.0,
+    "requires_manual_review": false,
+    "section_count": 3,
+    "source_filename": "",
+    "state": "context_ready",
+    "table_equation_artifact_score": 0.0,
+    "title_detected": false,
+    "title_similarity_score": 0.0,
+    "updated_at": "2026-06-22T14:09:45.506152+00:00",
+    "warnings": [],
+    "word_count": 73,
+    "words_per_page": 73.0,
+    "zotero_authors": [
+      "Cogan Shimizu",
+      "Pascal Hitzler"
+    ],
+    "zotero_doi": "10.1016/j.websem.2025.100862",
+    "zotero_item_key": "",
+    "zotero_key": "",
+    "zotero_title": "Accelerating knowledge graph and ontology engineering with large language models",
+    "zotero_year": 2025
+  }
+}

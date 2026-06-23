@@ -28,6 +28,20 @@ def _session():
     return SessionLocal()
 
 
+def _literature_project_paths(project_ref: str | None):
+    from backend.app.literature.canonical import RepositoryPaths
+    from backend.app.projects import get_project
+
+    session = _session()
+    try:
+        project = get_project(session, project_ref)
+        root = Path(project.literature_repository_path or (Path(project.local_path) / "literature"))
+        return session, project, RepositoryPaths.from_root(root)
+    except Exception:
+        session.close()
+        raise
+
+
 @project_app.command("create")
 def project_create(
     name: str = typer.Option(..., help="Project name."),
@@ -582,8 +596,115 @@ def literature_show(
     console.print(document.content[:chars])
     
 
+@literature_app.command("import")
+def literature_import(
+    project: str | None = typer.Option(None, "--project", help="Project slug; defaults to the active project."),
+    zotero_storage: Path | None = typer.Option(None, "--zotero-storage", help="Zotero storage directory."),
+    pdf_dir: Path | None = typer.Option(None, "--pdf-dir", help="Local PDF/XML/Markdown directory."),
+    overwrite: bool = typer.Option(False, help="Replace generated Markdown even when existing content is more complete."),
+    keep_sources: bool = typer.Option(True, "--keep-sources/--no-keep-sources"),
+) -> None:
+    """Import literature into one project's canonical repository."""
+    from backend.app.literature.canonical import import_directory, write_project_settings
+
+    if bool(zotero_storage) == bool(pdf_dir):
+        raise typer.BadParameter("Provide exactly one of --zotero-storage or --pdf-dir.")
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        source = zotero_storage or pdf_dir
+        assert source is not None
+        result = import_directory(paths, source, source_type="zotero_storage" if zotero_storage else "local_pdf_folder", keep_sources=keep_sources, overwrite=overwrite)
+        write_project_settings(paths, zotero_storage_path=str(zotero_storage) if zotero_storage else None, literature_source_directory=str(source), keep_temporary_pdfs=keep_sources, overwrite_existing_markdown=overwrite, preserve_curated_metadata=True)
+    finally:
+        session.close()
+    console.print(f"[green]Project:[/green] {selected.slug}")
+    console.print(f"Scanned {result.files_scanned}; imported {result.imported}; duplicates reused {result.duplicates}; failed {result.failed}.")
+    console.print(f"[green]Combined literature:[/green] {result.combined_output_file}")
+
+
+@literature_app.command("list")
+def literature_project_list(project: str | None = typer.Option(None, "--project")) -> None:
+    """List canonical literature for one project."""
+    from backend.app.literature.canonical import list_entries
+
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        entries = list_entries(paths)
+    finally:
+        session.close()
+    console.print(f"[bold]{selected.slug}[/bold]: {len(entries)} canonical paper(s)")
+    for item in entries:
+        console.print(f"{item['canonical_id']} | {item.get('title')} | PII={item.get('pii') or '-'} | DOI={item.get('doi') or '-'} | {item.get('import_status')}")
+
+
+@literature_app.command("reset")
+def literature_project_reset(
+    project: str | None = typer.Option(None, "--project"),
+    yes: bool = typer.Option(False, "--yes", help="Confirm reset of only this project's literature repository."),
+) -> None:
+    """Reset only the selected project's literature repository."""
+    from backend.app.literature.canonical import reset_repository
+
+    if not yes:
+        raise typer.BadParameter("Pass --yes to confirm the project literature reset.")
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        result = reset_repository(paths)
+    finally:
+        session.close()
+    console.print(f"[green]Reset {selected.slug}:[/green] {result['path']}")
+
+
+@literature_app.command("deduplicate")
+def literature_project_deduplicate(
+    project: str | None = typer.Option(None, "--project"),
+    apply: bool = typer.Option(False, "--apply", help="Apply after creating a backup."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report only (the default)."),
+) -> None:
+    """Scan or safely merge canonical duplicates."""
+    from backend.app.literature.canonical import deduplicate
+
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        result = deduplicate(paths, apply=apply)
+    finally:
+        session.close()
+    console.print_json(data={"project": selected.slug, **result})
+
+
+@literature_app.command("build-combined")
+def literature_project_build_combined(project: str | None = typer.Option(None, "--project")) -> None:
+    """Build clean combined Markdown from canonical papers only."""
+    from backend.app.literature.canonical import build_combined
+
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        count = build_combined(paths)
+    finally:
+        session.close()
+    console.print(f"[green]{paths.combined}[/green] ({count} papers, project {selected.slug})")
+
+
+@literature_app.command("migrate-old")
+def literature_project_migrate_old(
+    project: str | None = typer.Option(None, "--project"),
+    apply: bool = typer.Option(False, "--apply", help="Apply with backup and archive."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report only (the default)."),
+) -> None:
+    """Plan or apply migration from legacy literature folders."""
+    from backend.app.literature.canonical import migrate_old
+
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        result = migrate_old(paths, apply=apply)
+    finally:
+        session.close()
+    console.print_json(data={"project": selected.slug, **result})
+
+
 @literature_app.command("pipeline")
 def literature_pipeline(
+    project: str | None = typer.Option(None, "--project", help="Project slug; defaults to active project when available."),
     zotero_literature_storage_path: Path | None = typer.Option(
         None,
         "--zotero-literature-storage-path",
@@ -602,6 +723,14 @@ def literature_pipeline(
     from backend.app.literature.pipeline import run_literature_pipeline
 
     configured = literature_pipeline_config_from_settings()
+    project_session = None
+    if base_dir is None:
+        try:
+            project_session, _, project_paths = _literature_project_paths(project)
+            base_dir = project_paths.root
+        except LookupError:
+            if project is not None:
+                raise typer.BadParameter(f"Project not found: {project}")
     effective_base_dir = base_dir or configured.base_dir
     config = LiteraturePipelineConfig(
         zotero_literature_storage_path=(
@@ -624,6 +753,9 @@ def literature_pipeline(
         result = run_literature_pipeline(config)
     except (FileNotFoundError, ImportError, OSError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
+    finally:
+        if project_session is not None:
+            project_session.close()
     console.print(f"[green]Combined literature Markdown:[/green] {result.combined_output_file}")
     console.print(f"[bold]Copied PDFs:[/bold] {result.copied_pdf_count}")
     console.print(f"[bold]Generated Markdown files:[/bold] {result.converted_markdown_count}")
