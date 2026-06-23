@@ -1,0 +1,32 @@
+{
+  "canonical_id": "10.1529_biophysj.105.074112",
+  "title": "Comment to the Editor",
+  "pii": null,
+  "doi": "10.1529/biophysj.105.074112",
+  "source_type": "zotero_storage",
+  "source_path": "C:\\Users\\ge47vob\\Zotero\\storage\\729895Z6\\Shulgin und Ruckenstein - 2006 - A Protein Molecule in a Mixed Solvent The Preferential Binding Parameter via the Kirkwood-Buff Theo.pdf",
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-23T13:47:36.514723+00:00",
+  "updated_at": "2026-06-23T13:47:36.514723+00:00",
+  "created_at": "2026-06-23T13:47:36.514723+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/10.1529_biophysj.105.074112.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1529_biophysj.105.074112.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/10.1529_biophysj.105.074112.pdf",
+      "artifact_type": "source_copy",
+      "ownership": "staged"
+    }
+  ]
+}

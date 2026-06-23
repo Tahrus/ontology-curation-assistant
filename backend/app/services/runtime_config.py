@@ -11,7 +11,7 @@ from backend.app.literature.pipeline import LiteraturePipelineConfig
 from backend.app.models.db import AppSetting
 
 
-SECRET_KEYS = {"zotero_api_key", "llm_api_key"}
+SECRET_KEYS = {"zotero_api_key", "llm_api_key", "elsevier_api_key", "elsevier_inst_token"}
 
 
 @dataclass(frozen=True)
@@ -64,6 +64,28 @@ class LiteratureRuntimeConfig:
     papers_dir: Path
     combined_output_file: Path
     fuzzy_min_score: float
+
+
+@dataclass(frozen=True)
+class PublisherRuntimeConfig:
+    api_key: str | None
+    inst_token: str | None
+    base_url: str
+    enabled: bool
+    api_key_source: str
+
+
+def publisher_config(session: Session) -> PublisherRuntimeConfig:
+    settings = get_settings()
+    env_key = settings.elsevier_api_key
+    env_token = settings.elsevier_inst_token
+    return PublisherRuntimeConfig(
+        api_key=env_key or get_runtime_value(session, "elsevier_api_key"),
+        inst_token=env_token or get_runtime_value(session, "elsevier_inst_token"),
+        base_url=get_runtime_value(session, "elsevier_api_base_url") or settings.elsevier_api_base_url,
+        enabled=(str(get_runtime_value(session, "publisher_api_enrichment_enabled") if get_runtime_value(session, "publisher_api_enrichment_enabled") is not None else settings.publisher_api_enrichment_enabled).lower() == "true"),
+        api_key_source="environment" if env_key else ("stored" if get_runtime_value(session, "elsevier_api_key") else "missing"),
+    )
 
 
 def get_runtime_value(session: Session, key: str) -> str | None:
@@ -174,6 +196,7 @@ def config_status(session: Session) -> dict[str, object]:
     zotero = zotero_config(session)
     llm = llm_config(session)
     literature = literature_config(session)
+    publisher = publisher_config(session)
     settings = get_settings()
     return {
         "backend": {"ok": True, "app_name": settings.app_name},
@@ -231,5 +254,17 @@ def config_status(session: Session) -> dict[str, object]:
             "combined_output_file": str(literature.combined_output_file),
             "combined_output_exists": literature.combined_output_file.exists(),
             "fuzzy_min_score": literature.fuzzy_min_score,
+        },
+        "publisher": {
+            "configured": bool(publisher.api_key),
+            "enabled": publisher.enabled,
+            "base_url": publisher.base_url,
+            "api_key": mask_secret(publisher.api_key),
+            "inst_token": mask_secret(publisher.inst_token),
+            "api_key_source": publisher.api_key_source,
+            "enable_publisher_api_enrichment": publisher.enabled,
+            "elsevier_api_key": "",
+            "elsevier_inst_token": "",
+            "elsevier_api_base_url": publisher.base_url,
         },
     }

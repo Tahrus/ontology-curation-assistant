@@ -1,0 +1,32 @@
+{
+  "canonical_id": "10.1016_j.ces.2009.06.021",
+  "title": "Chemical Engineering Science 64 (2009) 4051 -- 4059",
+  "pii": null,
+  "doi": "10.1016/j.ces.2009.06.021",
+  "source_type": "zotero_storage",
+  "source_path": "C:\\Users\\ge47vob\\Zotero\\storage\\WGN5K8XK\\Baş et al. - 2009 - Population balance modelling of protein precipitates exhibiting turbulent flow through a circular pi.pdf",
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-23T13:47:41.501122+00:00",
+  "updated_at": "2026-06-23T13:47:41.501122+00:00",
+  "created_at": "2026-06-23T13:47:41.501122+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/10.1016_j.ces.2009.06.021.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1016_j.ces.2009.06.021.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/10.1016_j.ces.2009.06.021.pdf",
+      "artifact_type": "source_copy",
+      "ownership": "staged"
+    }
+  ]
+}

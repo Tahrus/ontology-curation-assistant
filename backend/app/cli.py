@@ -9,11 +9,15 @@ from backend.app.odk.integration import OdkProjectConfig, preview_export_path
 
 app = typer.Typer(help="Ontology Curation Assistant command line tools.")
 literature_app = typer.Typer(help="Literature repository commands.")
+literature_staged_app = typer.Typer(help="Pipeline-generated literature awaiting review.")
+literature_curated_app = typer.Typer(help="Human-curated authoritative literature.")
 project_app = typer.Typer(help="Project management commands.")
 curation_app = typer.Typer(help="Project-scoped curation run commands.")
 evaluation_app = typer.Typer(help="Evaluation metric commands.")
 ontology_app = typer.Typer(help="Project-scoped ontology/ODK commands.")
 app.add_typer(literature_app, name="literature")
+literature_app.add_typer(literature_staged_app, name="staged")
+literature_app.add_typer(literature_curated_app, name="curated")
 app.add_typer(project_app, name="project")
 app.add_typer(curation_app, name="curation")
 app.add_typer(evaluation_app, name="evaluation")
@@ -624,7 +628,7 @@ def literature_import(
 
 @literature_app.command("list")
 def literature_project_list(project: str | None = typer.Option(None, "--project")) -> None:
-    """List canonical literature for one project."""
+    """List staged pipeline output for compatibility; use curated list downstream."""
     from backend.app.literature.canonical import list_entries
 
     session, selected, paths = _literature_project_paths(project)
@@ -635,6 +639,65 @@ def literature_project_list(project: str | None = typer.Option(None, "--project"
     console.print(f"[bold]{selected.slug}[/bold]: {len(entries)} canonical paper(s)")
     for item in entries:
         console.print(f"{item['canonical_id']} | {item.get('title')} | PII={item.get('pii') or '-'} | DOI={item.get('doi') or '-'} | {item.get('import_status')}")
+
+
+@literature_staged_app.command("list")
+def literature_staged_list(project: str | None = typer.Option(None, "--project")) -> None:
+    """List imported entries awaiting human review."""
+    literature_project_list(project)
+
+
+@literature_curated_app.command("list")
+def literature_curated_list(project: str | None = typer.Option(None, "--project")) -> None:
+    """List authoritative human-curated entries."""
+    from backend.app.literature.canonical import list_curated_entries
+
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        entries = list_curated_entries(paths)
+    finally:
+        session.close()
+    console.print(f"[bold]{selected.slug}[/bold]: {len(entries)} curated paper(s)")
+    for item in entries:
+        console.print(f"{item['canonical_id']} | {item.get('title')} | tags={','.join(item.get('project_tags') or []) or '-'}")
+
+
+@literature_app.command("promote")
+def literature_promote(
+    entry_id: str = typer.Argument(..., help="Canonical staged entry ID."),
+    project: str | None = typer.Option(None, "--project"),
+    project_tag: list[str] | None = typer.Option(None, "--project-tag"),
+) -> None:
+    """Promote one reviewed staged entry into the curated repository."""
+    from backend.app.literature.canonical import promote_staged_entry
+
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        entry = promote_staged_entry(paths, entry_id, project_tags=project_tag)
+    finally:
+        session.close()
+    console.print(f"[green]Promoted:[/green] {entry['canonical_id']} ({selected.slug})")
+
+
+@literature_app.command("cleanup-staged")
+def literature_cleanup_staged(
+    project: str | None = typer.Option(None, "--project"),
+    only_unpromoted: bool = typer.Option(False, "--only-unpromoted", help="Required safety acknowledgement."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm deletion of unpromoted staged copies."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview staged and orphan generated files without deleting."),
+) -> None:
+    """Delete unpromoted staged copies without touching curated or Zotero data."""
+    from backend.app.literature.canonical import cleanup_unpromoted_staged
+
+    if not only_unpromoted or (not yes and not dry_run):
+        raise typer.BadParameter("Pass --only-unpromoted --yes to confirm conservative staged cleanup.")
+    session, selected, paths = _literature_project_paths(project)
+    try:
+        result = cleanup_unpromoted_staged(paths, dry_run=dry_run)
+    finally:
+        session.close()
+    action = "would delete" if dry_run else "deleted"
+    console.print(f"[green]{selected.slug}:[/green] {action} {result['deleted_count']} staged entries and {result['files_deleted_count']} generated files; curated retained {result['curated_count']}.")
 
 
 @literature_app.command("reset")

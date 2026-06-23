@@ -1,0 +1,32 @@
+{
+  "canonical_id": "10.1016_j.tibtech.2025.11.002",
+  "title": "PREFER: An Ontology for the PREcision",
+  "pii": null,
+  "doi": "10.1016/j.tibtech.2025.11.002",
+  "source_type": "zotero_storage",
+  "source_path": "C:\\Users\\ge47vob\\Zotero\\storage\\NL6UMVJT\\Amigó et al. - 2026 - PREFER An Ontology for the PREcision FERmentation Community.pdf",
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-23T13:47:41.167011+00:00",
+  "updated_at": "2026-06-23T13:47:41.167011+00:00",
+  "created_at": "2026-06-23T13:47:41.167011+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/10.1016_j.tibtech.2025.11.002.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1016_j.tibtech.2025.11.002.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/10.1016_j.tibtech.2025.11.002.pdf",
+      "artifact_type": "source_copy",
+      "ownership": "staged"
+    }
+  ]
+}

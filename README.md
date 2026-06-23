@@ -204,12 +204,17 @@ oca literature reset-repository --yes
 
 The reset clears every file and subfolder under the configured `OCA_LITERATURE_BASE_DIR` literature directory, recreates the empty directory, and clears the runtime literature/candidate cache. It refuses unsafe reset targets such as filesystem roots and unlinks symlinks instead of following them.
 
-The default literature pipeline is project-scoped. Select an active project, open Literature, choose a Zotero `storage` directory or local PDF/XML/Markdown folder, and import. Equivalent CLI commands are:
+The literature repository is project-scoped and explicitly two-stage. Configure Zotero/local import paths under Settings, select an active project, then use Literature > Import literature. Import creates pipeline-generated staged entries only. Review metadata and Markdown, assign project tags, and promote an entry before downstream candidate extraction or ontology curation can use it. Equivalent CLI commands are:
 
 ```powershell
 oca literature import --project protein-precipitation --zotero-storage "C:\Users\<USER>\Zotero\storage"
 oca literature import --project protein-precipitation --pdf-dir .\pdfs
 oca literature list --project protein-precipitation
+oca literature staged list --project protein-precipitation
+oca literature promote <canonical-id> --project protein-precipitation --project-tag protein-precipitation
+oca literature curated list --project protein-precipitation
+oca literature cleanup-staged --project protein-precipitation --only-unpromoted --dry-run
+oca literature cleanup-staged --project protein-precipitation --only-unpromoted --yes
 oca literature deduplicate --project protein-precipitation --dry-run
 oca literature deduplicate --project protein-precipitation --apply
 oca literature build-combined --project protein-precipitation
@@ -224,15 +229,20 @@ The default literature artefacts are:
 
 ```text
 projects/<project_slug>/literature/
-  sources/                   retained source PDF/XML/Markdown files
-  markdown/                  canonical minimal-header LLM Markdown
-  metadata/                  rich JSON metadata and preserved curation fields
-  combined_literature.md     canonical papers, each included once
+  sources/                   staged source copies; original Zotero data is untouched
+  markdown/                  pipeline-generated staged Markdown
+  metadata/                  staged metadata, provenance, and promotion status
+  curated/
+    markdown/                human-reviewed authoritative Markdown
+    metadata/                reviewed metadata, project tags, and staged traceability
+  combined_literature.md     generated from curated entries only
   backups/                   deduplication and migration backups
   archive/                   archived legacy files
 ```
 
-LLM-facing Markdown contains no YAML front matter. It begins with one title, one normalized PII line when available, one optional normalized DOI line, then the paper content. Rich provenance and human fields remain in JSON metadata. Apply-mode deduplication and migration create backups first; migration archives legacy files rather than deleting them.
+LLM-facing Markdown contains no YAML front matter. It begins with one title, one normalized PII line when available, one optional normalized DOI line, then the paper content. Rich provenance and human fields remain in JSON metadata. New imports register repository-relative artifact paths, artifact types, and staged/curated ownership in metadata. Existing single-stage canonical entries remain in place and are treated conservatively as staged/needs-review; OCA does not guess that they were manually curated. Promotion stores a trace back to the staged metadata.
+
+On Literature, **Delete uncurated imported literature and generated files** first previews and then, after confirmation, removes unpromoted artifacts from the active project repository and from a distinct configured legacy global literature repository. The bounded orphan scan covers OCA-managed `sources`, `markdown`/`Markdown`, `metadata`, `raw`, `clean`, `context`, `reports`, `papers`, `blocked`, `combined`, `raw_markdown`, `clean_markdown`, `llm_context`, `metadata_reports`, `rejected_or_review_required`, and `Paper-PDF` folders. Old untracked files in those locations are conservatively classified as generated staged artifacts. Curated artifacts, promoted staging records, project/ontology/settings files, and original external Zotero storage are protected. `combined_literature.md` is removed when no curated entries exist and rebuilt from curated entries otherwise. The CLI `--dry-run` command above previews the selected project repository without deleting files.
 
 ### Zotero from the Browser
 
@@ -249,7 +259,9 @@ The Zotero Metadata Sync controls are bound after the DOM is ready and use stabl
 
 If you do not have real Zotero credentials ready, click `Load Test Entries`; this imports two local bibliography records that are enough to test selection and mock extraction.
 
-On the Literature page, confirm the active project and Zotero storage path (or enter a local source folder), then click `Import Zotero PDFs / local folder into active project`. The page reports scanned, imported, reused duplicate, and failed counts and exposes combined rebuild, duplicate dry-run/apply, Markdown viewing, and project-only reset.
+The Literature page contains the import action, imported-literature review queue, curated-literature editor, promotion controls, project-tag selector, and confirmed unpromoted-stage cleanup. Literature/Zotero paths and publisher settings now live under Settings.
+
+Publisher enrichment settings support `ELSEVIER_API_KEY`/`OCA_ELSEVIER_API_KEY`, optional `ELSEVIER_INSTTOKEN`/`OCA_ELSEVIER_INST_TOKEN`, `OCA_ELSEVIER_API_BASE_URL` (default `https://api.elsevier.com`), and `OCA_PUBLISHER_API_ENRICHMENT_ENABLED`. Missing publisher settings load as empty secrets with enrichment disabled; saved values are merged without changing unrelated settings. Environment secrets take precedence over values stored through Settings. API responses show only `configured`/`missing`, never the secret value. Enrichment remains optional; the working local import pipeline does not require publisher credentials.
 
 ### LLM / Chatbot Configuration
 

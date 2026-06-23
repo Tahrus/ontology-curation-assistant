@@ -1,0 +1,32 @@
+{
+  "canonical_id": "relate-relation-extraction-in-biomedical-abstracts-with",
+  "title": "RELATE: Relation Extraction in Biomedical Abstracts with",
+  "pii": null,
+  "doi": null,
+  "source_type": "zotero_storage",
+  "source_path": "C:\\Users\\ge47vob\\Zotero\\storage\\DFMM9PWC\\Olasunkanmi et al. - 2025 - RELATE Relation Extraction in Biomedical Abstracts with LLMs and Ontology Constraints.pdf",
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-23T13:47:39.015225+00:00",
+  "updated_at": "2026-06-23T13:47:39.015225+00:00",
+  "created_at": "2026-06-23T13:47:39.015225+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/relate-relation-extraction-in-biomedical-abstracts-with.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/relate-relation-extraction-in-biomedical-abstracts-with.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/relate-relation-extraction-in-biomedical-abstracts-with.pdf",
+      "artifact_type": "source_copy",
+      "ownership": "staged"
+    }
+  ]
+}

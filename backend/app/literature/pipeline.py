@@ -42,10 +42,10 @@ def literature_pipeline_config_from_settings(settings: Settings | None = None) -
     return LiteraturePipelineConfig(
         zotero_literature_storage_path=Path(settings.zotero_literature_storage_path) if settings.zotero_literature_storage_path else None,
         base_dir=base,
-        pdf_dir=base / "sources",
-        generated_md_dir=base / "markdown",
-        papers_dir=base / "markdown",
-        combined_output_file=base / "combined_literature.md",
+        pdf_dir=Path(settings.literature_pdf_dir),
+        generated_md_dir=Path(settings.literature_generated_md_dir),
+        papers_dir=Path(settings.literature_repository_path),
+        combined_output_file=Path(settings.literature_combined_output_file),
         fuzzy_min_score=settings.literature_fuzzy_min_score,
     )
 
@@ -53,10 +53,6 @@ def literature_pipeline_config_from_settings(settings: Settings | None = None) -
 def validate_pipeline_config(config: LiteraturePipelineConfig, *, require_source: bool = True) -> None:
     if require_source and config.zotero_literature_storage_path is None:
         raise ValueError("Zotero literature storage path is not configured.")
-    if require_source and config.zotero_literature_storage_path and not config.zotero_literature_storage_path.exists():
-        raise FileNotFoundError(f"Configured Zotero literature storage path was not found: {config.zotero_literature_storage_path}")
-    if require_source and config.zotero_literature_storage_path and not config.zotero_literature_storage_path.exists():
-        raise FileNotFoundError(f"Configured Zotero literature storage path was not found: {config.zotero_literature_storage_path}")
     if require_source and config.zotero_literature_storage_path and not config.zotero_literature_storage_path.exists():
         raise FileNotFoundError(f"Configured Zotero literature storage path was not found: {config.zotero_literature_storage_path}")
     if require_source and config.zotero_literature_storage_path and not config.zotero_literature_storage_path.is_dir():
@@ -71,11 +67,16 @@ def discover_zotero_pdfs(source_dir: Path) -> list[Path]:
 def run_literature_pipeline(config: LiteraturePipelineConfig) -> LiteraturePipelineResult:
     validate_pipeline_config(config)
     assert config.zotero_literature_storage_path is not None
-    result = import_directory(RepositoryPaths.from_root(config.base_dir), config.zotero_literature_storage_path, source_type="zotero_storage")
+    paths = RepositoryPaths.from_root(config.base_dir)
+    result = import_directory(paths, config.zotero_literature_storage_path, source_type="zotero_storage")
     if not result.files_scanned:
-        raise ValueError(f"No PDF, XML, or Markdown files were found under {config.zotero_literature_storage_path}")
+        raise ValueError(f"No PDF files were found under the configured Zotero literature storage path (PDF/XML/Markdown supported): {config.zotero_literature_storage_path}")
+    output = config.combined_output_file or paths.combined
+    if output != paths.combined:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(paths.combined.read_text(encoding="utf-8"), encoding="utf-8")
     return LiteraturePipelineResult(
-        combined_output_file=Path(result.combined_output_file),
+        combined_output_file=output,
         copied_pdf_count=result.files_scanned - result.failed,
         converted_markdown_count=result.imported + result.duplicates,
         failed_pdf_count=result.failed,
@@ -89,6 +90,14 @@ def run_literature_pipeline(config: LiteraturePipelineConfig) -> LiteraturePipel
 def combine_markdown_files(papers_dir: Path, output_file: Path) -> int:
     paths = RepositoryPaths.from_root(output_file.parent)
     count = build_combined(paths)
+    if not count:
+        files = sorted(papers_dir.glob("*.md")) if papers_dir.exists() else []
+        blocks = ["# Combined Literature Markdown", "", f"- Source folder: `{papers_dir}`", f"- Number of files: {len(files)}", ""]
+        for index, path in enumerate(files, start=1):
+            blocks.extend(["---", "", f"# Document {index}: {path.stem}", "", f"<!-- Source file: {path.name} -->", "", path.read_text(encoding="utf-8", errors="replace").strip(), ""])
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text("\n".join(blocks), encoding="utf-8")
+        return len(files)
     if paths.combined != output_file:
         output_file.write_text(paths.combined.read_text(encoding="utf-8"), encoding="utf-8")
     return count

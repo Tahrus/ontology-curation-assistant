@@ -1,0 +1,32 @@
+{
+  "canonical_id": "10.1021_jp036582z",
+  "title": "A Combined Simulation and Kirkwood-Buff Approach to Quantify Cosolvent Effects on",
+  "pii": null,
+  "doi": "10.1021/jp036582z",
+  "source_type": "zotero_storage",
+  "source_path": "C:\\Users\\ge47vob\\Zotero\\storage\\74DRAVLB\\Aburi und Smith - 2004 - A Combined Simulation and Kirkwood−Buff Approach to Quantify Cosolvent Effects on the Conformational.pdf",
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-23T13:47:36.595132+00:00",
+  "updated_at": "2026-06-23T13:47:36.595132+00:00",
+  "created_at": "2026-06-23T13:47:36.595132+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/10.1021_jp036582z.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1021_jp036582z.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/10.1021_jp036582z.pdf",
+      "artifact_type": "source_copy",
+      "ownership": "staged"
+    }
+  ]
+}

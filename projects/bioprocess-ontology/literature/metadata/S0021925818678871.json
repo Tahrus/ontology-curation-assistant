@@ -1,0 +1,32 @@
+{
+  "canonical_id": "S0021925818678871",
+  "title": "Dynamics of Batch Protein Precipitation",
+  "pii": "S0021925818678871",
+  "doi": "10.1016/s0021-9258(18)67887-1",
+  "source_type": "zotero_storage",
+  "source_path": "C:\\Users\\ge47vob\\Zotero\\storage\\CAEIA7IH\\Ehtesham et al. - 2025 - Supplementary Information.pdf",
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-23T13:47:38.797810+00:00",
+  "updated_at": "2026-06-23T13:47:38.797810+00:00",
+  "created_at": "2026-06-23T13:47:38.797810+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S0021925818678871.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S0021925818678871.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S0021925818678871.pdf",
+      "artifact_type": "source_copy",
+      "ownership": "staged"
+    }
+  ]
+}

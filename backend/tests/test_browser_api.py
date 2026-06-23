@@ -59,8 +59,8 @@ def test_browser_subpages_serve_html(client):
     for path, marker in [
         ("/config", "Zotero Metadata Sync"),
         ("/projects", "Projects"),
-        ("/zotero", "Literature Records"),
-        ("/literature", "Literature Records"),
+        ("/zotero", "Imported literature awaiting review"),
+        ("/literature", "Imported literature awaiting review"),
         ("/ontology", "Ontology"),
         ("/curation-prompt", "Ontology Curation Prompt"),
         ("/curation", "Candidate Curation"),
@@ -1031,7 +1031,8 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
         'name="fuzzy_min_score"',
     ]:
         assert removed_field not in pipeline_section
-    assert "Import Zotero PDFs" in pipeline_section
+    assert "Literature Import Settings" in pipeline_section
+    assert 'data-page="config"' in pipeline_section
     assert 'id="run-literature-pipeline"' in html
     assert 'aria-live="polite"' in html
     assert 'role="status"' in html
@@ -1162,7 +1163,20 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert 'document.querySelector("#zotero-filter")?.addEventListener("input", renderEntries)' in script
     assert "/api/literature/build-combined" in script
     assert "/api/literature/repository/retry-extraction" in script
-    assert 'value="incomplete"' in html
+    assert 'id="staged-literature-entries"' in html
+    assert 'id="curated-literature-entries"' in html
+    assert "Promote to curated literature" in script
+    assert "/api/literature/cleanup-staged" in script
+    assert "Delete uncurated imported literature and generated files" in html
+    assert "dry_run: true" in script
+    assert "original Zotero files remain untouched" in script
+    assert 'id="publisher-config-form"' in html
+    assert "/api/config/publisher" in script
+    assert "state.status?.publisher ?? {}" in script
+    assert "publisher.elsevier_api_key ?? \"\"" in script
+    assert "publisher.enable_publisher_api_enrichment ?? publisher.enabled ?? false" in script
+    assert "const form = event.currentTarget;" in script
+    assert "event.currentTarget.elsevier_api_key" not in script
     assert "project_tags" in script
     assert "Promise.all([loadStatus(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()])" not in script
     assert "20260602-md" in html

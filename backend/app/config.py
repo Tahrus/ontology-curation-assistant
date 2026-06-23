@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     literature_repository_path: Path = Path("literature") / "papers"
     literature_combined_output_file: Path = Path("literature") / "combined_literature.md"
     literature_fuzzy_min_score: float = 0.82
+    elsevier_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ELSEVIER_API_KEY", "OCA_ELSEVIER_API_KEY"),
+    )
+    elsevier_inst_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ELSEVIER_INSTTOKEN", "OCA_ELSEVIER_INST_TOKEN"),
+    )
+    elsevier_api_base_url: str = "https://api.elsevier.com"
+    publisher_api_enrichment_enabled: bool = False
     ppo_odk_ontology_path: Path = Field(
         default=Path("/odk/ontology/src/ontology"),
         validation_alias=AliasChoices("PPO_ODK_ONTOLOGY_PATH", "OCA_PPO_ODK_ONTOLOGY_PATH"),

@@ -254,10 +254,10 @@
         <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
       </section>
 
-      <section class="panel page-section" data-page="zotero" id="literature-pipeline-config-section">
-        <h2>Project Literature Import</h2>
+      <section class="panel page-section" data-page="config" id="literature-pipeline-config-section">
+        <h2>Literature Import Settings</h2>
         <p class="description">
-          Import into the active project's canonical repository. DOI/PII normalization prevents duplicate papers and publisher XML is preferred when present.
+          Configure import sources here. Import and human review happen on the Literature page.
         </p>
         <form id="literature-config-form" class="stack">
           <label>Zotero literature source
@@ -270,11 +270,20 @@
           </label>
           <button type="submit">Save Zotero storage path</button>
         </form>
-        <div class="button-row">
-          <button id="run-literature-pipeline" type="button">Import Zotero PDFs / local folder into active project</button>
-        </div>
         <p id="literature-config-message" class="message" role="status" aria-live="polite"></p>
-        <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel page-section" data-page="config" id="publisher-api-config-section">
+        <h2>Publisher API Settings</h2>
+        <p class="description">Optional Elsevier enrichment. Environment variables take precedence over stored values; secrets are never displayed after saving.</p>
+        <form id="publisher-config-form" class="stack">
+          <label>Elsevier API key<input name="elsevier_api_key" type="password" autocomplete="off" /></label>
+          <label>Elsevier institutional token<input name="elsevier_inst_token" type="password" autocomplete="off" /></label>
+          <label>Elsevier API base URL<input name="elsevier_api_base_url" value="https://api.elsevier.com" /></label>
+          <label class="inline"><input name="publisher_api_enrichment_enabled" type="checkbox" /> Enable publisher API enrichment</label>
+          <button type="submit">Save publisher settings</button>
+        </form>
+        <p id="publisher-config-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
       <section class="panel wide page-section" data-page="config" id="saved-config-section">
@@ -286,35 +295,21 @@
       </section>
 
       <section class="panel wide page-section" data-page="zotero" id="zotero-entries-section">
-        <h2>Literature Records</h2>
+        <h2>Literature</h2>
         <p class="description">
-          Literature entries can be imported and tagged to one or more projects. Tagged literature is later used for candidate generation.
+          Import creates staged entries. Review and promote them before they are used for ontology curation.
         </p>
         <div id="literature-project-blocker" class="project-blocker warning"></div>
         <div class="button-row">
-          <button id="build-literature-context" type="button" class="secondary">Build Combined Context</button>
-          <button id="scan-literature-duplicates" type="button" class="secondary">Scan Duplicates</button>
-          <button id="apply-literature-deduplication" type="button" class="danger">Apply Deduplication</button>
-          <button id="reset-literature-repository" type="button" class="danger">Reset Literature Repository</button>
+          <button id="run-literature-pipeline" type="button">Import literature</button>
+          <button id="cleanup-staged-literature" type="button" class="danger">Delete uncurated imported literature and generated files</button>
         </div>
+        <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
         <p id="literature-repository-message" class="message" role="status" aria-live="polite"></p>
-        <input id="zotero-filter" placeholder="Search title, author, DOI, key, or year" />
-        <label>Review filter
-          <select id="literature-review-filter">
-            <option value="all">All literature</option>
-            <option value="domain_article">Domain articles</option>
-            <option value="methodology_article">Methodology articles</option>
-            <option value="review_article">Review articles</option>
-            <option value="supplementary_information">Supplementary information</option>
-            <option value="ready_for_llm">Ready for LLM</option>
-            <option value="blocked">Blocked</option>
-            <option value="needs_review">Needs review</option>
-            <option value="incomplete">Incomplete extraction</option>
-            <option value="metadata_mismatch">Metadata mismatches</option>
-            <option value="requires_manual_review">Requires manual review</option>
-          </select>
-        </label>
-        <div id="zotero-entries" class="table-list"></div>
+        <h3>Imported literature awaiting review</h3>
+        <div id="staged-literature-entries" class="table-list"></div>
+        <h3>Curated literature</h3>
+        <div id="curated-literature-entries" class="table-list"></div>
       </section>
 
       <section class="panel wide page-section" data-page="ontology" id="ontology-section">

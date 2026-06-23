@@ -43,12 +43,19 @@ from backend.app.literature.canonical import (
     build_combined as build_canonical_combined,
     deduplicate as deduplicate_canonical,
     import_directory as import_canonical_directory,
+    cleanup_unpromoted_staged,
     list_entries as list_canonical_entries,
+    list_curated_entries,
     migrate_old as migrate_old_literature,
+    promote_staged_entry,
+    reject_staged_entry,
     reset_repository as reset_canonical_repository,
+    update_curated_entry,
+    update_staged_entry,
     write_project_settings,
 )
 from backend.app.literature.repository import (
+    LiteratureRepositoryLoadResult,
     build_combined_context_files,
     load_llm_ready_repository_with_diagnostics,
     literature_repository_report,
@@ -111,6 +118,7 @@ from backend.app.services.runtime_config import (
     literature_pipeline_config,
     literature_config,
     llm_config,
+    publisher_config,
     set_runtime_values,
     zotero_config,
 )
@@ -209,6 +217,30 @@ class CanonicalLiteratureActionPayload(BaseModel):
     project: str | int | None = None
     apply: bool = False
     confirm: bool = False
+    dry_run: bool = False
+
+
+class LiteratureEntryEditPayload(BaseModel):
+    project: str | int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    markdown: str | None = None
+    project_tags: list[str] | None = None
+
+
+class StagedLiteratureDecisionPayload(BaseModel):
+    project: str | int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    markdown: str | None = None
+    project_tags: list[str] | None = None
+    delete: bool = False
+    confirm: bool = False
+
+
+class PublisherConfigPayload(BaseModel):
+    elsevier_api_key: str | None = None
+    elsevier_inst_token: str | None = None
+    elsevier_api_base_url: str | None = None
+    publisher_api_enrichment_enabled: bool | None = None
 
 
 class CurationPromptPayload(BaseModel):
@@ -1516,6 +1548,29 @@ def save_literature_config(
     return literature
 
 
+@router.post("/config/publisher")
+def save_publisher_config(payload: PublisherConfigPayload, session: Session = Depends(get_session)) -> dict[str, object]:
+    values: dict[str, str | None] = {}
+    if payload.elsevier_api_key is not None:
+        values["elsevier_api_key"] = payload.elsevier_api_key
+    if payload.elsevier_inst_token is not None:
+        values["elsevier_inst_token"] = payload.elsevier_inst_token
+    if payload.elsevier_api_base_url is not None:
+        values["elsevier_api_base_url"] = payload.elsevier_api_base_url
+    if payload.publisher_api_enrichment_enabled is not None:
+        values["publisher_api_enrichment_enabled"] = str(payload.publisher_api_enrichment_enabled).lower()
+    set_runtime_values(session, values)
+    config = publisher_config(session)
+    return {
+        "configured": bool(config.api_key),
+        "enabled": config.enabled,
+        "base_url": config.base_url,
+        "api_key": "configured" if config.api_key else "missing",
+        "inst_token": "configured" if config.inst_token else "missing",
+        "api_key_source": config.api_key_source,
+    }
+
+
 def _canonical_project_paths(session: Session, project_ref: str | int | None = None) -> tuple[Project, RepositoryPaths]:
     project = get_project(session, project_ref)
     root = Path(project.literature_repository_path or (Path(project.local_path) / "literature"))
@@ -1525,14 +1580,22 @@ def _canonical_project_paths(session: Session, project_ref: str | int | None = N
 def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
     markdown = Path(item["markdown_file"]).read_text(encoding="utf-8", errors="replace") if item.get("markdown_file") else None
     return {
-        "id": f"canonical-{item['canonical_id']}",
+        "id": item["canonical_id"],
+        "repository_stage": item.get("repository_stage") or "staged",
         "provider": item.get("source_type") or "canonical_pipeline",
         "title": item.get("title"),
+        "authors": item.get("authors") or [],
+        "year": item.get("year"),
+        "journal": item.get("journal"),
         "pii": item.get("pii"),
         "doi": item.get("doi"),
         "source_type": item.get("source_type"),
         "import_status": item.get("import_status"),
         "duplicate_status": item.get("duplicate_status"),
+        "curation_status": item.get("curation_status"),
+        "pipeline_version": item.get("pipeline_version"),
+        "imported_at": item.get("imported_at") or item.get("created_at"),
+        "staged_entry_id": item.get("staged_entry_id"),
         "markdown_available": item.get("markdown_available"),
         "markdown_file": item.get("markdown_file"),
         "literature_markdown": markdown,
@@ -1555,7 +1618,100 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
 @router.get("/literature/canonical")
 def list_canonical_literature(project: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
     selected, paths = _canonical_project_paths(session, project)
-    return {"project": selected.slug, "repository": str(paths.root), "entries": [_canonical_entry_payload(item) for item in list_canonical_entries(paths)], "combined_output_file": str(paths.combined)}
+    staged = [_canonical_entry_payload(item) for item in list_canonical_entries(paths)]
+    curated = [_canonical_entry_payload(item) for item in list_curated_entries(paths)]
+    return {"project": selected.slug, "repository": str(paths.root), "entries": curated, "staged_entries": staged, "curated_entries": curated, "combined_output_file": str(paths.combined)}
+
+
+@router.get("/literature/staged/{entry_id}")
+def read_staged_literature(entry_id: str, project: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, project)
+    item = next((entry for entry in list_canonical_entries(paths) if entry.get("canonical_id") == entry_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Staged literature entry not found")
+    return _canonical_entry_payload(item)
+
+
+@router.patch("/literature/staged/{entry_id}")
+def edit_staged_literature(entry_id: str, payload: LiteratureEntryEditPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, payload.project)
+    try:
+        return _canonical_entry_payload(update_staged_entry(paths, entry_id, metadata=payload.metadata, markdown=payload.markdown, project_tags=payload.project_tags))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/literature/staged/{entry_id}/promote")
+def promote_staged_literature(entry_id: str, payload: StagedLiteratureDecisionPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, payload.project)
+    try:
+        item = promote_staged_entry(paths, entry_id, metadata=payload.metadata, markdown=payload.markdown, project_tags=payload.project_tags)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "entry": _canonical_entry_payload(item), "combined_output_file": str(paths.combined)}
+
+
+@router.post("/literature/staged/{entry_id}/reject")
+def reject_staged_literature(entry_id: str, payload: StagedLiteratureDecisionPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, payload.project)
+    if payload.delete and not payload.confirm:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required to delete a staged entry.")
+    try:
+        return {"ok": True, **reject_staged_entry(paths, entry_id, delete=payload.delete)}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/literature/curated/{entry_id}")
+def read_curated_literature(entry_id: str, project: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, project)
+    item = next((entry for entry in list_curated_entries(paths) if entry.get("canonical_id") == entry_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Curated literature entry not found")
+    return _canonical_entry_payload(item)
+
+
+@router.patch("/literature/curated/{entry_id}")
+def edit_curated_literature(entry_id: str, payload: LiteratureEntryEditPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, payload.project)
+    try:
+        return _canonical_entry_payload(update_curated_entry(paths, entry_id, metadata=payload.metadata, markdown=payload.markdown, project_tags=payload.project_tags))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/literature/cleanup-staged")
+def cleanup_staged_literature(payload: CanonicalLiteratureActionPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    if not payload.dry_run and not payload.confirm:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required to delete uncurated imported literature.")
+    project, paths = _canonical_project_paths(session, payload.project)
+    repositories = [
+        {"repository": str(paths.root), **cleanup_unpromoted_staged(paths, dry_run=payload.dry_run)}
+    ]
+    legacy_root = literature_config(session).base_dir
+    if legacy_root.resolve() != paths.root.resolve() and legacy_root.exists():
+        legacy_paths = RepositoryPaths.from_root(legacy_root)
+        repositories.append(
+            {"repository": str(legacy_paths.root), **cleanup_unpromoted_staged(legacy_paths, dry_run=payload.dry_run)}
+        )
+    sum_keys = (
+        "deleted_count", "files_deleted_count", "orphan_files_deleted_count",
+        "files_skipped_curated", "files_skipped_external", "files_missing",
+        "directories_cleaned_count", "curated_count",
+    )
+    totals = {key: sum(int(report.get(key, 0)) for report in repositories) for key in sum_keys}
+    return {
+        "ok": True,
+        "project": project.slug,
+        "dry_run": payload.dry_run,
+        **totals,
+        "combined_removed": any(bool(report.get("combined_removed")) for report in repositories),
+        "deleted_ids": [entry_id for report in repositories for entry_id in report.get("deleted_ids", [])],
+        "files_deleted": [f"{report['repository']}::{path}" for report in repositories for path in report.get("files_deleted", [])],
+        "directories_cleaned": [f"{report['repository']}::{path}" for report in repositories for path in report.get("directories_cleaned", [])],
+        "errors": [error for report in repositories for error in report.get("errors", [])],
+        "repositories": repositories,
+    }
 
 
 @router.post("/literature/import")
@@ -2535,7 +2691,31 @@ def extract_candidates(
             raise HTTPException(status_code=404, detail="Zotero entry not found")
         document = _document_from_source(session, source)
     else:
-        text, repository_result = literature_context_for_entry_generation()
+        try:
+            _, project_paths = _canonical_project_paths(session)
+            build_canonical_combined(project_paths)
+            curated_entries = list_curated_entries(project_paths)
+            text = project_paths.combined.read_text(encoding="utf-8", errors="replace") if project_paths.combined.exists() else ""
+            repository_result = LiteratureRepositoryLoadResult(
+                papers=[
+                    {
+                        "id": entry.get("canonical_id"),
+                        "paper_id": entry.get("canonical_id"),
+                        "title": entry.get("title"),
+                        "source_file": entry.get("markdown_file"),
+                        "state": "ready_for_llm",
+                        "document_role": entry.get("document_role") or "domain_article",
+                        "metadata_match_status": "matched",
+                        "extraction_quality": "usable",
+                    }
+                    for entry in curated_entries
+                    if entry.get("markdown_file")
+                ],
+                loaded_files=[Path(entry["markdown_file"]) for entry in curated_entries if entry.get("markdown_file")],
+                skipped_files=[],
+            )
+        except LookupError:
+            text, repository_result = literature_context_for_entry_generation()
         if payload.dry_run:
             return {
                 "dry_run": True,
@@ -2617,11 +2797,18 @@ def extract_candidates(
 @router.post("/curation/suggestions/run")
 def run_curation_suggestions(session: Session = Depends(get_session)) -> dict[str, Any]:
     lit_config = literature_config(session)
+    literature_path = lit_config.combined_output_file
+    try:
+        _, project_paths = _canonical_project_paths(session)
+        build_canonical_combined(project_paths)
+        literature_path = project_paths.combined
+    except LookupError:
+        pass
     try:
         result = run_curation_suggestion_workflow(
             prompt=_curation_prompt(session),
             ontology_path=_selected_ontology_file(session),
-            literature_path=lit_config.combined_output_file,
+            literature_path=literature_path,
             config=llm_config(session),
         )
     except (CurationInputError, CurationResponseError, LlmUnavailableError, json.JSONDecodeError) as exc:

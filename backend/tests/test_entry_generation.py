@@ -11,6 +11,7 @@ from backend.app.extraction.parser import parse_candidate_response
 from backend.app.extraction.service import persist_candidates
 from backend.app.github_export import GitHubExportConfig, save_generated_ontology_to_github
 from backend.app.literature.exporter import refresh_literature_markdown_repository
+from backend.app.literature.canonical import RepositoryPaths
 from backend.app.literature.pipeline import (
     LiteraturePipelineConfig,
     combine_markdown_files,
@@ -595,7 +596,7 @@ def test_literature_pipeline_empty_zotero_storage_is_clear(tmp_path):
         raise AssertionError("empty Zotero storage should raise a clear ValueError")
 
 
-def test_literature_pipeline_copies_pdfs_generates_markdown_and_combined_corpus(tmp_path):
+def test_literature_pipeline_copies_sources_generates_staged_markdown_without_auto_curation(tmp_path):
     import fitz  # type: ignore[import-untyped]
 
     storage = tmp_path / "zotero-storage" / "ATTACHMENT1"
@@ -621,22 +622,21 @@ def test_literature_pipeline_copies_pdfs_generates_markdown_and_combined_corpus(
 
     result = run_literature_pipeline(config)
 
-    copied_pdfs = list(config.pdf_dir.glob("*.pdf"))
-    copied_upper_pdfs = list(config.pdf_dir.glob("*.PDF"))
-    generated_markdown = list(config.generated_md_dir.glob("*.md"))
-    paper_markdown = list(config.papers_dir.glob("*.md"))
+    paths = RepositoryPaths.from_root(config.base_dir)
+    copied_pdfs = list(paths.sources.glob("*.pdf"))
+    generated_markdown = list(paths.markdown.glob("*.md"))
+    staged_metadata = list(paths.metadata.glob("*.json"))
     combined_text = result.combined_output_file.read_text(encoding="utf-8")
 
     assert discover_zotero_pdfs(tmp_path / "zotero-storage") == [pdf_path]
     assert result.copied_pdf_count == 1
     assert result.converted_markdown_count == 1
-    assert (copied_pdfs or copied_upper_pdfs)[0].name == "Protein Recovery.PDF"
+    assert copied_pdfs
     assert generated_markdown
-    assert paper_markdown
-    assert 'source: "Zotero literature pipeline"' in paper_markdown[0].read_text(encoding="utf-8")
-    assert "# Combined Literature Markdown" in combined_text
-    assert "Protein Recovery" in combined_text
-    assert result.combined_markdown_count == 1
+    assert staged_metadata
+    assert "Protein Recovery" in generated_markdown[0].read_text(encoding="utf-8")
+    assert combined_text == ""
+    assert result.combined_markdown_count == 0
     assert not (tmp_path / "literature" / "literature.json").exists()
 
 
@@ -669,11 +669,12 @@ def test_literature_pipeline_repeated_run_does_not_duplicate_pdf_or_markdown_art
 
     assert first.copied_pdf_count == 1
     assert second.copied_pdf_count == 1
-    assert len(list(config.pdf_dir.glob("*.pdf"))) == 1
-    assert len(list(config.generated_md_dir.glob("*.md"))) == 1
-    assert len(list(config.papers_dir.glob("*.md"))) == 1
-    assert "_1" not in " ".join(path.name for path in config.pdf_dir.iterdir())
-    assert "# Combined Literature Markdown" in config.combined_output_file.read_text(encoding="utf-8")
+    paths = RepositoryPaths.from_root(config.base_dir)
+    assert len(list(paths.sources.glob("*.pdf"))) == 1
+    assert len(list(paths.markdown.glob("*.md"))) == 1
+    assert len(list(paths.metadata.glob("*.json"))) == 1
+    assert "_1" not in " ".join(path.name for path in paths.sources.iterdir())
+    assert config.combined_output_file.read_text(encoding="utf-8") == ""
     assert not (tmp_path / "literature" / "literature.json").exists()
 
 

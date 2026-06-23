@@ -1147,14 +1147,27 @@ function renderSuggestions() {
 
 function populateLiteratureConfigForm() {
   const form = document.querySelector("#literature-config-form");
-  if (!form || !state.status?.literature) return;
-  const literature = state.status.literature;
-  [
-    ["zotero_literature_storage_path", literature.zotero_literature_storage_path],
-  ].forEach(([name, value]) => {
-    const input = form.querySelector(`[name="${name}"]`);
-    if (input && value !== undefined && value !== null) input.value = value;
-  });
+  const literature = state.status?.literature ?? {};
+  if (form) {
+    [
+      ["zotero_literature_storage_path", literature.zotero_literature_storage_path],
+    ].forEach(([name, value]) => {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (input && value !== undefined && value !== null) input.value = value;
+    });
+  }
+  const publisher = state.status?.publisher ?? {};
+  const publisherForm = document.querySelector("#publisher-config-form");
+  if (publisherForm) {
+    const keyInput = publisherForm.querySelector('[name="elsevier_api_key"]');
+    const tokenInput = publisherForm.querySelector('[name="elsevier_inst_token"]');
+    const baseUrlInput = publisherForm.querySelector('[name="elsevier_api_base_url"]');
+    const enabledInput = publisherForm.querySelector('[name="publisher_api_enrichment_enabled"]');
+    if (keyInput) keyInput.value = publisher.elsevier_api_key ?? "";
+    if (tokenInput) tokenInput.value = publisher.elsevier_inst_token ?? "";
+    if (baseUrlInput) baseUrlInput.value = publisher.elsevier_api_base_url ?? publisher.base_url ?? "https://api.elsevier.com";
+    if (enabledInput) enabledInput.checked = Boolean(publisher.enable_publisher_api_enrichment ?? publisher.enabled ?? false);
+  }
 }
 
 async function loadDocuments() {
@@ -1162,8 +1175,100 @@ async function loadDocuments() {
 }
 
 async function loadEntries() {
-  state.entries = await api("/api/zotero/entries");
-  renderEntries();
+  const repository = await api("/api/literature/canonical");
+  state.stagedLiteratureEntries = repository.staged_entries || [];
+  state.curatedLiteratureEntries = repository.curated_entries || [];
+  renderTwoStageLiterature();
+}
+
+function literatureEditor(entry, stage) {
+  const record = document.createElement("article");
+  record.className = "literature-record";
+  const tags = new Set(entry.project_tags || []);
+  record.innerHTML = `<details open class="markdown-details">
+    <summary>${escapeHtml(entry.title || "Untitled literature entry")} | ${escapeHtml(stage)}</summary>
+    <div class="stack literature-entry-editor">
+      <label>Title<input data-field="title" value="${escapeHtml(entry.title || "")}" /></label>
+      <label>Authors<input data-field="authors" value="${escapeHtml(Array.isArray(entry.authors) ? entry.authors.join("; ") : entry.authors || "")}" /></label>
+      <label>Year<input data-field="year" value="${escapeHtml(entry.year || "")}" /></label>
+      <label>Journal<input data-field="journal" value="${escapeHtml(entry.journal || "")}" /></label>
+      <label>DOI<input data-field="doi" value="${escapeHtml(entry.doi || "")}" /></label>
+      <label>PII<input data-field="pii" value="${escapeHtml(entry.pii || "")}" /></label>
+      <label>Reviewed Markdown<textarea data-field="markdown" rows="18"></textarea></label>
+      <label>Project tags<select data-field="project_tags" multiple size="${Math.min(Math.max(state.projects.length, 2), 8)}"></select></label>
+      <p class="description">Source: ${escapeHtml(entry.source_type || "unknown")} | Imported: ${escapeHtml(entry.import_status || "unknown")} | Pipeline: ${escapeHtml(entry.literature_metadata?.pipeline_version || entry.pipeline_version || "unknown")}</p>
+      <div class="button-row"></div>
+    </div>
+  </details>`;
+  record.querySelector('[data-field="markdown"]').value = entry.literature_markdown || "";
+  const tagSelect = record.querySelector('[data-field="project_tags"]');
+  state.projects.forEach((project) => {
+    const option = document.createElement("option");
+    option.value = project.slug;
+    option.textContent = `${project.name} (${project.ontology_id})`;
+    option.selected = tags.has(project.slug) || tags.has(project.ontology_id) || tags.has(String(project.id));
+    tagSelect.append(option);
+  });
+  const values = () => ({
+    metadata: {
+      title: record.querySelector('[data-field="title"]').value,
+      authors: record.querySelector('[data-field="authors"]').value.split(";").map((value) => value.trim()).filter(Boolean),
+      year: record.querySelector('[data-field="year"]').value || null,
+      journal: record.querySelector('[data-field="journal"]').value,
+      doi: record.querySelector('[data-field="doi"]').value,
+      pii: record.querySelector('[data-field="pii"]').value,
+    },
+    markdown: record.querySelector('[data-field="markdown"]').value,
+    project_tags: [...tagSelect.selectedOptions].map((option) => option.value),
+  });
+  const actions = record.querySelector(".button-row");
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = stage === "staged" ? "Save review" : "Save curated entry";
+  save.addEventListener("click", async (event) => {
+    await withButtonFeedback(event.currentTarget, "Saving", async () => {
+      await api(`/api/literature/${stage}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify(values()) });
+      await loadEntries();
+      setSuccess("#literature-repository-message", "Literature review saved.");
+    }).catch((error) => setError("#literature-repository-message", error.message));
+  });
+  actions.append(save);
+  if (stage === "staged") {
+    const promote = document.createElement("button");
+    promote.type = "button";
+    promote.textContent = "Promote to curated literature";
+    promote.addEventListener("click", async (event) => {
+      await withButtonFeedback(event.currentTarget, "Promoting", async () => {
+        await api(`/api/literature/staged/${encodeURIComponent(entry.id)}/promote`, { method: "POST", body: JSON.stringify(values()) });
+        await loadEntries();
+        setSuccess("#literature-repository-message", "Entry promoted to curated literature.");
+      }).catch((error) => setError("#literature-repository-message", error.message));
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "Reject / delete staged entry";
+    remove.addEventListener("click", async () => {
+      if (!window.confirm("Delete this staged copy? Curated literature and original Zotero data are not affected.")) return;
+      await api(`/api/literature/staged/${encodeURIComponent(entry.id)}/reject`, { method: "POST", body: JSON.stringify({ delete: true, confirm: true }) });
+      await loadEntries();
+      setSuccess("#literature-repository-message", "Staged entry deleted.");
+    });
+    actions.append(promote, remove);
+  }
+  return record;
+}
+
+function renderTwoStageLiterature() {
+  const staged = document.querySelector("#staged-literature-entries");
+  const curated = document.querySelector("#curated-literature-entries");
+  if (!staged || !curated) return;
+  staged.innerHTML = "";
+  curated.innerHTML = "";
+  (state.stagedLiteratureEntries || []).filter((entry) => !["promoted", "rejected"].includes(entry.import_status)).forEach((entry) => staged.append(literatureEditor(entry, "staged")));
+  (state.curatedLiteratureEntries || []).forEach((entry) => curated.append(literatureEditor(entry, "curated")));
+  if (!staged.children.length) staged.innerHTML = '<p class="message">No imported literature is awaiting review.</p>';
+  if (!curated.children.length) curated.innerHTML = '<p class="message">No literature has been promoted yet.</p>';
 }
 
 function renderEntries() {
@@ -2170,6 +2275,34 @@ document.querySelector("#literature-config-form")?.addEventListener("submit", as
   }
 });
 
+document.querySelector("#publisher-config-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const payload = formPayload(form);
+  try {
+    await withButtonFeedback(button, "Saving", async () => {
+      const result = await api("/api/config/publisher", {
+        method: "POST",
+        body: JSON.stringify({
+          elsevier_api_key: payload.elsevier_api_key ?? "",
+          elsevier_inst_token: payload.elsevier_inst_token ?? "",
+          elsevier_api_base_url: payload.elsevier_api_base_url || "https://api.elsevier.com",
+          publisher_api_enrichment_enabled: Boolean(payload.publisher_api_enrichment_enabled),
+        }),
+      });
+      const keyInput = form.querySelector('[name="elsevier_api_key"]');
+      const tokenInput = form.querySelector('[name="elsevier_inst_token"]');
+      if (keyInput) keyInput.value = "";
+      if (tokenInput) tokenInput.value = "";
+      await loadStatus();
+      setSuccess("#publisher-config-message", `Publisher settings saved. Key source: ${result.api_key_source}.`);
+    });
+  } catch (error) {
+    setError("#publisher-config-message", error.message);
+  }
+});
+
 document.querySelector("#run-literature-pipeline").addEventListener("click", async (event) => {
   try {
     setMessage("#literature-import-message", "Importing Zotero PDFs and generating Markdown...");
@@ -2189,6 +2322,26 @@ document.querySelector("#run-literature-pipeline").addEventListener("click", asy
     });
   } catch (error) {
     setError("#literature-import-message", error.message);
+  }
+});
+
+document.querySelector("#cleanup-staged-literature")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Checking", async () => {
+      const preview = await api("/api/literature/cleanup-staged", { method: "POST", body: JSON.stringify({ dry_run: true }) });
+      const confirmed = window.confirm(
+        `Delete ${preview.deleted_count} uncurated staged entrie(s) and ${preview.files_deleted_count} generated file(s), including ${preview.orphan_files_deleted_count} orphan(s), from ${preview.repositories.length} managed literature location(s)? Curated literature, projects, settings, ontology files, and original Zotero files remain untouched.`
+      );
+      if (!confirmed) {
+        setSuccess("#literature-repository-message", `Cleanup preview only: ${preview.files_deleted_count} generated file(s) would be deleted; no files changed.`);
+        return;
+      }
+      const result = await api("/api/literature/cleanup-staged", { method: "POST", body: JSON.stringify({ confirm: true }) });
+      await loadEntries();
+      setSuccess("#literature-repository-message", `Deleted ${result.deleted_count} staged entrie(s) and ${result.files_deleted_count} generated file(s), including ${result.orphan_files_deleted_count} orphan(s). Curated retained: ${result.curated_count}; directories cleaned: ${result.directories_cleaned_count}; errors: ${result.errors.length}.`);
+    });
+  } catch (error) {
+    setError("#literature-repository-message", error.message);
   }
 });
 

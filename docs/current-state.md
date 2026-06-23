@@ -1,6 +1,6 @@
 # Current Project State
 
-Last reviewed: 2026-06-22
+Last reviewed: 2026-06-23
 
 ## Summary
 
@@ -8,7 +8,7 @@ Ontology Curation Assistant is currently an early working scaffold for a human-i
 
 The main implemented value today is a local browser workflow for configuration, project creation/selection, Zotero metadata sync, local PPO ontology readout, candidate extraction/curation, structured project suggestion review, evaluation metrics, OLS/local ontology matching, tree-based ontology visualization, rejection management, and approved-candidate export, plus CLI support for the underlying ingestion, Zotero, LLM test, project, curation-run, evaluation, and project ODK workflows. A standalone `zotero_lit_md` CLI package now exports Zotero Desktop local PDF attachments into full-text LLM/RAG-ready Markdown.
 
-The canonical literature repository is now active-project scoped at `projects/<slug>/literature/{sources,markdown,metadata}` with `combined_literature.md`. It preserves normalized DOI/PII identity, minimal LLM headers, curation metadata, safe deduplication backups, and legacy migration archives. The remaining extraction limitation is that ordinary PDFs require a usable text layer; OCR is not yet part of this canonical path. Elsevier XML is parsed when supplied, while automatic publisher-API enrichment is a logical next task for Zotero items whose local PDF is incomplete. Another next task is retiring the older global quality-artifact actions once all downstream candidate extraction reads project-canonical Markdown directly.
+The canonical literature repository is active-project scoped and two-stage. Existing `sources/`, `markdown/`, and `metadata/` outputs are preserved as pipeline-generated staging; human-approved entries live under `curated/{markdown,metadata}`. Candidate extraction, curation suggestions, and `combined_literature.md` use curated entries only. New metadata records carry a repository-relative artifact manifest with staged/curated ownership. Confirmed cleanup previews first, removes unpromoted and orphan artifacts only from known OCA-managed folders in both the active project repository and a distinct configured legacy global repository, protects curated/promoted/external files, and repairs combined output from curated entries. Existing canonical entries are non-destructively treated as staged/needs-review because prior manual curation cannot be inferred safely. Ordinary PDFs still require a usable text layer; OCR and automatic publisher-API retrieval are next tasks. Elsevier XML parsing remains supported, and Settings loads missing optional Elsevier values with safe defaults, stores masked secrets with environment precedence, and permits clearing stored credentials.
 
 ## Implemented Capabilities
 
@@ -25,7 +25,7 @@ Implemented endpoints:
 - Browser UI includes client-side route handling for dashboard/header links, a persistent active-project banner, project hierarchy dashboard, page-scoped startup data loading, a visible startup/page error path, accessible button/link click feedback, long-running action busy states, a Light/Dark theme toggle persisted in local storage, and a smaller shared logo link back to the dashboard.
 - Browser Configuration includes guarded Zotero metadata-sync controls, provider/model dropdowns for Gemini, OpenAI, Anthropic, and custom OpenAI-compatible LLMs, preset defaults for model/base URL/env var/runtime settings, API key environment variable support, a `Test LLM connection` action with key-source and canonical provider-key diagnostics, and Docker/ODK diagnostics for mounted paths and tools.
 - Configuration: `/api/config/status`, `/api/config/zotero`, `/api/config/llm`, `/api/config/ontology-path`, `/api/config/test-zotero`.
-- The default literature pipeline is project-scoped and exposed through `/api/literature/import`, `/api/literature/canonical`, `/api/literature/build-combined`, `/api/literature/deduplicate`, `/api/literature/migrate-old`, and confirmed reset. `/api/literature/pipeline/run` remains a compatibility alias.
+- Two-stage literature APIs cover staged/curated listing, staged review/edit/promote/reject, curated edit/project tags, dry-run/confirmed unpromoted cleanup with legacy managed-orphan repair, and publisher settings. Import remains `/api/literature/import`; `/api/literature/pipeline/run` remains a compatibility alias.
 - Saved API configurations: `/api/config/saved`, `/api/config/saved/{id}/activate`, and deletion.
 - Zotero: `/api/zotero/test`, `/api/zotero/sync`, `/api/zotero/entries`, `/api/zotero/entries/{id}`, `/api/zotero/import-test`.
 - Existing ontology: `/api/ontology/status`, `/api/ontology/scan`, `/api/ontology/select-file`, `/api/ontology/index`, `/api/ontology/terms`, `/api/ontology/terms/{term_id}`, `/api/ontology/search`, `/api/ontology/graph`. The browser Ontology page now treats `/api/ontology/status` as active-project scoped by default and shows a no-project warning instead of using stale global ontology data.
