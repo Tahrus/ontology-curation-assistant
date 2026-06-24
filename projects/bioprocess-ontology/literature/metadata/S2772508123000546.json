@@ -1,0 +1,90 @@
+{
+  "canonical_id": "S2772508123000546",
+  "title": "A review and perspective on hybrid modeling methodologies",
+  "pii": "S2772508123000546",
+  "doi": "10.1016/j.dche.2023.100136",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:30.087283+00:00",
+  "updated_at": "2026-06-24T13:58:30.087283+00:00",
+  "authors": [
+    "Artur M. Schweidtmann",
+    "Dongda Zhang",
+    "Moritz von Stosch"
+  ],
+  "year": "2024",
+  "journal": "Digital Chemical Engineering",
+  "zotero_key": "KDB8BNT6",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S2772508123000546",
+  "abstract": "The term hybrid modeling refers to the combination of parametric models (typically derived from knowledge about the system) and nonparametric models (typically deduced from data). Despite more than 20 years of research, over 150 scientific publications (Agharafeie et al., 2023), and some recent industrial applications on this topic, the capabilities of hybrid models often seem underrated, misunderstood, and disregarded by other disciplines as “simply combining some models” or maybe it has gone unnoticed at all. In fact, hybrid modeling could become an enabling technology in various areas of research and industry, such as systems and synthetic biology, personalized medicine, material design, or the process industries. Thus, a systematic investigation of the hybrid model properties is warranted to scoop the full potential of machine learning, reduce experimental effort, and increase the domain in which models can predict reliably.",
+  "publication_date": "2024-03-31",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S2772508123000546",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S2772508123000546",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.dche.2023.100136",
+  "lookup_pii": "S2772508123000546",
+  "doi_used": "10.1016/j.dche.2023.100136",
+  "pii_used": "S2772508123000546",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:43.540867+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S2772508123000546.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S2772508123000546.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S2772508123000546.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S2772508123000546.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S2772508123000546.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S2772508123000546.md",
+  "generated_artifacts": [
+    "markdown/S2772508123000546.md",
+    "markdown/S2772508123000546.md",
+    "metadata/S2772508123000546.json",
+    "sources/S2772508123000546.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2772508123000546.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S2772508123000546.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S2772508123000546",
+  "promoted_at": "2026-06-24T13:57:47.329488+00:00"
+}

@@ -1,0 +1,93 @@
+{
+  "canonical_id": "S0098135424002783",
+  "title": "Solving crystallization/precipitation population balance models in CADET, Part II: Size-based Smoluchowski coagulation and fragmentation equations in batch and continuous modes",
+  "pii": "S0098135424002783",
+  "doi": "10.1016/j.compchemeng.2024.108860",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:23.076890+00:00",
+  "updated_at": "2026-06-24T13:58:23.076890+00:00",
+  "authors": [
+    "Wendi Zhang",
+    "Todd Przybycien",
+    "Jan Michael Breuer",
+    "Eric von Lieres"
+  ],
+  "year": "2025",
+  "journal": "Computers & Chemical Engineering",
+  "zotero_key": "8DJ4GK5B",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S0098135424002783",
+  "abstract": "A particle size-based Smoluchowski coagulation and fragmentation equation was solved in the free and open source process modeling package CADET. The WFV and MCNP schemes were selected to discretize the internal particle size coordinate. Weights in these schemes were modified to preserve and conserve the zeroth and third moments for size-based equations. Modified propositions and proofs for the scheme are provided. Analytical Jacobians were derived and implemented to reduce the solver’s runtime. A two-dimensional Smoluchowski coagulation and fragmentation equation with axial position as external coordinate was formulated and discretized to support simulations of continuous particulate processes in dispersive plug flow reactors. Five 1D and four 2D test cases were used to validate the implementation and benchmark the solver’s performance. The runtime, L1 error norm, L1 error rate, particle size distribution moments up to sixth order and several scalar metrics were analyzed in detail.",
+  "publication_date": "2025-01-31",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [
+    "Appendix-like XML content was detected but could not be parsed cleanly."
+  ],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S0098135424002783",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S0098135424002783",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.compchemeng.2024.108860",
+  "lookup_pii": "S0098135424002783",
+  "doi_used": "10.1016/j.compchemeng.2024.108860",
+  "pii_used": "S0098135424002783",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:38.261011+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S0098135424002783.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S0098135424002783.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S0098135424002783.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S0098135424002783.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S0098135424002783.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S0098135424002783.md",
+  "generated_artifacts": [
+    "markdown/S0098135424002783.md",
+    "markdown/S0098135424002783.md",
+    "metadata/S0098135424002783.json",
+    "sources/S0098135424002783.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0098135424002783.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S0098135424002783.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S0098135424002783",
+  "promoted_at": "2026-06-24T13:57:41.267349+00:00"
+}

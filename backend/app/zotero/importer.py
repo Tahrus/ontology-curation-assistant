@@ -22,6 +22,7 @@ class ParsedSource:
     year: str | None = None
     doi: str | None = None
     url: str | None = None
+    identifier_metadata: dict[str, object] = field(default_factory=dict)
     abstract: str | None = None
     tags: list[str] = field(default_factory=list)
     collections: list[str] = field(default_factory=list)
@@ -110,6 +111,7 @@ def _parse_csl_item(item: dict) -> ParsedSource | None:
         year=_parse_issued_year(item.get("issued") or item.get("date")),
         doi=normalize_doi(_clean_string(item.get("DOI") or item.get("doi"))),
         url=_clean_string(item.get("URL") or item.get("url")),
+        identifier_metadata=_identifier_metadata(item),
         abstract=_clean_string(item.get("abstract") or item.get("abstractNote")),
         tags=_parse_string_list(item.get("tag") or item.get("tags")),
         collections=_parse_string_list(item.get("collection") or item.get("collections")),
@@ -135,6 +137,7 @@ def _parse_zotero_api_item(item: dict, data: dict) -> ParsedSource | None:
         year=_parse_date_year(data.get("date")),
         doi=normalize_doi(_clean_string(data.get("DOI") or data.get("doi"))),
         url=_clean_string(data.get("url") or data.get("URL")),
+        identifier_metadata=_identifier_metadata(data),
         abstract=_clean_string(data.get("abstractNote") or data.get("abstract")),
         tags=_parse_zotero_tags(item.get("tags") or data.get("tags")),
         collections=_parse_string_list(item.get("collections") or data.get("collections")),
@@ -221,6 +224,7 @@ def source_to_record(source: ParsedSource, *, synced: bool = False) -> Literatur
         doi=source.doi,
         normalized_doi=source.doi,
         url=source.url,
+        identifiers_json=json.dumps(source.identifier_metadata),
         abstract=source.abstract,
         tags_json=json.dumps(source.tags),
         collections_json=json.dumps(source.collections),
@@ -245,6 +249,7 @@ def update_source_record(
     record.doi = source.doi
     record.normalized_doi = source.doi
     record.url = source.url
+    record.identifiers_json = json.dumps(source.identifier_metadata)
     record.abstract = source.abstract
     record.tags_json = json.dumps(source.tags)
     record.collections_json = json.dumps(source.collections)
@@ -335,6 +340,11 @@ def _clean_string(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _identifier_metadata(data: dict[str, object]) -> dict[str, object]:
+    keys = ("pii", "PII", "DOI", "doi", "ISSN", "issn", "ISBN", "isbn", "url", "URL", "PMID", "pmid", "PMCID", "pmcid", "extra")
+    return {key: data[key] for key in keys if data.get(key) not in (None, "")}
 
 
 def _parse_csl_creators(value: object) -> list[dict[str, str | None]]:

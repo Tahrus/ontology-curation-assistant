@@ -1,0 +1,94 @@
+{
+  "canonical_id": "S0098135425001978",
+  "title": "Dynamics of batch protein precipitation",
+  "pii": "S0098135425001978",
+  "doi": "10.1016/j.compchemeng.2025.109193",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:25.622410+00:00",
+  "updated_at": "2026-06-24T13:58:25.622410+00:00",
+  "authors": [
+    "Amirkiarash Ehtesham",
+    "Abhishek Sivaram",
+    "Sara Danielle Siegel",
+    "John van Zanten",
+    "Seyed Soheil Mansouri"
+  ],
+  "year": "2025",
+  "journal": "Computers & Chemical Engineering",
+  "zotero_key": "U5RPUBK5",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S0098135425001978",
+  "abstract": "Precipitation is a valuable alternative to recovery processes like chromatography. While the process is a plausible alternative, without experimentation, there is a lack of sufficient understanding of how process operating conditions lead to expected chord length distributions (also referred to as particle size distributions). In this work, a modeling framework is proposed through which, first, the system is specified, then the population balance model (PBM) is constructed. Data is then gathered from experiments and subsequently processed. Afterwards, an optimization problem is defined to regress the PBM parameters to the experimental data. Finally, a surrogate model correlating the PBM parameters with process operating conditions is developed. Thereby, avoiding future experiments and regression of the parameters. The application of the modeling framework is demonstrated using 15 batch experiments for lysozyme precipitation and particle size distribution measurements using focused beam reflectance measurement (FBRM). The current approach helps identify the correlations between process operating conditions and process model (PBM) parameters such as maximum collision efficiency and breakage rate coefficient, which in turn helps in the estimation of the population distribution in the system. The work also proposes the limitations with modeling and data acquisition that pave the way for future research.",
+  "publication_date": "2025-09-30",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [
+    "Appendix-like XML content was detected but could not be parsed cleanly."
+  ],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S0098135425001978",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S0098135425001978",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.compchemeng.2025.109193",
+  "lookup_pii": "S0098135425001978",
+  "doi_used": "10.1016/j.compchemeng.2025.109193",
+  "pii_used": "S0098135425001978",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:40.372566+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S0098135425001978.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S0098135425001978.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S0098135425001978.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S0098135425001978.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S0098135425001978.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S0098135425001978.md",
+  "generated_artifacts": [
+    "markdown/S0098135425001978.md",
+    "markdown/S0098135425001978.md",
+    "metadata/S0098135425001978.json",
+    "sources/S0098135425001978.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0098135425001978.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S0098135425001978.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S0098135425001978",
+  "promoted_at": "2026-06-24T13:57:42.175686+00:00"
+}

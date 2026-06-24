@@ -73,18 +73,23 @@ class PublisherRuntimeConfig:
     base_url: str
     enabled: bool
     api_key_source: str
+    extraction_mode: str
 
 
 def publisher_config(session: Session) -> PublisherRuntimeConfig:
     settings = get_settings()
     env_key = settings.elsevier_api_key
     env_token = settings.elsevier_inst_token
+    extraction_mode = get_runtime_value(session, "literature_extraction_mode") or settings.literature_extraction_mode
+    if extraction_mode not in {"publisher_api_required", "pdf_fallback_allowed", "pdf_only"}:
+        extraction_mode = "publisher_api_required"
     return PublisherRuntimeConfig(
         api_key=env_key or get_runtime_value(session, "elsevier_api_key"),
         inst_token=env_token or get_runtime_value(session, "elsevier_inst_token"),
         base_url=get_runtime_value(session, "elsevier_api_base_url") or settings.elsevier_api_base_url,
         enabled=(str(get_runtime_value(session, "publisher_api_enrichment_enabled") if get_runtime_value(session, "publisher_api_enrichment_enabled") is not None else settings.publisher_api_enrichment_enabled).lower() == "true"),
         api_key_source="environment" if env_key else ("stored" if get_runtime_value(session, "elsevier_api_key") else "missing"),
+        extraction_mode=extraction_mode,
     )
 
 
@@ -181,6 +186,7 @@ def literature_config(session: Session) -> LiteratureRuntimeConfig:
 
 def literature_pipeline_config(session: Session) -> LiteraturePipelineConfig:
     config = literature_config(session)
+    publisher = publisher_config(session)
     return LiteraturePipelineConfig(
         zotero_literature_storage_path=config.zotero_literature_storage_path,
         base_dir=config.base_dir,
@@ -189,6 +195,7 @@ def literature_pipeline_config(session: Session) -> LiteraturePipelineConfig:
         papers_dir=config.papers_dir,
         combined_output_file=config.combined_output_file,
         fuzzy_min_score=config.fuzzy_min_score,
+        extraction_mode=publisher.extraction_mode,
     )
 
 
@@ -266,5 +273,7 @@ def config_status(session: Session) -> dict[str, object]:
             "elsevier_api_key": "",
             "elsevier_inst_token": "",
             "elsevier_api_base_url": publisher.base_url,
+            "literature_extraction_mode": publisher.extraction_mode,
+            "pdf_fallback_enabled": publisher.extraction_mode == "pdf_fallback_allowed",
         },
     }

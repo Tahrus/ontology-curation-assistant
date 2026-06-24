@@ -1,0 +1,94 @@
+{
+  "canonical_id": "S0098135424000309",
+  "title": "Solving crystallization/precipitation population balance models in CADET, part I: Nucleation growth and growth rate dispersion in batch and continuous modes on nonuniform grids",
+  "pii": "S0098135424000309",
+  "doi": "10.1016/j.compchemeng.2024.108612",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:32.058088+00:00",
+  "updated_at": "2026-06-24T13:58:32.058088+00:00",
+  "authors": [
+    "Wendi Zhang",
+    "Todd Przybycien",
+    "Johannes Schmölder",
+    "Samuel Leweke",
+    "Eric von Lieres"
+  ],
+  "year": "2024",
+  "journal": "Computers & Chemical Engineering",
+  "zotero_key": "6HG9BV2N",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S0098135424000309",
+  "abstract": "We have developed, implemented and validated 1D and 2D population balance models (PBMs) in the open-source process simulator CADET. 1D PBMs incorporate the particle size as an internal coordinate and are associated with dynamic mass balances to describe particle-based processes in batch and continuous stirred tank reactors. 2D PBMs include the spatial position as an additional external coordinate to describe particulate systems in dispersive plug flow reactors. Along with particle nucleation and growth, growth rate dispersion is considered. Using the finite volume method, cell face fluxes are reconstructed by upwind, Koren and two weighted essentially non-oscillatory (WENO) schemes. Analytical Jacobians are derived to reduce runtime. The implementations utilize arbitrary grids in the internal coordinate. The implementations are validated and benchmarked using seven test cases. The L1 error norm, L1 error convergence rate, and moments up to sixth order are analyzed. Runtime and approximation errors are reported and discussed in detail.",
+  "publication_date": "2024-04-30",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [
+    "Appendix-like XML content was detected but could not be parsed cleanly."
+  ],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S0098135424000309",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S0098135424000309",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.compchemeng.2024.108612",
+  "lookup_pii": "S0098135424000309",
+  "doi_used": "10.1016/j.compchemeng.2024.108612",
+  "pii_used": "S0098135424000309",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:45.021401+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S0098135424000309.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S0098135424000309.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S0098135424000309.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S0098135424000309.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S0098135424000309.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S0098135424000309.md",
+  "generated_artifacts": [
+    "markdown/S0098135424000309.md",
+    "markdown/S0098135424000309.md",
+    "metadata/S0098135424000309.json",
+    "sources/S0098135424000309.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0098135424000309.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S0098135424000309.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S0098135424000309",
+  "promoted_at": "2026-06-24T13:57:39.505054+00:00"
+}

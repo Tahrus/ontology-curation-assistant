@@ -1,0 +1,89 @@
+{
+  "canonical_id": "S1570826825000022",
+  "title": "Accelerating knowledge graph and ontology engineering with large language models",
+  "pii": "S1570826825000022",
+  "doi": "10.1016/j.websem.2025.100862",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:20.961165+00:00",
+  "updated_at": "2026-06-24T13:58:20.961165+00:00",
+  "authors": [
+    "Cogan Shimizu",
+    "Pascal Hitzler"
+  ],
+  "year": "2025",
+  "journal": "Journal of Web Semantics",
+  "zotero_key": "XF9SENB9",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S1570826825000022",
+  "abstract": "Large Language Models bear the promise of significant acceleration of key Knowledge Graph and Ontology Engineering tasks, including ontology modeling, extension, modification, population, alignment, as well as entity disambiguation. We lay out LLM-based Knowledge Graph and Ontology Engineering as a new and coming area of research, and argue that modular approaches to ontologies will be of central importance.",
+  "publication_date": "2025-05-31",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S1570826825000022",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S1570826825000022",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.websem.2025.100862",
+  "lookup_pii": "S1570826825000022",
+  "doi_used": "10.1016/j.websem.2025.100862",
+  "pii_used": "S1570826825000022",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:36.751980+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S1570826825000022.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S1570826825000022.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S1570826825000022.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S1570826825000022.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S1570826825000022.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S1570826825000022.md",
+  "generated_artifacts": [
+    "markdown/S1570826825000022.md",
+    "markdown/S1570826825000022.md",
+    "metadata/S1570826825000022.json",
+    "sources/S1570826825000022.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S1570826825000022.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S1570826825000022.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S1570826825000022",
+  "promoted_at": "2026-06-24T13:57:44.256324+00:00"
+}

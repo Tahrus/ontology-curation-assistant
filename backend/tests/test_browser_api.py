@@ -319,6 +319,36 @@ def test_saved_api_config_activate_and_delete(client):
     assert deleted.status_code == 200
 
 
+def test_publisher_settings_are_listed_as_masked_saved_api_configuration(client):
+    saved = client.post(
+        "/api/config/publisher",
+        json={
+            "elsevier_api_key": "publisher-secret-1234",
+            "elsevier_inst_token": "institution-secret-5678",
+            "elsevier_api_base_url": "https://api.elsevier.com",
+            "publisher_api_enrichment_enabled": True,
+            "literature_extraction_mode": "publisher_api_required",
+        },
+    )
+    assert saved.status_code == 200
+
+    configurations = client.get("/api/config/saved").json()
+    publisher = next(config for config in configurations if config["kind"] == "publisher")
+    serialized = json.dumps(publisher)
+    assert publisher["provider"] == "elsevier"
+    assert publisher["alias"] == "Elsevier Publisher API"
+    assert publisher["extraction_mode"] == "publisher_api_required"
+    assert publisher["active"] is True
+    assert publisher["api_key"]
+    assert publisher["inst_token"]
+    assert "publisher-secret-1234" not in serialized
+    assert "institution-secret-5678" not in serialized
+
+    activated = client.post(f"/api/config/saved/{publisher['id']}/activate", json={})
+    assert activated.status_code == 200
+    assert activated.json()["active"] is True
+
+
 def test_create_update_review_and_export_candidate(client):
     document_response = client.post(
         "/api/literature",
@@ -665,6 +695,7 @@ def test_zotero_sync_uses_saved_config_and_imports_entries(client, monkeypatch):
         "/api/config/zotero",
         json={"library_type": "group", "library_id": "999", "api_key": "secret"},
     )
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "pdf_only"})
 
     synced = client.post("/api/zotero/sync", json={})
 
@@ -697,6 +728,7 @@ def test_zotero_sync_handles_incomplete_non_string_fields(client, monkeypatch):
 
     monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
     client.post("/api/config/zotero", json={"library_type": "user", "library_id": "1"})
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "pdf_only"})
 
     synced = client.post("/api/zotero/sync", json={})
     entry = client.get("/api/zotero/entries").json()[0]
@@ -825,6 +857,7 @@ def test_api_literature_pipeline_import_displays_processed_markdown_entry(client
         "/api/config/literature",
         json={"zotero_literature_storage_path": str(tmp_path / "zotero-storage")},
     )
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "pdf_only"})
     run = client.post("/api/literature/pipeline/run", json={})
     entries = client.get("/api/zotero/entries")
 
@@ -918,6 +951,7 @@ def test_zotero_sync_accepts_optional_test_limit(client, monkeypatch):
 
     monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
     client.post("/api/config/zotero", json={"library_type": "user", "library_id": "1"})
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "pdf_only"})
 
     synced = client.post("/api/zotero/sync", json={"limit": 2})
 
@@ -1038,7 +1072,10 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert 'role="status"' in html
     assert "zotero_literature_storage_path" in script
     assert "/api/literature/import" in script
-    assert "Importing Zotero PDFs and generating Markdown" in script
+    assert "Retrieving structured publisher XML" in script
+    assert "publisher_api_required" in script
+    assert "/api/literature/import-diagnostics" in script
+    assert "/api/literature/test-publisher-api" in script
     assert "button.disabled = true" in script
     assert "aria-busy" in script
     assert "action-toast" in html
@@ -1047,7 +1084,8 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "is-clicked" in styles
     assert "Error:" in script
     assert "complete." in script
-    assert "files_scanned" in script
+    assert "xml_imported" in script
+    assert "PDF used:" in script
     assert "duplicates" in script
     assert "combined_output_file" in script
     assert "data-graph-controls" in html
@@ -1177,6 +1215,11 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "publisher.enable_publisher_api_enrichment ?? publisher.enabled ?? false" in script
     assert "const form = event.currentTarget;" in script
     assert "event.currentTarget.elsevier_api_key" not in script
+    assert "Content source:" in script
+    assert "Metadata source:" in script
+    assert "Elsevier XML" in script
+    assert "PDF fallback" in script
+    assert "Extraction warnings" in script
     assert "project_tags" in script
     assert "Promise.all([loadStatus(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()])" not in script
     assert "20260602-md" in html
@@ -1515,7 +1558,7 @@ def test_permanent_rejection_excludes_active_queue_and_can_restore(client):
     assert restored.json()["review_status"] == "in_review"
 
 
-def test_api_zotero_sync_triggers_pipeline_automatically(client, monkeypatch, tmp_path):
+def test_api_zotero_sync_never_triggers_pdf_pipeline_in_strict_mode(client, monkeypatch, tmp_path):
     class FakeZoteroClient:
         def __init__(self, config):
             pass
@@ -1536,6 +1579,8 @@ def test_api_zotero_sync_triggers_pipeline_automatically(client, monkeypatch, tm
     import backend.app.api.routes as routes
 
     monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
+    project = client.post("/api/projects", json={"name": "Strict sync", "ontology_id": "strict-sync", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True})
+    assert project.status_code == 200
     client.post(
         "/api/config/zotero",
         json={"library_type": "group", "library_id": "999", "api_key": "secret"},
@@ -1544,6 +1589,7 @@ def test_api_zotero_sync_triggers_pipeline_automatically(client, monkeypatch, tm
         "/api/config/literature",
         json={"zotero_literature_storage_path": str(tmp_path / "storage")},
     )
+    client.post("/api/config/publisher", json={"elsevier_api_key": "test", "publisher_api_enrichment_enabled": True, "literature_extraction_mode": "publisher_api_required"})
 
     calls = []
 
@@ -1565,6 +1611,6 @@ def test_api_zotero_sync_triggers_pipeline_automatically(client, monkeypatch, tm
 
     synced = client.post("/api/zotero/sync", json={})
 
-    assert synced.status_code == 200
-    assert len(calls) == 1
-    assert calls[0].zotero_literature_storage_path == tmp_path / "storage"
+    assert synced.status_code == 400
+    assert calls == []
+    assert "No DOI, PII, or ScienceDirect URL" in synced.json()["detail"]["message"]

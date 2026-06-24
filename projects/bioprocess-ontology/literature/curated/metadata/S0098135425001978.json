@@ -1,0 +1,66 @@
+{
+  "canonical_id": "S0098135425001978",
+  "title": "Dynamics of batch protein precipitation",
+  "authors": [
+    "Amirkiarash Ehtesham",
+    "Abhishek Sivaram",
+    "Sara Danielle Siegel",
+    "John van Zanten",
+    "Seyed Soheil Mansouri"
+  ],
+  "year": "2025",
+  "journal": "Computers & Chemical Engineering",
+  "doi": "10.1016/j.compchemeng.2025.109193",
+  "pii": "S0098135425001978",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "S0098135425001978",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0098135425001978.json",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "zotero_key": "U5RPUBK5",
+  "pipeline_version": "oca-canonical-v2",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "elsevier",
+  "doi_used": "10.1016/j.compchemeng.2025.109193",
+  "pii_used": "S0098135425001978",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "generated_artifacts": [
+    "markdown/S0098135425001978.md",
+    "markdown/S0098135425001978.md",
+    "metadata/S0098135425001978.json",
+    "sources/S0098135425001978.elsevier.xml"
+  ],
+  "extraction_warnings": [
+    "Appendix-like XML content was detected but could not be parsed cleanly."
+  ],
+  "api_retrieval_status": "success",
+  "crossref_retrieval_status": null,
+  "lookup_doi": "10.1016/j.compchemeng.2025.109193",
+  "lookup_pii": "S0098135425001978",
+  "xml_artifact_path": "sources/S0098135425001978.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S0098135425001978.md",
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-06-24T13:42:40.372566+00:00",
+  "curated_at": "2026-06-24T13:57:42.175686+00:00",
+  "updated_at": "2026-06-24T13:57:42.175686+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/S0098135425001978.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/S0098135425001978.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "canonical_id": "S2001037024003337",
+  "title": "Osmolyte-induced protein stability changes explained by graph theory",
+  "pii": "S2001037024003337",
+  "doi": "10.1016/j.csbj.2024.10.014",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:40.743033+00:00",
+  "updated_at": "2026-06-24T13:58:40.743033+00:00",
+  "authors": [
+    "Mattia Miotto",
+    "Nina Warner",
+    "Giancarlo Ruocco",
+    "Gian Gaetano Tartaglia",
+    "Oren A. Scherman",
+    "Edoardo Milanetti"
+  ],
+  "year": "2024",
+  "journal": "Computational and Structural Biotechnology Journal",
+  "zotero_key": "BP3H7C9K",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S2001037024003337",
+  "abstract": "Enhanced stabilization of protein structures via the presence of inert osmolytes is a key mechanism adopted both by physiological systems and in biotechnological applications. While the intrinsic stability of proteins is ultimately fixed by their amino acid composition and organization, the interactions between osmolytes and proteins together with their concentrations introduce an additional layer of complexity and in turn, a method of modulating protein stability. Here, we combined experimental measurements with molecular dynamics simulations and graph-theory-based analyses to predict the stabilizing/destabilizing effects of different kinds of osmolytes on proteins during heat-mediated denaturation. We found that (i) proteins in solution with stability-enhancing osmolytes tend to have more compact interaction networks than those assumed in the presence of destabilizing osmolytes; (ii) a strong negative correlation (R = -0.85) characterizes the relationship between the melting temperature T m and the preferential interaction coefficient defined by the radial distribution functions of osmolytes and water around the protein and (iii) a positive correlation exists between osmolyte-osmolyte clustering and the extent of preferential exclusion from the local domain of the protein, suggesting that exclusion may be driven by enhanced steric hindrance of aggregated osmolytes.",
+  "publication_date": "2024-12-31",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [
+    "Appendix-like XML content was detected but could not be parsed cleanly."
+  ],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S2001037024003337",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S2001037024003337",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.csbj.2024.10.014",
+  "lookup_pii": "S2001037024003337",
+  "doi_used": "10.1016/j.csbj.2024.10.014",
+  "pii_used": "S2001037024003337",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:51.251718+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S2001037024003337.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S2001037024003337.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S2001037024003337.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S2001037024003337.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S2001037024003337.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S2001037024003337.md",
+  "generated_artifacts": [
+    "markdown/S2001037024003337.md",
+    "markdown/S2001037024003337.md",
+    "metadata/S2001037024003337.json",
+    "sources/S2001037024003337.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2001037024003337.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S2001037024003337.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S2001037024003337",
+  "promoted_at": "2026-06-24T13:57:45.318474+00:00"
+}

@@ -1,0 +1,90 @@
+{
+  "canonical_id": "S0006349506722494",
+  "title": "A Protein Molecule in a Mixed Solvent: The Preferential Binding Parameter via the Kirkwood-Buff Theory",
+  "pii": "S0006349506722494",
+  "doi": "10.1529/biophysj.105.074112",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:28.702060+00:00",
+  "updated_at": "2026-06-24T13:58:28.702060+00:00",
+  "authors": [
+    "Ivan L. Shulgin",
+    "Eli Ruckenstein"
+  ],
+  "year": "2006",
+  "journal": "Biophysical Journal",
+  "zotero_key": "7LAJX69S",
+  "sciencedirect_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC1367075/",
+  "publication_date": "2006-01-15",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "doi",
+  "api_identifier_used_value": "10.1529/biophysj.105.074112",
+  "api_identifier_attempts": [
+    {
+      "kind": "doi",
+      "value": "10.1529/biophysj.105.074112",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1529/biophysj.105.074112",
+  "lookup_pii": "S0006349506722494",
+  "doi_used": "10.1529/biophysj.105.074112",
+  "pii_used": "S0006349506722494",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:42.591480+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S0006349506722494.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S0006349506722494.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S0006349506722494.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S0006349506722494.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S0006349506722494.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S0006349506722494.md",
+  "generated_artifacts": [
+    "markdown/S0006349506722494.md",
+    "markdown/S0006349506722494.md",
+    "metadata/S0006349506722494.json",
+    "sources/S0006349506722494.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0006349506722494.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S0006349506722494.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [
+    "bioprocess-ontology"
+  ],
+  "promoted_literature_id": "S0006349506722494",
+  "promoted_at": "2026-06-24T13:57:33.830900+00:00"
+}

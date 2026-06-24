@@ -85,6 +85,7 @@ class LiteratureSource(Base):
     doi: Mapped[str | None] = mapped_column(String(255), nullable=True)
     normalized_doi: Mapped[str | None] = mapped_column(String(255), nullable=True)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    identifiers_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     project_tags_json: Mapped[str | None] = mapped_column(Text, nullable=True)

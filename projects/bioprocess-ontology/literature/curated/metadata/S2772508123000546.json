@@ -1,0 +1,62 @@
+{
+  "canonical_id": "S2772508123000546",
+  "title": "A review and perspective on hybrid modeling methodologies",
+  "authors": [
+    "Artur M. Schweidtmann",
+    "Dongda Zhang",
+    "Moritz von Stosch"
+  ],
+  "year": "2024",
+  "journal": "Digital Chemical Engineering",
+  "doi": "10.1016/j.dche.2023.100136",
+  "pii": "S2772508123000546",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "S2772508123000546",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2772508123000546.json",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "zotero_key": "KDB8BNT6",
+  "pipeline_version": "oca-canonical-v2",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "elsevier",
+  "doi_used": "10.1016/j.dche.2023.100136",
+  "pii_used": "S2772508123000546",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "generated_artifacts": [
+    "markdown/S2772508123000546.md",
+    "markdown/S2772508123000546.md",
+    "metadata/S2772508123000546.json",
+    "sources/S2772508123000546.elsevier.xml"
+  ],
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "crossref_retrieval_status": null,
+  "lookup_doi": "10.1016/j.dche.2023.100136",
+  "lookup_pii": "S2772508123000546",
+  "xml_artifact_path": "sources/S2772508123000546.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S2772508123000546.md",
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-06-24T13:42:43.540867+00:00",
+  "curated_at": "2026-06-24T13:57:47.329488+00:00",
+  "updated_at": "2026-06-24T13:57:47.329488+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/S2772508123000546.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/S2772508123000546.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

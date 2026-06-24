@@ -1,6 +1,6 @@
 # Current Project State
 
-Last reviewed: 2026-06-23
+Last reviewed: 2026-06-24
 
 ## Summary
 
@@ -8,7 +8,7 @@ Ontology Curation Assistant is currently an early working scaffold for a human-i
 
 The main implemented value today is a local browser workflow for configuration, project creation/selection, Zotero metadata sync, local PPO ontology readout, candidate extraction/curation, structured project suggestion review, evaluation metrics, OLS/local ontology matching, tree-based ontology visualization, rejection management, and approved-candidate export, plus CLI support for the underlying ingestion, Zotero, LLM test, project, curation-run, evaluation, and project ODK workflows. A standalone `zotero_lit_md` CLI package now exports Zotero Desktop local PDF attachments into full-text LLM/RAG-ready Markdown.
 
-The canonical literature repository is active-project scoped and two-stage. Existing `sources/`, `markdown/`, and `metadata/` outputs are preserved as pipeline-generated staging; human-approved entries live under `curated/{markdown,metadata}`. Candidate extraction, curation suggestions, and `combined_literature.md` use curated entries only. New metadata records carry a repository-relative artifact manifest with staged/curated ownership. Confirmed cleanup previews first, removes unpromoted and orphan artifacts only from known OCA-managed folders in both the active project repository and a distinct configured legacy global repository, protects curated/promoted/external files, and repairs combined output from curated entries. Existing canonical entries are non-destructively treated as staged/needs-review because prior manual curation cannot be inferred safely. Ordinary PDFs still require a usable text layer; OCR and automatic publisher-API retrieval are next tasks. Elsevier XML parsing remains supported, and Settings loads missing optional Elsevier values with safe defaults, stores masked secrets with environment precedence, and permits clearing stored credentials.
+The canonical literature repository is active-project scoped and two-stage. Existing `sources/`, `markdown/`, and `metadata/` outputs are preserved as pipeline-generated staging; human-approved entries live under `curated/{markdown,metadata}`. Candidate extraction, curation suggestions, and `combined_literature.md` use curated entries only. `publisher_api_required` is the default extraction mode: Zotero supplies identifiers/metadata and identified Elsevier items must produce valid structured XML/full text before a staged entry is created. Identifier collection is deterministic (PII, DOI, ISSN, ISBN, URL, PMID, PMCID); Elsevier attempts only its real PII/DOI endpoints, advances from recoverable PII failures to DOI, records unsupported kinds, and stops immediately for configuration/authentication/permission/quota/network/server failures. None silently starts PDF extraction. `pdf_fallback_allowed` and `pdf_only` keep PyMuPDF available only through explicit user/config authorization, recorded in provenance. XML conversion retains nested sections, captions, tables, appendices/back matter, and references. New metadata records carry a repository-relative artifact manifest plus identifier-used/attempt provenance, extraction mode, API diagnostics, XML/PDF use, fallback use/authorization, and content/metadata source fields. Isolated API tests write optional `api_tests/` XML/Markdown without staging or reading PDFs. Confirmed cleanup previews first, removes unpromoted and orphan artifacts only from known OCA-managed folders in both the active project repository and a distinct configured legacy global repository, protects curated/promoted/external files, and repairs combined output from curated entries. Existing canonical entries are non-destructively treated as staged/needs-review because prior manual curation cannot be inferred safely. Settings loads missing Elsevier values with safe defaults, stores masked secrets with environment precedence, permits clearing stored credentials, exposes the extraction mode, and lists the masked Elsevier configuration alongside saved Zotero/LLM configurations.
 
 ## Implemented Capabilities
 
@@ -25,8 +25,8 @@ Implemented endpoints:
 - Browser UI includes client-side route handling for dashboard/header links, a persistent active-project banner, project hierarchy dashboard, page-scoped startup data loading, a visible startup/page error path, accessible button/link click feedback, long-running action busy states, a Light/Dark theme toggle persisted in local storage, and a smaller shared logo link back to the dashboard.
 - Browser Configuration includes guarded Zotero metadata-sync controls, provider/model dropdowns for Gemini, OpenAI, Anthropic, and custom OpenAI-compatible LLMs, preset defaults for model/base URL/env var/runtime settings, API key environment variable support, a `Test LLM connection` action with key-source and canonical provider-key diagnostics, and Docker/ODK diagnostics for mounted paths and tools.
 - Configuration: `/api/config/status`, `/api/config/zotero`, `/api/config/llm`, `/api/config/ontology-path`, `/api/config/test-zotero`.
-- Two-stage literature APIs cover staged/curated listing, staged review/edit/promote/reject, curated edit/project tags, dry-run/confirmed unpromoted cleanup with legacy managed-orphan repair, and publisher settings. Import remains `/api/literature/import`; `/api/literature/pipeline/run` remains a compatibility alias.
-- Saved API configurations: `/api/config/saved`, `/api/config/saved/{id}/activate`, and deletion.
+- Two-stage literature APIs cover staged/curated listing, staged review/edit/promote/reject, curated edit/project tags, publisher-API-required identified import, explicitly authorized PDF modes, import diagnostics, isolated publisher API testing, dry-run/confirmed unpromoted cleanup with legacy managed-orphan repair, and publisher settings. Import remains `/api/literature/import`; diagnostics are `/api/literature/import-diagnostics` and `/api/literature/test-publisher-api`; `/api/literature/pipeline/run` remains a compatibility alias that obeys the configured mode.
+- Saved Zotero, LLM, and publisher API configurations: `/api/config/saved`, `/api/config/saved/{id}/activate`, and deletion. Elsevier API keys and institutional tokens are masked.
 - Zotero: `/api/zotero/test`, `/api/zotero/sync`, `/api/zotero/entries`, `/api/zotero/entries/{id}`, `/api/zotero/import-test`.
 - Existing ontology: `/api/ontology/status`, `/api/ontology/scan`, `/api/ontology/select-file`, `/api/ontology/index`, `/api/ontology/terms`, `/api/ontology/terms/{term_id}`, `/api/ontology/search`, `/api/ontology/graph`. The browser Ontology page now treats `/api/ontology/status` as active-project scoped by default and shows a no-project warning instead of using stale global ontology data.
 - Existing ontology also exposes `/api/ontology/tree`, which builds tree-ready data with nodes, synonyms/source metadata, `edgeType: "hierarchy"` subclass edges, `edgeType: "semantic"` lateral relation edges, root IDs, source metadata, and warnings. It is now the default browser ontology visualization.
@@ -153,12 +153,12 @@ Implemented:
 - Import from a Zotero Web-API-like JSON item shape when present in exported files.
 - Metadata-only sync from Zotero user or group libraries through the Zotero Web API.
 - Zotero Desktop local API metadata sync when configured with library type `user`, library ID `0`, base URL `http://127.0.0.1:23119/api`, and an empty API key. The connection test fetches one item with the `Zotero-API-Version: 3` header and does not require a Zotero API key.
-- Direct local extraction from deposited Zotero PDF attachments after metadata sync/import. Parent items can be resolved by stored Zotero item key, stored Zotero URI, exact title, normalized title, or DOI. Child attachments are inspected through Zotero metadata, but extraction reads the local PDF file path directly rather than DOI, publisher, or web links.
+- Explicit local extraction from deposited Zotero PDF attachments remains available in `pdf_fallback_allowed` or `pdf_only` mode. It is not triggered by metadata sync in the default publisher-required mode.
 - Browser sync defaults to no limit and follows Zotero pagination until all configured records are fetched.
 - Browser literature records are shown by title with author/year/type/DOI/key metadata, an `Open in Zotero` URI only when a Zotero item key is valid and unambiguous, and an expandable JSON section for the corresponding record payload.
 - The browser literature view merges Zotero database rows with matching Markdown repository entries when available and also displays repository-only Markdown records created by the integrated PDF import pipeline. The detail panel shows raw, clean, and LLM-context Markdown plus readable metadata rather than raw JSON. Candidate extraction from a Zotero source prefers the Markdown record over legacy metadata snippets.
 - Literature review controls can filter by document role, document state, extraction quality, metadata mismatch, and manual-review status. Curators can update include/exclude, metadata-match status, role, manual-review flags, and state through `PATCH /api/literature/repository/review`, regenerate clean/context artifacts, record retry engines, block/unblock records, and build domain/review/methodology/excluded combined contexts.
-- Browser literature ingestion, test imports, and Zotero sync refresh the Markdown repository in `literature/papers`; the export folder is created automatically. Zotero sync also automatically triggers the Zotero PDF literature pipeline using the configured Zotero storage directory.
+- Browser Zotero sync stores identifiers and metadata, then attempts strict publisher XML imports for identified sources when an active project is selected. It returns visible per-item failures and never automatically scans Zotero storage or triggers PDF extraction in the default mode.
 - Optional collection sync through configured or CLI-provided collection keys.
 - Browser Zotero save/test/sync event handlers use stable element IDs, bind after the DOM is ready, report missing required panel elements clearly, and guard optional controls before calling nested selectors.
 - Secret-safe `zotero-config` output.
@@ -499,10 +499,11 @@ The project is not yet a full ontology curation application. The following piece
 - Project metadata scaffolds do not create ontology terms, ontology files, ODK repositories, or GitHub repositories.
 - Downloading missing Zotero attachments
 - Writing changes back to Zotero
+- Structured publisher retrieval currently supports Elsevier Article Retrieval XML only. Other publishers fail visibly in `publisher_api_required` mode until a structured provider adapter is added; users may explicitly select a PDF mode when appropriate.
 - Full production-grade AI/LLM extraction execution and retries beyond the current provider abstraction and basic retry setting
 - OCR for scanned/image-only PDFs
 - Reliable two-column reading-order reconstruction; current PyMuPDF extraction is best-effort and diagnostics can warn about quality issues
-- Actual multi-engine PDF extraction fallback execution is still limited; the current doctor/retry workflow detects/records engine availability and retry intent while the integrated pipeline remains PyMuPDF-first.
+- Actual multi-engine PDF extraction fallback execution is still limited; the current doctor/retry workflow detects/records engine availability and retry intent, while explicitly authorized PDF modes remain PyMuPDF-first.
 - BFO validation; later support should target BFO 2020 terminology and identifiers
 - Static version-controlled relation catalogue for later prompt/validation constraints
 - Audit log persistence
@@ -541,9 +542,10 @@ Baseline before these fixes on 2026-06-10: `.\.venv\Scripts\python.exe -m pytest
 2. Add richer evidence segment storage and review decision tables.
 3. Add persisted ontology index tables if indexing large ontologies becomes slow.
 4. Add optional tooling to detect missing local Zotero attachments and report how to repair them outside the extraction path.
-5. Harden the LLM providers with retries, model validation, and structured-output support.
-6. Implement Phase 3 LLM curation workflow changes in the existing `backend/app/llm/curation.py`, `backend/app/llm/service.py`, `backend/app/api/routes.py`, prompt files, and schemas: bootstrap/curation modes, modular prompt profiles, final prompt preview/editing, strict JSON candidate schema, one malformed-JSON repair attempt, source-quote verification against canonical Markdown, component-specific confidence, operation types, temporary candidate UUIDs, and no LLM-generated permanent ontology IDs.
-7. Add direct ODK repository write/validation actions for approved candidates only.
-8. Add validation around exported rows and map validation errors back to candidate IDs.
-9. Continue project scoping through the legacy literature pipeline and candidate extraction paths so all browser operations can optionally read/write inside the active project folder.
-10. Add safe configured execution for project ODK build/test/import commands with clean-git/backup checks before writing templates or running external tools.
+5. Add structured XML/HTML provider adapters for supported non-Elsevier publishers without weakening the strict no-silent-fallback boundary.
+6. Harden the LLM providers with retries, model validation, and structured-output support.
+7. Implement Phase 3 LLM curation workflow changes in the existing `backend/app/llm/curation.py`, `backend/app/llm/service.py`, `backend/app/api/routes.py`, prompt files, and schemas: bootstrap/curation modes, modular prompt profiles, final prompt preview/editing, strict JSON candidate schema, one malformed-JSON repair attempt, source-quote verification against canonical Markdown, component-specific confidence, operation types, temporary candidate UUIDs, and no LLM-generated permanent ontology IDs.
+8. Add direct ODK repository write/validation actions for approved candidates only.
+9. Add validation around exported rows and map validation errors back to candidate IDs.
+10. Continue project scoping through the legacy literature pipeline and candidate extraction paths so all browser operations can optionally read/write inside the active project folder.
+11. Add safe configured execution for project ODK build/test/import commands with clean-git/backup checks before writing templates or running external tools.

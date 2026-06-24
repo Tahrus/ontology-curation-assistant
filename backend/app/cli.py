@@ -607,23 +607,102 @@ def literature_import(
     pdf_dir: Path | None = typer.Option(None, "--pdf-dir", help="Local PDF/XML/Markdown directory."),
     overwrite: bool = typer.Option(False, help="Replace generated Markdown even when existing content is more complete."),
     keep_sources: bool = typer.Option(True, "--keep-sources/--no-keep-sources"),
+    doi: str | None = typer.Option(None, "--doi", help="DOI used for publisher API lookup."),
+    pii: str | None = typer.Option(None, "--pii", help="PII used for publisher API lookup."),
+    sciencedirect_url: str | None = typer.Option(None, "--url", help="ScienceDirect URL used for publisher API lookup."),
+    local_pdf: Path | None = typer.Option(None, "--pdf", help="Local PDF used only in an explicitly enabled PDF mode."),
+    extraction_mode: str | None = typer.Option(None, "--extraction-mode", help="publisher_api_required, pdf_fallback_allowed, or pdf_only."),
+    allow_pdf_fallback: bool = typer.Option(False, "--allow-pdf-fallback", help="Explicitly allow PDF fallback for this import."),
 ) -> None:
-    """Import literature into one project's canonical repository."""
-    from backend.app.literature.canonical import import_directory, write_project_settings
+    """Import literature; publisher API/XML is required unless PDF use is explicit."""
+    import json
+    from sqlalchemy import select
+    from backend.app.literature.canonical import LiteratureExtractionError, import_directory, import_identified_item, write_project_settings
+    from backend.app.literature.publisher_xml import ElsevierApiConfig, LiteratureIdentification
+    from backend.app.models.db import LiteratureSource
+    from backend.app.services.runtime_config import publisher_config
 
-    if bool(zotero_storage) == bool(pdf_dir):
-        raise typer.BadParameter("Provide exactly one of --zotero-storage or --pdf-dir.")
+    identified = bool(doi or pii or sciencedirect_url)
+    if not identified and bool(zotero_storage) == bool(pdf_dir):
+        raise typer.BadParameter("Provide DOI/PII/URL, or exactly one of --zotero-storage/--pdf-dir.")
     session, selected, paths = _literature_project_paths(project)
     try:
+        publisher = None
+        if allow_pdf_fallback:
+            mode = "pdf_fallback_allowed"
+        elif extraction_mode:
+            mode = extraction_mode
+        else:
+            publisher = publisher_config(session)
+            mode = publisher.extraction_mode
+        if identified or (zotero_storage and mode == "publisher_api_required"):
+            publisher = publisher or publisher_config(session)
+        api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled) if publisher else None
+        if identified:
+            try:
+                entry, duplicate = import_identified_item(paths, LiteratureIdentification(doi=doi, pii=pii, sciencedirect_url=sciencedirect_url, pdf_path=str(local_pdf) if local_pdf else None), publisher=api_config, extraction_mode=mode, keep_sources=keep_sources, overwrite=overwrite)
+            except LiteratureExtractionError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            console.print_json(data={"project": selected.slug, "extraction_mode": mode, "imported": int(not duplicate), "duplicate": duplicate, "content_source": entry.get("content_source"), "pdf_used": entry.get("pdf_used"), "fallback_used": entry.get("fallback_used"), "api_retrieval_status": entry.get("api_retrieval_status")})
+            return
         source = zotero_storage or pdf_dir
         assert source is not None
-        result = import_directory(paths, source, source_type="zotero_storage" if zotero_storage else "local_pdf_folder", keep_sources=keep_sources, overwrite=overwrite)
+        if zotero_storage and mode == "publisher_api_required":
+            records = session.scalars(select(LiteratureSource)).all()
+            if not records:
+                raise typer.BadParameter("No synced Zotero identifiers are available. Run zotero-sync first; PDFs are not inspected in publisher_api_required mode.")
+            imported = 0
+            for record in records:
+                try:
+                    creators_data = json.loads(record.creators_json or "[]")
+                except json.JSONDecodeError:
+                    creators_data = []
+                creators = [" ".join(str(creator.get(key) or "").strip() for key in ("given", "family")).strip() for creator in creators_data if isinstance(creator, dict)]
+                try:
+                    identifier_metadata = json.loads(record.identifiers_json or "{}")
+                except json.JSONDecodeError:
+                    identifier_metadata = {}
+                try:
+                    entry, duplicate = import_identified_item(paths, LiteratureIdentification(zotero_key=record.provider_item_key, doi=record.doi, sciencedirect_url=record.url, title=record.title, authors=[creator for creator in creators if creator], year=record.year, metadata_source="zotero", identifier_metadata=identifier_metadata), publisher=api_config, extraction_mode=mode, keep_sources=keep_sources, overwrite=overwrite)
+                except LiteratureExtractionError as exc:
+                    raise typer.BadParameter(f"{record.title}: {exc}") from exc
+                imported += int(not duplicate and entry.get("xml_retrieved", False))
+            console.print_json(data={"project": selected.slug, "extraction_mode": mode, "xml_imported": imported, "pdf_used": False, "fallback_used": False})
+            return
+        result = import_directory(paths, source, source_type="zotero_storage" if zotero_storage else "local_pdf_folder", extraction_mode=mode, keep_sources=keep_sources, overwrite=overwrite)
         write_project_settings(paths, zotero_storage_path=str(zotero_storage) if zotero_storage else None, literature_source_directory=str(source), keep_temporary_pdfs=keep_sources, overwrite_existing_markdown=overwrite, preserve_curated_metadata=True)
     finally:
         session.close()
     console.print(f"[green]Project:[/green] {selected.slug}")
     console.print(f"Scanned {result.files_scanned}; imported {result.imported}; duplicates reused {result.duplicates}; failed {result.failed}.")
     console.print(f"[green]Combined literature:[/green] {result.combined_output_file}")
+
+
+@literature_app.command("test-api")
+def literature_test_api(
+    doi: str | None = typer.Option(None, "--doi"),
+    pii: str | None = typer.Option(None, "--pii"),
+    sciencedirect_url: str | None = typer.Option(None, "--url"),
+    project: str | None = typer.Option(None, "--project"),
+    write_artifacts: bool = typer.Option(True, "--write-artifacts/--no-write-artifacts"),
+) -> None:
+    """Test Elsevier XML extraction independently; never read a PDF."""
+    from backend.app.literature.canonical import LiteratureExtractionError, test_publisher_api
+    from backend.app.literature.publisher_xml import ElsevierApiConfig, LiteratureIdentification
+    from backend.app.services.runtime_config import publisher_config
+
+    if not doi and not pii and not sciencedirect_url:
+        raise typer.BadParameter("Provide --doi, --pii, or --url.")
+    session, _, paths = _literature_project_paths(project)
+    try:
+        publisher = publisher_config(session)
+        try:
+            result = test_publisher_api(paths, LiteratureIdentification(doi=doi, pii=pii, sciencedirect_url=sciencedirect_url), publisher=ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled), write_artifacts=write_artifacts)
+        except LiteratureExtractionError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    finally:
+        session.close()
+    console.print_json(data=result)
 
 
 @literature_app.command("list")
@@ -780,8 +859,10 @@ def literature_pipeline(
     papers_dir: Path | None = typer.Option(None, help="Override configured per-paper Markdown directory."),
     combined_output_file: Path | None = typer.Option(None, help="Override configured combined Markdown output file."),
     fuzzy_min_score: float | None = typer.Option(None, help="Override generated/paper title fuzzy-match threshold."),
+    extraction_mode: str | None = typer.Option(None, "--extraction-mode", help="Explicit extraction mode; defaults to publisher_api_required."),
+    allow_pdf_fallback: bool = typer.Option(False, "--allow-pdf-fallback", help="Explicitly authorize the legacy PDF folder pipeline."),
 ) -> None:
-    """Run the configured Zotero PDF-to-combined-Markdown literature pipeline."""
+    """Run the compatibility folder pipeline only with explicit PDF authorization."""
     from backend.app.literature.pipeline import LiteraturePipelineConfig, literature_pipeline_config_from_settings
     from backend.app.literature.pipeline import run_literature_pipeline
 
@@ -811,6 +892,7 @@ def literature_pipeline(
             else configured.combined_output_file
         ),
         fuzzy_min_score=fuzzy_min_score if fuzzy_min_score is not None else configured.fuzzy_min_score,
+        extraction_mode="pdf_fallback_allowed" if allow_pdf_fallback else (extraction_mode or configured.extraction_mode),
     )
     try:
         result = run_literature_pipeline(config)

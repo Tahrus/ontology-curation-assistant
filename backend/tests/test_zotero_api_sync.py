@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from sqlalchemy import create_engine, select
@@ -61,11 +63,12 @@ def zotero_item(*, title: str = "Protein-solvent preferential interactions") -> 
             ],
             "date": "2002",
             "DOI": "https://doi.org/10.1073/pnas.122225399",
+            "ISSN": "1234-5678",
             "url": "https://www.pnas.org/doi/10.1073/pnas.122225399",
             "abstractNote": "Solvent additives modulate biochemical reactions.",
             "collections": ["COLLECTIONKEY"],
             "tags": [{"tag": "protein hydration"}],
-            "extra": "Citation Key: timasheff2002ProteinSolventPreferential",
+            "extra": "Citation Key: timasheff2002ProteinSolventPreferential\nPMID: 123456\nPMCID: PMC7654321",
         },
     }
 
@@ -158,6 +161,8 @@ def test_zotero_api_json_normalization_skips_non_bibliographic_items() -> None:
     assert source.creators[0]["family"] == "Timasheff"
     assert source.tags == ["protein hydration"]
     assert source.collections == ["COLLECTIONKEY"]
+    assert source.identifier_metadata["ISSN"] == "1234-5678"
+    assert "PMCID: PMC7654321" in source.identifier_metadata["extra"]
     assert attachment is None
     assert note is None
     assert annotation is None
@@ -210,6 +215,9 @@ def test_zotero_sync_persists_and_updates_without_duplicates(isolated_db, monkey
     assert sources[0].title == "Updated title"
     assert sources[0].zotero_version == 42
     assert sources[0].synced_at is not None
+    identifiers = json.loads(sources[0].identifiers_json or "{}")
+    assert identifiers["ISSN"] == "1234-5678"
+    assert "PMID: 123456" in identifiers["extra"]
 
 
 def test_zotero_sync_cli_overrides_and_collection(isolated_db, monkeypatch):

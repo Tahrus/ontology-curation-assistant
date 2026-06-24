@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from backend.app.config import Settings, get_settings
-from backend.app.literature.canonical import RepositoryPaths, build_combined, import_directory
+from backend.app.literature.canonical import DEFAULT_EXTRACTION_MODE, RepositoryPaths, build_combined, import_directory
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,7 @@ class LiteraturePipelineConfig:
     papers_dir: Path | None = None
     combined_output_file: Path | None = None
     fuzzy_min_score: float = 0.82
+    extraction_mode: str = DEFAULT_EXTRACTION_MODE
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ def literature_pipeline_config_from_settings(settings: Settings | None = None) -
         papers_dir=Path(settings.literature_repository_path),
         combined_output_file=Path(settings.literature_combined_output_file),
         fuzzy_min_score=settings.literature_fuzzy_min_score,
+        extraction_mode=settings.literature_extraction_mode,
     )
 
 
@@ -68,7 +70,7 @@ def run_literature_pipeline(config: LiteraturePipelineConfig) -> LiteraturePipel
     validate_pipeline_config(config)
     assert config.zotero_literature_storage_path is not None
     paths = RepositoryPaths.from_root(config.base_dir)
-    result = import_directory(paths, config.zotero_literature_storage_path, source_type="zotero_storage")
+    result = import_directory(paths, config.zotero_literature_storage_path, source_type="zotero_storage", extraction_mode=config.extraction_mode)
     if not result.files_scanned:
         raise ValueError(f"No PDF files were found under the configured Zotero literature storage path (PDF/XML/Markdown supported): {config.zotero_literature_storage_path}")
     output = config.combined_output_file or paths.combined

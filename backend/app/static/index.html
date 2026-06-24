@@ -275,21 +275,41 @@
 
       <section class="panel page-section" data-page="config" id="publisher-api-config-section">
         <h2>Publisher API Settings</h2>
-        <p class="description">Optional Elsevier enrichment. Environment variables take precedence over stored values; secrets are never displayed after saving.</p>
+        <p class="description">Elsevier XML is required by default. PDF extraction runs only when you explicitly select a fallback/debug mode. Environment variables take precedence over stored values; secrets are never displayed after saving.</p>
         <form id="publisher-config-form" class="stack">
           <label>Elsevier API key<input name="elsevier_api_key" type="password" autocomplete="off" /></label>
           <label>Elsevier institutional token<input name="elsevier_inst_token" type="password" autocomplete="off" /></label>
           <label>Elsevier API base URL<input name="elsevier_api_base_url" value="https://api.elsevier.com" /></label>
+          <label>Literature extraction mode
+            <select name="literature_extraction_mode">
+              <option value="publisher_api_required">Publisher API required (default; no PDF fallback)</option>
+              <option value="pdf_fallback_allowed">Publisher API first; allow explicit PDF fallback</option>
+              <option value="pdf_only">PDF only (debug/development)</option>
+            </select>
+          </label>
           <label class="inline"><input name="publisher_api_enrichment_enabled" type="checkbox" /> Enable publisher API enrichment</label>
           <button type="submit">Save publisher settings</button>
         </form>
         <p id="publisher-config-message" class="message" role="status" aria-live="polite"></p>
+        <h3>Test publisher API extraction</h3>
+        <p class="description">Tests Elsevier XML independently. This action never reads a PDF or creates a staged entry.</p>
+        <form id="publisher-api-test-form" class="stack">
+          <label>DOI<input name="doi" placeholder="10.1016/..." /></label>
+          <label>PII<input name="pii" placeholder="S0098135425001978" /></label>
+          <label>ScienceDirect URL<input name="sciencedirect_url" placeholder="https://www.sciencedirect.com/science/article/pii/..." /></label>
+          <button type="submit">Test Elsevier XML extraction</button>
+        </form>
+        <p id="publisher-api-test-message" class="message" role="status" aria-live="polite"></p>
+        <pre id="publisher-api-test-result" class="diagnostic-output"></pre>
+        <h3>Literature import diagnostics</h3>
+        <button id="refresh-literature-import-diagnostics" type="button" class="secondary">Refresh import diagnostics</button>
+        <pre id="literature-import-diagnostics" class="diagnostic-output"></pre>
       </section>
 
       <section class="panel wide page-section" data-page="config" id="saved-config-section">
         <h2>Saved API Configurations</h2>
         <p class="description">
-          Previously saved Zotero and LLM configurations are listed here with masked secrets. Select one to make it active, or delete stale entries.
+          Previously saved Zotero, LLM, and publisher API configurations are listed here with masked secrets. Select one to make it active, or delete stale entries.
         </p>
         <div id="saved-configs" class="table-list"></div>
       </section>
@@ -593,6 +613,6 @@
       </article>
     </template>
 
-    <script src="/static/app.js?v=20260602-md"></script>
+    <script src="/static/app.js?v=20260624-identifiers"></script>
   </body>
 </html>

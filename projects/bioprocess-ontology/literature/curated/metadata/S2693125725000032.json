@@ -1,0 +1,66 @@
+{
+  "canonical_id": "S2693125725000032",
+  "title": "Fermentation design and process optimization strategy based on machine learning",
+  "authors": [
+    "Zhen-Zhi Wang",
+    "Du-Wen Zeng",
+    "Yi-Fan Zhu",
+    "Ming-Hai Zhou",
+    "Akihiko Kondo",
+    "Tomohisa Hasunuma",
+    "Xin-Qing Zhao"
+  ],
+  "year": "2025",
+  "journal": "BioDesign Research",
+  "doi": "10.1016/j.bidere.2025.100002",
+  "pii": "S2693125725000032",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "S2693125725000032",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2693125725000032.json",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "zotero_key": "35YAW77I",
+  "pipeline_version": "oca-canonical-v2",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "elsevier",
+  "doi_used": "10.1016/j.bidere.2025.100002",
+  "pii_used": "S2693125725000032",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "generated_artifacts": [
+    "markdown/S2693125725000032.md",
+    "markdown/S2693125725000032.md",
+    "metadata/S2693125725000032.json",
+    "sources/S2693125725000032.elsevier.xml"
+  ],
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "crossref_retrieval_status": null,
+  "lookup_doi": "10.1016/j.bidere.2025.100002",
+  "lookup_pii": "S2693125725000032",
+  "xml_artifact_path": "sources/S2693125725000032.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S2693125725000032.md",
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-06-24T13:42:55.979292+00:00",
+  "curated_at": "2026-06-24T13:57:46.399882+00:00",
+  "updated_at": "2026-06-24T13:57:46.399882+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/S2693125725000032.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/S2693125725000032.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

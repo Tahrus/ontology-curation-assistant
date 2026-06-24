@@ -1,0 +1,94 @@
+{
+  "canonical_id": "S2693125725000032",
+  "title": "Fermentation design and process optimization strategy based on machine learning",
+  "pii": "S2693125725000032",
+  "doi": "10.1016/j.bidere.2025.100002",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "import_status": "staged",
+  "curation_status": "needs_review",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-canonical-v2",
+  "imported_at": "2026-06-24T13:58:47.346949+00:00",
+  "updated_at": "2026-06-24T13:58:47.346949+00:00",
+  "authors": [
+    "Zhen-Zhi Wang",
+    "Du-Wen Zeng",
+    "Yi-Fan Zhu",
+    "Ming-Hai Zhou",
+    "Akihiko Kondo",
+    "Tomohisa Hasunuma",
+    "Xin-Qing Zhao"
+  ],
+  "year": "2025",
+  "journal": "BioDesign Research",
+  "zotero_key": "35YAW77I",
+  "sciencedirect_url": "https://www.sciencedirect.com/science/article/pii/S2693125725000032",
+  "abstract": "Fermentation optimization is important for industrialization of biological manufacturing, and has been widely applied to diverse sectors including medicine, food, cosmetics and bioenergy, which is related to substantial economic benefits. Strain development is considered to be the core part of fermentation technology, as it directly influences the product yield and overall success of the fermentation process. However, fermentation design and process optimization also play a crucial role in fully exploring the genetic potential of engineered strains for efficient bioproduction. Due to the fact that fermentation process is influenced by complex factors, so far, machine learning has been widely used in this area with its strong capabilities of simulation and prediction. This review provides a brief introduction to the process of fermentation design and process optimization based on machine learning. In the workflow, experimental design strategy is fundamental to explore and characterize the performance of fermentation system. Then, machine learning modelling is employed to simulate the operation of fermentation system and the appropriate fermentation conditions, such as medium composition and process parameters, will be determined. Moreover, in recent years, some extension ideas of fermentation design based on machine learning have also been proposed, including automated fermentation process control, data mining for exploring strain characteristics, transfer learning, hybrid model building, and soft sensor construction. These strategies have created more application scenarios for machine learning, enhancing its adaptability in designing and optimizing the complex fermentation system for efficient bioproduction.",
+  "publication_date": "2025-03-31",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "used_api_provider": "elsevier",
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "api_identifier_used_kind": "pii",
+  "api_identifier_used_value": "S2693125725000032",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S2693125725000032",
+      "status": "success",
+      "reason": null
+    }
+  ],
+  "api_retrieval_source": "elsevier_article_retrieval_api",
+  "lookup_doi": "10.1016/j.bidere.2025.100002",
+  "lookup_pii": "S2693125725000032",
+  "doi_used": "10.1016/j.bidere.2025.100002",
+  "pii_used": "S2693125725000032",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "created_at": "2026-06-24T13:42:55.979292+00:00",
+  "artifacts": [
+    {
+      "path": "markdown/S2693125725000032.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S2693125725000032.md",
+      "artifact_type": "elsevier_xml_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S2693125725000032.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "sources/S2693125725000032.elsevier.xml",
+      "artifact_type": "elsevier_xml",
+      "ownership": "staged"
+    }
+  ],
+  "xml_artifact_path": "sources/S2693125725000032.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S2693125725000032.md",
+  "generated_artifacts": [
+    "markdown/S2693125725000032.md",
+    "markdown/S2693125725000032.md",
+    "metadata/S2693125725000032.json",
+    "sources/S2693125725000032.elsevier.xml"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2693125725000032.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S2693125725000032.md",
+  "markdown_available": true,
+  "repository_stage": "staged",
+  "project_tags": [],
+  "promoted_literature_id": "S2693125725000032",
+  "promoted_at": "2026-06-24T13:57:46.399882+00:00"
+}

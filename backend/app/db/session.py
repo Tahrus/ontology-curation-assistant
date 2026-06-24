@@ -106,6 +106,7 @@ def ensure_runtime_schema() -> None:
             "status": "VARCHAR(50)",
             "last_imported_at": "DATETIME",
             "project_tags_json": "TEXT",
+            "identifiers_json": "TEXT",
         }
         for column_name, definition in source_additions.items():
             if column_name not in source_columns:

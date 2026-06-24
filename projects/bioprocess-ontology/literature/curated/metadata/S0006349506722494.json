@@ -1,0 +1,67 @@
+{
+  "canonical_id": "S0006349506722494",
+  "title": "A Protein Molecule in a Mixed Solvent: The Preferential Binding Parameter via the Kirkwood-Buff Theory",
+  "authors": [
+    "Ivan L. Shulgin",
+    "Eli Ruckenstein"
+  ],
+  "year": "2006",
+  "journal": "Biophysical Journal",
+  "doi": "10.1529/biophysj.105.074112",
+  "pii": "S0006349506722494",
+  "project_tags": [
+    "bioprocess-ontology"
+  ],
+  "curation_status": "curated",
+  "staged_entry_id": "S0006349506722494",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0006349506722494.json",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "zotero_key": "7LAJX69S",
+  "pipeline_version": "oca-canonical-v2",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "elsevier",
+  "doi_used": "10.1529/biophysj.105.074112",
+  "pii_used": "S0006349506722494",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "generated_artifacts": [
+    "markdown/S0006349506722494.md",
+    "markdown/S0006349506722494.md",
+    "metadata/S0006349506722494.json",
+    "sources/S0006349506722494.elsevier.xml"
+  ],
+  "extraction_warnings": [],
+  "api_retrieval_status": "success",
+  "crossref_retrieval_status": null,
+  "lookup_doi": "10.1529/biophysj.105.074112",
+  "lookup_pii": "S0006349506722494",
+  "xml_artifact_path": "sources/S0006349506722494.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S0006349506722494.md",
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-06-24T13:42:42.591480+00:00",
+  "curated_at": "2026-06-24T13:57:33.830900+00:00",
+  "updated_at": "2026-06-24T13:58:00.664741+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/S0006349506722494.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/S0006349506722494.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\curated\\metadata\\S0006349506722494.json",
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\curated\\markdown\\S0006349506722494.md",
+  "markdown_available": true,
+  "repository_stage": "curated"
+}

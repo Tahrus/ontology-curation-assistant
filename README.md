@@ -147,7 +147,7 @@ The workflow supports:
 
 The UI calls JSON endpoints under `/api/...`, so CLI-created candidates and browser-edited candidates use the same SQLite database.
 Credentials entered in the UI are stored in the local SQLite database for development use and are masked in API responses.
-Saved API configurations are listed on the Configuration page with provider/library/model metadata, masked secrets, timestamps, and active-state controls.
+Saved Zotero, LLM, and Elsevier publisher API configurations are listed on the Configuration page with provider/library/model metadata, masked secrets, timestamps, and active-state controls.
 
 Literature import, ingestion, linking, and Zotero sync workflows refresh the LLM-ready literature repository at:
 
@@ -207,8 +207,13 @@ The reset clears every file and subfolder under the configured `OCA_LITERATURE_B
 The literature repository is project-scoped and explicitly two-stage. Configure Zotero/local import paths under Settings, select an active project, then use Literature > Import literature. Import creates pipeline-generated staged entries only. Review metadata and Markdown, assign project tags, and promote an entry before downstream candidate extraction or ontology curation can use it. Equivalent CLI commands are:
 
 ```powershell
-oca literature import --project protein-precipitation --zotero-storage "C:\Users\<USER>\Zotero\storage"
-oca literature import --project protein-precipitation --pdf-dir .\pdfs
+oca literature import --project protein-precipitation --doi 10.1016/j.example.2026.100001
+oca literature import --project protein-precipitation --pii S0098135425001978
+oca literature test-api --project protein-precipitation --pii S0098135425001978
+# Explicit opt-in fallback only:
+oca literature import --project protein-precipitation --doi 10.1016/j.example.2026.100001 --pdf .\paper.pdf --allow-pdf-fallback
+# Explicit PDF-only/debug mode only:
+oca literature import --project protein-precipitation --pdf-dir .\pdfs --extraction-mode pdf_only
 oca literature list --project protein-precipitation
 oca literature staged list --project protein-precipitation
 oca literature promote <canonical-id> --project protein-precipitation --project-tag protein-precipitation
@@ -223,7 +228,7 @@ oca literature migrate-old --project protein-precipitation --apply
 oca literature reset --project protein-precipitation --yes
 ```
 
-The implementation migrated from `literatur_test_2` now lives in `backend/app/literature/canonical.py`; OCA never imports the external test directory at runtime. It normalizes DOI and PII, prefers PII for canonical names, uses exact normalized titles to bridge DOI-only and PII-only imports, preserves curation fields on re-import, parses Elsevier/ScienceDirect XML when present, and falls back to PyMuPDF for ordinary PDFs. `backend/app/literature/pipeline.py` is a backwards-compatible wrapper; `BibPipelineCombined.py` is legacy and is not called by the default path.
+The implementation adapted from `literatur_test_2` now lives in `backend/app/literature/canonical.py`; OCA never imports the external test directory at runtime. It normalizes DOI and PII, prefers PII for canonical names, uses exact normalized titles to bridge DOI-only and PII-only imports, and preserves curation fields on re-import. The default extraction mode is `publisher_api_required`: Zotero supplies identifiers and metadata, then identified Elsevier/ScienceDirect items must succeed through the Article Retrieval API before a staged entry is created. Publisher lookup order is PII, DOI, ISSN, ISBN, URL, PMID, PMCID. Elsevier Article Retrieval currently supports only PII and DOI, so the other kinds are retained and recorded as unsupported rather than being sent to invented endpoints. A PII-specific 400/404, invalid XML, or missing full-text response can advance to DOI; missing configuration and authentication, permission, quota, network, or server failures stop immediately. Structured XML is saved and converted locally to the staged review Markdown; the converter retains the abstract, nested sections, equations represented as text, figure captions, tables, appendices/back matter, and references. Failed identifier attempts remain visible and never silently invoke the PDF extractor. PyMuPDF remains available only through `pdf_fallback_allowed` (or `--allow-pdf-fallback`) and the diagnostic `pdf_only` mode. `backend/app/literature/pipeline.py` is a backwards-compatible wrapper that obeys the same mode; `BibPipelineCombined.py` is legacy and is not called by the default path.
 
 The default literature artefacts are:
 
@@ -232,6 +237,8 @@ projects/<project_slug>/literature/
   sources/                   staged source copies; original Zotero data is untouched
   markdown/                  pipeline-generated staged Markdown
   metadata/                  staged metadata, provenance, and promotion status
+  fallback/                  lower-priority PDF Markdown retained after explicit fallback
+  api_tests/                 isolated XML/Markdown from publisher API diagnostics
   curated/
     markdown/                human-reviewed authoritative Markdown
     metadata/                reviewed metadata, project tags, and staged traceability
@@ -240,9 +247,9 @@ projects/<project_slug>/literature/
   archive/                   archived legacy files
 ```
 
-LLM-facing Markdown contains no YAML front matter. It begins with one title, one normalized PII line when available, one optional normalized DOI line, then the paper content. Rich provenance and human fields remain in JSON metadata. New imports register repository-relative artifact paths, artifact types, and staged/curated ownership in metadata. Existing single-stage canonical entries remain in place and are treated conservatively as staged/needs-review; OCA does not guess that they were manually curated. Promotion stores a trace back to the staged metadata.
+LLM-facing Markdown contains no YAML front matter. It begins with one title, one normalized PII line when available, one optional normalized DOI line, then the paper content. Rich provenance and human fields remain in JSON metadata. New imports register repository-relative artifact paths, artifact types, staged/curated ownership, `metadata_source`, `content_source`, `extraction_mode`, API status/errors, `api_identifier_used_kind`, `api_identifier_used_value`, ordered `api_identifier_attempts`, `api_retrieval_source`, lookup identifiers, `xml_retrieved`, `pdf_used`, `fallback_used`, fallback authorization, warnings, and XML/PDF Markdown artifact paths. Metadata resolution prefers complete Zotero fields and fills Elsevier records from XML. Crossref and PDF/heuristic metadata are available only on an explicitly authorized fallback path. Existing single-stage canonical entries remain in place and are treated conservatively as staged/needs-review; OCA does not guess that they were manually curated. Promotion stores a trace back to the staged metadata.
 
-On Literature, **Delete uncurated imported literature and generated files** first previews and then, after confirmation, removes unpromoted artifacts from the active project repository and from a distinct configured legacy global literature repository. The bounded orphan scan covers OCA-managed `sources`, `markdown`/`Markdown`, `metadata`, `raw`, `clean`, `context`, `reports`, `papers`, `blocked`, `combined`, `raw_markdown`, `clean_markdown`, `llm_context`, `metadata_reports`, `rejected_or_review_required`, and `Paper-PDF` folders. Old untracked files in those locations are conservatively classified as generated staged artifacts. Curated artifacts, promoted staging records, project/ontology/settings files, and original external Zotero storage are protected. `combined_literature.md` is removed when no curated entries exist and rebuilt from curated entries otherwise. The CLI `--dry-run` command above previews the selected project repository without deleting files.
+On Literature, **Delete uncurated imported literature and generated files** first previews and then, after confirmation, removes unpromoted artifacts from the active project repository and from a distinct configured legacy global literature repository. The bounded orphan scan covers OCA-managed `sources`, `markdown`/`Markdown`, `metadata`, `raw`, `clean`, `context`, `reports`, `papers`, `blocked`, `combined`, `fallback`, `raw_markdown`, `clean_markdown`, `llm_context`, `metadata_reports`, `rejected_or_review_required`, and `Paper-PDF` folders. Old untracked files in those locations are conservatively classified as generated staged artifacts. Curated artifacts, promoted staging records, project/ontology/settings files, and original external Zotero storage are protected. `combined_literature.md` is removed when no curated entries exist and rebuilt from curated entries otherwise. The CLI `--dry-run` command above previews the selected project repository without deleting files.
 
 ### Zotero from the Browser
 
@@ -261,7 +268,7 @@ If you do not have real Zotero credentials ready, click `Load Test Entries`; thi
 
 The Literature page contains the import action, imported-literature review queue, curated-literature editor, promotion controls, project-tag selector, and confirmed unpromoted-stage cleanup. Literature/Zotero paths and publisher settings now live under Settings.
 
-Publisher enrichment settings support `ELSEVIER_API_KEY`/`OCA_ELSEVIER_API_KEY`, optional `ELSEVIER_INSTTOKEN`/`OCA_ELSEVIER_INST_TOKEN`, `OCA_ELSEVIER_API_BASE_URL` (default `https://api.elsevier.com`), and `OCA_PUBLISHER_API_ENRICHMENT_ENABLED`. Missing publisher settings load as empty secrets with enrichment disabled; saved values are merged without changing unrelated settings. Environment secrets take precedence over values stored through Settings. API responses show only `configured`/`missing`, never the secret value. Enrichment remains optional; the working local import pipeline does not require publisher credentials.
+Publisher settings support `ELSEVIER_API_KEY`/`OCA_ELSEVIER_API_KEY`, optional `ELSEVIER_INSTTOKEN`/`OCA_ELSEVIER_INST_TOKEN`, `OCA_ELSEVIER_API_BASE_URL` (default `https://api.elsevier.com`), `OCA_PUBLISHER_API_ENRICHMENT_ENABLED`, and `OCA_LITERATURE_EXTRACTION_MODE` (default `publisher_api_required`). Missing values load safely; saved values are merged without changing unrelated settings. Environment secrets take precedence over values stored through Settings, and API responses expose only configured/missing status. Saving publisher settings creates or updates an `Elsevier Publisher API` entry under Saved API Configurations; its API key and institutional token remain masked, and the saved entry can be activated through the existing controls. Settings offers `publisher_api_required`, `pdf_fallback_allowed`, and `pdf_only`; PDF use is never inferred. Use the API test controls (or `oca literature test-api`) to retrieve and parse XML into isolated `api_tests/` artifacts without reading a PDF or creating a staged entry. The Settings diagnostics panel reports the selected mode, Elsevier/Zotero configuration, whether fallback is enabled, and the last import result. Staged review cards display content/metadata source, API status, the identifier used and ordered attempts, XML/PDF use, fallback authorization, and warnings.
 
 ### LLM / Chatbot Configuration
 

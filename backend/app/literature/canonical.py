@@ -10,6 +10,16 @@ import unicodedata
 from typing import Any
 from urllib.parse import unquote
 
+from backend.app.literature.publisher_xml import (
+    ArticleApiRetrievalFailed,
+    ElsevierApiConfig,
+    LiteratureIdentification,
+    collect_article_identifiers,
+    parse_elsevier_xml,
+    retrieve_article_via_api_with_identifier_fallback,
+    retrieve_crossref_metadata,
+)
+
 DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:a-z0-9]+", re.I)
 PII_RE = re.compile(r"S\d{4}[\s-]?\d{4}\s*\(\d{2}\)\s*\d{5}[\s-]?\d|S\d{16}", re.I)
 CURATION_FIELDS = {"project_tags", "review_status", "curation", "annotations", "ontology_suggestions", "include_in_llm_extraction", "document_role", "requires_manual_review", "state"}
@@ -17,8 +27,59 @@ MANAGED_ARTIFACT_DIRS = {
     "sources", "markdown", "metadata", "raw", "clean", "context", "reports",
     "papers", "blocked", "combined", "raw_markdown", "clean_markdown",
     "llm_context", "metadata_reports", "rejected_or_review_required",
-    "Markdown", "Paper-PDF",
+    "Markdown", "Paper-PDF", "fallback", "api_tests",
 }
+EXTRACTION_MODES = {"publisher_api_required", "pdf_fallback_allowed", "pdf_only"}
+DEFAULT_EXTRACTION_MODE = "publisher_api_required"
+
+
+class LiteratureExtractionError(ValueError):
+    def __init__(self, message: str, diagnostics: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+def _validate_extraction_mode(value: str) -> str:
+    if value not in EXTRACTION_MODES:
+        raise ValueError(f"Unsupported literature extraction mode: {value}")
+    return value
+
+
+def _failure_message(status: str, *, has_sciencedirect_url: bool = False) -> str:
+    messages = {
+        "not_configured": "Elsevier API key is missing. Configure it under Settings > Publisher API.",
+        "disabled": "Publisher API extraction is disabled. Enable it under Settings > Publisher API.",
+        "http_401": "Elsevier API request failed with status 401. Check the API key.",
+        "http_403": "Elsevier API request failed with status 403. Check institutional access or entitlement.",
+        "invalid_xml": "Elsevier API did not return valid XML/full-text content.",
+        "full_text_unavailable": "Elsevier API did not return XML/full-text content.",
+        "request_failed": "Elsevier API request failed because the service could not be reached.",
+    }
+    if status == "not_eligible":
+        return "PII could not be extracted from Zotero metadata or the ScienceDirect URL." if has_sciencedirect_url else "No DOI, PII, or ScienceDirect URL found. Cannot use publisher API extraction."
+    return messages.get(status, f"Elsevier API request failed ({status}).")
+
+
+def _failure_diagnostics(mode: str, status: str, message: str, *, doi: str = "", pii: str = "", attempts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "extraction_mode": mode,
+        "content_source": None,
+        "metadata_source": None,
+        "used_api_provider": "elsevier",
+        "doi_used": doi or None,
+        "pii_used": pii or None,
+        "xml_retrieved": False,
+        "pdf_used": False,
+        "fallback_used": False,
+        "extraction_status": "failed",
+        "api_retrieval_status": status,
+        "api_identifier_used_kind": None,
+        "api_identifier_used_value": None,
+        "api_identifier_attempts": attempts or [],
+        "api_retrieval_source": "elsevier_article_retrieval_api",
+        "extraction_errors": [message],
+        "generated_artifacts": [],
+    }
 
 
 def _relative_artifact_path(paths: "RepositoryPaths", path: Path) -> str:
@@ -33,7 +94,7 @@ def _deduplicate_artifacts(artifacts: list[dict[str, str]]) -> list[dict[str, st
     unique: dict[str, dict[str, str]] = {}
     for artifact in artifacts:
         if isinstance(artifact, dict) and artifact.get("path"):
-            unique[artifact["path"]] = artifact
+            unique[f"{artifact['path']}::{artifact.get('artifact_type', '')}"] = artifact
     return list(unique.values())
 
 
@@ -182,7 +243,7 @@ def _existing(paths: RepositoryPaths, doi: str, pii: str, title: str) -> dict[st
     return next((item for item in entries if normalized and normalize_title(item.get("title")) == normalized), None)
 
 
-def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: str | None = None, pii: str | None = None, source_type: str = "local_markdown", source_path: Path | None = None, overwrite: bool = False) -> tuple[dict[str, Any], bool]:
+def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: str | None = None, pii: str | None = None, source_type: str = "local_markdown", source_path: Path | None = None, overwrite: bool = False, metadata_fields: dict[str, Any] | None = None, provenance: dict[str, Any] | None = None) -> tuple[dict[str, Any], bool]:
     paths.ensure()
     found_doi, found_pii = extract_identifiers(markdown)
     doi, pii = normalize_doi(doi) or found_doi, normalize_pii(pii) or found_pii
@@ -191,12 +252,29 @@ def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: s
     target_id = canonical_id(pii=pii or (previous or {}).get("pii"), doi=doi or (previous or {}).get("doi"), title=title)
     now = datetime.now(timezone.utc).isoformat()
     metadata = {**(previous or {}), "canonical_id": target_id, "title": title or (previous or {}).get("title") or "Untitled article", "pii": pii or (previous or {}).get("pii") or None, "doi": doi or (previous or {}).get("doi") or None, "source_type": source_type, "source_path": str(source_path) if source_path else (previous or {}).get("source_path"), "import_status": "staged", "curation_status": "needs_review", "duplicate_status": "canonical_reused" if previous else "unique", "pipeline_version": "oca-canonical-v2", "imported_at": now, "updated_at": now}
+    for key, value in (metadata_fields or {}).items():
+        if value not in (None, "", []):
+            metadata[key] = value
+    metadata.update(provenance or {})
     metadata.setdefault("created_at", now)
     target = paths.markdown / f"{target_id}.md"
     old = paths.markdown / f"{old_id}.md" if old_id else None
     current = old.read_text(encoding="utf-8", errors="replace") if old and old.exists() else (target.read_text(encoding="utf-8", errors="replace") if target.exists() else "")
     candidate = clean_llm_markdown(markdown, title=metadata["title"], pii=metadata["pii"] or "", doi=metadata["doi"] or "")
-    if overwrite or not current or len(candidate.split()) > len(current.split()):
+    content_priority = {"raw_pdf_text": 0, "pdf_extraction": 1, "provided_markdown": 2, "elsevier_xml": 3}
+    previous_content_source = str((previous or {}).get("content_source") or "")
+    incoming_content_source = str((provenance or {}).get("content_source") or "")
+    incoming_is_preferred = content_priority.get(incoming_content_source, 0) > content_priority.get(previous_content_source, 0)
+    keep_preferred_existing = bool(previous and content_priority.get(previous_content_source, 0) > content_priority.get(incoming_content_source, 0))
+    fallback_artifacts: list[dict[str, str]] = []
+    fallback_text = current if incoming_is_preferred and previous_content_source == "pdf_extraction" else candidate if keep_preferred_existing and incoming_content_source == "pdf_extraction" else ""
+    if fallback_text:
+        fallback_path = paths.root / "fallback" / f"{target_id}.pdf.md"
+        fallback_path.parent.mkdir(parents=True, exist_ok=True)
+        fallback_path.write_text(fallback_text, encoding="utf-8")
+        metadata["pdf_fallback_markdown_path"] = _relative_artifact_path(paths, fallback_path)
+        fallback_artifacts.append(_artifact(metadata["pdf_fallback_markdown_path"], "pdf_fallback_markdown"))
+    if overwrite or not current or incoming_is_preferred or (not keep_preferred_existing and len(candidate.split()) > len(current.split())):
         target.write_text(candidate, encoding="utf-8")
     elif target != old:
         target.write_text(clean_llm_markdown(current, title=metadata["title"], pii=metadata["pii"] or "", doi=metadata["doi"] or ""), encoding="utf-8")
@@ -207,10 +285,16 @@ def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: s
     for key in CURATION_FIELDS:
         if previous and key in previous:
             metadata[key] = previous[key]
+    if keep_preferred_existing and previous:
+        for key in ("title", "authors", "year", "journal", "doi", "pii", "abstract", "publication_date", "source_type", "source_path", "extraction_mode", "metadata_source", "content_source", "used_api_provider", "extraction_warnings", "api_retrieval_status", "lookup_doi", "lookup_pii", "doi_used", "pii_used", "xml_retrieved", "pdf_used", "fallback_used", "fallback_authorized_by", "extraction_status", "extraction_errors", "generated_artifacts", "xml_artifact_path", "xml_markdown_artifact_path"):
+            if key in previous:
+                metadata[key] = previous[key]
     metadata_path = paths.metadata / f"{target_id}.json"
     metadata["artifacts"] = _deduplicate_artifacts([
         *(previous or {}).get("artifacts", []),
+        *fallback_artifacts,
         _artifact(_relative_artifact_path(paths, target), "paper_markdown"),
+        *([_artifact(_relative_artifact_path(paths, target), f"{incoming_content_source}_markdown")] if incoming_content_source and not keep_preferred_existing else []),
         _artifact(_relative_artifact_path(paths, metadata_path), "metadata_json"),
     ])
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -264,6 +348,27 @@ def promote_staged_entry(paths: RepositoryPaths, entry_id: str, *, metadata: dic
         "source_path": staged.get("source_path"),
         "zotero_key": staged.get("zotero_key"),
         "pipeline_version": staged.get("pipeline_version"),
+        "metadata_source": staged.get("metadata_source"),
+        "content_source": staged.get("content_source"),
+        "extraction_mode": staged.get("extraction_mode"),
+        "used_api_provider": staged.get("used_api_provider"),
+        "doi_used": staged.get("doi_used"),
+        "pii_used": staged.get("pii_used"),
+        "xml_retrieved": staged.get("xml_retrieved"),
+        "pdf_used": staged.get("pdf_used"),
+        "fallback_used": staged.get("fallback_used"),
+        "fallback_authorized_by": staged.get("fallback_authorized_by"),
+        "extraction_status": staged.get("extraction_status"),
+        "extraction_errors": staged.get("extraction_errors") or [],
+        "generated_artifacts": staged.get("generated_artifacts") or [],
+        "extraction_warnings": staged.get("extraction_warnings") or [],
+        "api_retrieval_status": staged.get("api_retrieval_status"),
+        "crossref_retrieval_status": staged.get("crossref_retrieval_status"),
+        "lookup_doi": staged.get("lookup_doi"),
+        "lookup_pii": staged.get("lookup_pii"),
+        "xml_artifact_path": staged.get("xml_artifact_path"),
+        "xml_markdown_artifact_path": staged.get("xml_markdown_artifact_path"),
+        "pdf_fallback_markdown_path": staged.get("pdf_fallback_markdown_path"),
         "imported_at": staged.get("imported_at") or staged.get("created_at"),
         "curated_at": existing.get("curated_at") or now,
         "updated_at": now,
@@ -457,43 +562,268 @@ def _pdf_text(path: Path) -> str:
 
 
 def _xml_text(path: Path) -> tuple[str, str, str, str]:
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(path.read_text(encoding="utf-8", errors="replace"), "xml")
-    def value(*names: str) -> str:
-        for name in names:
-            node = soup.find(name)
-            if node and node.get_text(" ", strip=True):
-                return node.get_text(" ", strip=True)
-        return ""
-    title = value("dc:title", "ce:title", "title") or path.stem
-    blocks = []
-    if abstract := value("ce:abstract", "abstract"):
-        blocks.extend(["## Abstract", "", abstract, ""])
-    for section in soup.find_all(["ce:section", "section", "sec"]):
-        heading = section.find(["ce:section-title", "title"])
-        paragraphs = [node.get_text(" ", strip=True) for node in section.find_all(["ce:para", "p"])]
-        if paragraphs:
-            blocks.extend([f"## {heading.get_text(' ', strip=True) if heading else 'Section'}", "", "\n\n".join(paragraphs), ""])
-    return title, normalize_doi(value("prism:doi", "doi")), normalize_pii(value("pii", "xocs:pii-unformatted", "prism:pii")), "\n".join(blocks) or soup.get_text("\n", strip=True)
+    article = parse_elsevier_xml(path.read_text(encoding="utf-8", errors="replace"))
+    return article.title or path.stem, normalize_doi(article.doi), normalize_pii(article.pii), article.markdown
 
 
-def import_directory(paths: RepositoryPaths, source_dir: Path, *, source_type: str, keep_sources: bool = True, overwrite: bool = False) -> ImportResult:
+def import_identified_item(paths: RepositoryPaths, identification: LiteratureIdentification, *, publisher: ElsevierApiConfig | None = None, extraction_mode: str = DEFAULT_EXTRACTION_MODE, http_client: Any = None, pdf_extractor: Any = None, keep_sources: bool = True, overwrite: bool = False) -> tuple[dict[str, Any], bool]:
+    """Import one identified item; PDF use requires an explicit non-default mode."""
+    extraction_mode = _validate_extraction_mode(extraction_mode)
+    warnings: list[str] = []
+    retrieval_status = "not_attempted"
+    crossref_status = "not_attempted"
+    identifier_attempts: list[dict[str, Any]] = []
+    retrieval_error_message = ""
+    lookup_doi = normalize_doi(identification.doi)
+    lookup_pii = normalize_pii(identification.pii)
+    identifier_metadata = {
+        **identification.identifier_metadata,
+        "doi": lookup_doi,
+        "pii": lookup_pii,
+        "sciencedirect_url": identification.sciencedirect_url,
+    }
+    available_identifiers = collect_article_identifiers(identifier_metadata)
+    has_identifier = bool(available_identifiers)
+    if extraction_mode != "pdf_only" and not has_identifier:
+        message = _failure_message("not_eligible", has_sciencedirect_url=bool(identification.sciencedirect_url))
+        if extraction_mode == "publisher_api_required":
+            raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, "not_eligible", message))
+        warnings.append(message)
+        retrieval_status = "not_eligible"
+    if extraction_mode != "pdf_only" and has_identifier and (publisher is None or not publisher.api_key or not publisher.enabled):
+        status = "disabled" if publisher is not None and publisher.api_key and not publisher.enabled else "not_configured"
+        message = _failure_message(status)
+        if extraction_mode == "publisher_api_required":
+            raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, status, message, doi=lookup_doi, pii=lookup_pii))
+        warnings.append(message)
+        retrieval_status = status
+    if extraction_mode != "pdf_only" and publisher and publisher.api_key and has_identifier:
+        paths.ensure()
+        try:
+            api_result = retrieve_article_via_api_with_identifier_fallback(identifier_metadata, publisher, http_client=http_client)
+        except ArticleApiRetrievalFailed as exc:
+            retrieval_status = str(exc.attempts[-1].get("status") or "failed") if exc.attempts else "failed"
+            retrieval_error_message = str(exc)
+            warnings.append(retrieval_error_message)
+            identifier_attempts = exc.attempts
+        else:
+            retrieval = api_result.retrieval
+            article = api_result.article
+            retrieval_status = retrieval.status
+            identifier_attempts = api_result.identifier_attempts
+            metadata_source = "zotero+elsevier_xml" if identification.metadata_source == "zotero" else "elsevier_xml"
+            entry, duplicate = upsert_markdown(
+                paths,
+                title=identification.title or article.title,
+                markdown=article.markdown,
+                doi=lookup_doi or article.doi,
+                pii=lookup_pii or article.pii,
+                source_type="elsevier_article_retrieval_api",
+                overwrite=overwrite,
+                metadata_fields={
+                    "authors": identification.authors or article.authors,
+                    "year": identification.year or article.year,
+                    "journal": identification.journal or article.journal,
+                    "zotero_key": identification.zotero_key,
+                    "sciencedirect_url": identification.sciencedirect_url,
+                    "abstract": article.abstract,
+                    "publication_date": article.publication_date,
+                },
+                provenance={
+                    "extraction_mode": extraction_mode,
+                    "metadata_source": metadata_source,
+                    "content_source": "elsevier_xml",
+                    "used_api_provider": "elsevier",
+                    "extraction_warnings": article.warnings,
+                    "api_retrieval_status": retrieval_status,
+                    "api_identifier_used_kind": api_result.used_identifier.kind,
+                    "api_identifier_used_value": api_result.used_identifier.value,
+                    "api_identifier_attempts": identifier_attempts,
+                    "api_retrieval_source": api_result.api_retrieval_source,
+                    "lookup_doi": lookup_doi or article.doi,
+                    "lookup_pii": lookup_pii or article.pii,
+                    "doi_used": lookup_doi or article.doi,
+                    "pii_used": lookup_pii or article.pii,
+                    "xml_retrieved": True,
+                    "pdf_used": False,
+                    "fallback_used": False,
+                    "fallback_authorized_by": None,
+                    "extraction_status": "success",
+                    "extraction_errors": [],
+                },
+            )
+            xml_path = paths.sources / f"{entry['canonical_id']}.elsevier.xml"
+            xml_path.write_text(retrieval.xml_text or "", encoding="utf-8")
+            metadata_path = paths.metadata / f"{entry['canonical_id']}.json"
+            markdown_path = paths.markdown / f"{entry['canonical_id']}.md"
+            entry["xml_artifact_path"] = _relative_artifact_path(paths, xml_path)
+            entry["xml_markdown_artifact_path"] = _relative_artifact_path(paths, markdown_path)
+            entry["artifacts"] = _deduplicate_artifacts([
+                *entry.get("artifacts", []),
+                _artifact(entry["xml_artifact_path"], "elsevier_xml"),
+                _artifact(entry["xml_markdown_artifact_path"], "elsevier_xml_markdown"),
+            ])
+            entry["generated_artifacts"] = [artifact["path"] for artifact in entry["artifacts"]]
+            metadata_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return entry, duplicate
+
+    if extraction_mode == "publisher_api_required":
+        message = retrieval_error_message or _failure_message(retrieval_status, has_sciencedirect_url=bool(identification.sciencedirect_url))
+        message = f"{message} Publisher API extraction failed. PDF fallback is disabled. Enable PDF fallback manually if you want to use PDF extraction."
+        raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, retrieval_status, message, doi=lookup_doi, pii=lookup_pii, attempts=identifier_attempts))
+
+    crossref = None
+    if lookup_doi and not (identification.title and identification.authors and identification.year and identification.journal):
+        crossref = retrieve_crossref_metadata(lookup_doi, http_client=http_client)
+        crossref_status = crossref.status
+
+    pdf_path = Path(identification.pdf_path) if identification.pdf_path else None
+    if not pdf_path or not pdf_path.is_file():
+        message = f"No local PDF was available for the explicitly selected {extraction_mode} mode."
+        raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, retrieval_status, message, doi=lookup_doi, pii=lookup_pii))
+    fallback_used = extraction_mode == "pdf_fallback_allowed"
+    if fallback_used:
+        warnings.append("Publisher XML was unavailable; PDF extraction was used as a fallback after explicit authorization.")
+    extractor = pdf_extractor or _pdf_text
+    body = extractor(pdf_path)
+    if not body:
+        raise ValueError("PDF fallback contains no extractable text.")
+    detected_doi, detected_pii = extract_identifiers(body)
+    entry, duplicate = upsert_markdown(
+        paths,
+        title=identification.title or (crossref.title if crossref else None) or title_from_text(body, pdf_path.stem),
+        markdown=body,
+        doi=lookup_doi or detected_doi,
+        pii=lookup_pii or detected_pii,
+        source_type="pdf_fallback",
+        source_path=pdf_path,
+        overwrite=overwrite,
+        metadata_fields={
+            "authors": identification.authors or (crossref.authors if crossref else []),
+            "year": identification.year or (crossref.year if crossref else None),
+            "journal": identification.journal or (crossref.journal if crossref else None),
+            "zotero_key": identification.zotero_key,
+            "sciencedirect_url": identification.sciencedirect_url,
+        },
+        provenance={
+            "extraction_mode": extraction_mode,
+            "metadata_source": (f"{identification.metadata_source}+crossref" if crossref and crossref.status == "success" and identification.metadata_source != "manual" else "crossref" if crossref and crossref.status == "success" else identification.metadata_source if identification.metadata_source != "manual" else "pdf_heuristic"),
+            "content_source": "pdf_extraction",
+            "used_api_provider": "elsevier" if extraction_mode != "pdf_only" else None,
+            "extraction_warnings": warnings,
+            "api_retrieval_status": retrieval_status,
+            "lookup_doi": lookup_doi or detected_doi,
+            "lookup_pii": lookup_pii or detected_pii,
+            "doi_used": lookup_doi or detected_doi,
+            "pii_used": lookup_pii or detected_pii,
+            "xml_retrieved": False,
+            "pdf_used": True,
+            "fallback_used": fallback_used,
+            "fallback_authorized_by": f"literature_extraction_mode={extraction_mode}",
+            "extraction_status": "success_with_fallback" if fallback_used else "success",
+            "extraction_errors": warnings,
+            "crossref_retrieval_status": crossref_status,
+        },
+    )
+    if keep_sources:
+        destination = paths.sources / f"{entry['canonical_id']}{pdf_path.suffix.lower()}"
+        if pdf_path.resolve() != destination.resolve():
+            shutil.copy2(pdf_path, destination)
+        metadata_path = paths.metadata / f"{entry['canonical_id']}.json"
+        markdown_path = paths.markdown / f"{entry['canonical_id']}.md"
+        entry["pdf_fallback_markdown_path"] = _relative_artifact_path(paths, markdown_path)
+        entry["artifacts"] = _deduplicate_artifacts([
+            *entry.get("artifacts", []),
+            _artifact(_relative_artifact_path(paths, destination), "pdf_source_copy"),
+            _artifact(entry["pdf_fallback_markdown_path"], "pdf_fallback_markdown"),
+        ])
+        entry["generated_artifacts"] = [artifact["path"] for artifact in entry["artifacts"]]
+        metadata_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    else:
+        metadata_path = paths.metadata / f"{entry['canonical_id']}.json"
+        entry["generated_artifacts"] = [artifact["path"] for artifact in entry.get("artifacts", [])]
+        metadata_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return entry, duplicate
+
+
+def test_publisher_api(paths: RepositoryPaths, identification: LiteratureIdentification, *, publisher: ElsevierApiConfig, http_client: Any = None, write_artifacts: bool = True) -> dict[str, Any]:
+    """Test Elsevier XML retrieval without reading or creating any PDF artifact."""
+    lookup_doi = normalize_doi(identification.doi)
+    lookup_pii = normalize_pii(identification.pii)
+    try:
+        api_result = retrieve_article_via_api_with_identifier_fallback(
+            {**identification.identifier_metadata, "doi": lookup_doi, "pii": lookup_pii, "sciencedirect_url": identification.sciencedirect_url},
+            publisher,
+            http_client=http_client,
+        )
+    except ArticleApiRetrievalFailed as exc:
+        status = str(exc.attempts[-1].get("status") or "failed") if exc.attempts else "failed"
+        raise LiteratureExtractionError(str(exc), _failure_diagnostics(DEFAULT_EXTRACTION_MODE, status, str(exc), doi=lookup_doi, pii=lookup_pii, attempts=exc.attempts)) from exc
+    retrieval = api_result.retrieval
+    article = api_result.article
+    markdown_path = None
+    xml_path = None
+    if write_artifacts:
+        test_dir = paths.root / "api_tests"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        test_id = canonical_id(pii=lookup_pii or article.pii, doi=lookup_doi or article.doi, title=article.title)
+        markdown_path = test_dir / f"{test_id}.md"
+        xml_path = test_dir / f"{test_id}.xml"
+        markdown_path.write_text(clean_llm_markdown(article.markdown, title=article.title, pii=lookup_pii or article.pii or "", doi=lookup_doi or article.doi or ""), encoding="utf-8")
+        xml_path.write_text(retrieval.xml_text, encoding="utf-8")
+    return {
+        "api_provider": "elsevier",
+        "request_status": retrieval.status,
+        "status_code": retrieval.status_code,
+        "title": article.title,
+        "authors": article.authors,
+        "journal": article.journal,
+        "year": article.year,
+        "doi": lookup_doi or article.doi,
+        "pii": lookup_pii or article.pii,
+        "section_count": article.section_count,
+        "reference_count": article.reference_count,
+        "xml_retrieved": True,
+        "pdf_used": False,
+        "api_identifier_used_kind": api_result.used_identifier.kind,
+        "api_identifier_used_value": api_result.used_identifier.value,
+        "api_identifier_attempts": api_result.identifier_attempts,
+        "api_retrieval_source": api_result.api_retrieval_source,
+        "markdown_path": str(markdown_path) if markdown_path else None,
+        "xml_path": str(xml_path) if xml_path else None,
+    }
+
+
+def import_directory(paths: RepositoryPaths, source_dir: Path, *, source_type: str, extraction_mode: str = DEFAULT_EXTRACTION_MODE, keep_sources: bool = True, overwrite: bool = False) -> ImportResult:
+    extraction_mode = _validate_extraction_mode(extraction_mode)
+    if extraction_mode == "publisher_api_required":
+        raise LiteratureExtractionError(
+            "Directory/PDF extraction is disabled in publisher_api_required mode. Import identified Zotero records through the publisher API, or explicitly select pdf_fallback_allowed/pdf_only.",
+            _failure_diagnostics(extraction_mode, "publisher_api_required", "PDF extraction was not authorized."),
+        )
     source_dir = Path(source_dir)
     if not source_dir.is_dir():
         raise NotADirectoryError(f"Literature source directory was not found: {source_dir}")
-    files = sorted(path for path in source_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".pdf", ".xml", ".md"})
+    files = sorted((path for path in source_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".pdf", ".xml", ".md"}), key=lambda path: ({".xml": 0, ".md": 1, ".pdf": 2}[path.suffix.lower()], str(path).casefold()))
     result = ImportResult(files_scanned=len(files), failures=[])
     for source in files:
         try:
             if source.suffix.lower() == ".xml":
                 title, doi, pii, body = _xml_text(source)
+                article = parse_elsevier_xml(source.read_text(encoding="utf-8", errors="replace"))
+                metadata_fields = {"authors": article.authors, "year": article.year, "journal": article.journal, "abstract": article.abstract, "publication_date": article.publication_date}
+                provenance = {"extraction_mode": extraction_mode, "metadata_source": "elsevier_xml", "content_source": "elsevier_xml", "used_api_provider": None, "extraction_warnings": article.warnings, "api_retrieval_status": "local_xml", "lookup_doi": doi, "lookup_pii": pii, "doi_used": doi, "pii_used": pii, "xml_retrieved": True, "pdf_used": False, "fallback_used": False, "fallback_authorized_by": f"literature_extraction_mode={extraction_mode}", "extraction_status": "success", "extraction_errors": []}
             else:
                 body = _pdf_text(source) if source.suffix.lower() == ".pdf" else source.read_text(encoding="utf-8", errors="replace")
                 if not body:
                     raise ValueError("Source contains no extractable text")
                 doi, pii = extract_identifiers(body)
                 title = title_from_text(body, source.stem)
-            entry, duplicate = upsert_markdown(paths, title=title, markdown=body, doi=doi, pii=pii, source_type=source_type, source_path=source, overwrite=overwrite)
+                metadata_fields = {}
+                pdf_used = source.suffix.lower() == ".pdf"
+                fallback_used = pdf_used and extraction_mode == "pdf_fallback_allowed"
+                provenance = {"extraction_mode": extraction_mode, "metadata_source": "pdf_heuristic" if pdf_used else "manual", "content_source": "pdf_extraction" if pdf_used else "provided_markdown", "used_api_provider": None, "extraction_warnings": ["PDF extraction was explicitly authorized by the selected extraction mode."] if pdf_used else [], "api_retrieval_status": "not_attempted", "lookup_doi": doi, "lookup_pii": pii, "doi_used": doi, "pii_used": pii, "xml_retrieved": False, "pdf_used": pdf_used, "fallback_used": fallback_used, "fallback_authorized_by": f"literature_extraction_mode={extraction_mode}", "extraction_status": "success_with_fallback" if fallback_used else "success", "extraction_errors": []}
+            entry, duplicate = upsert_markdown(paths, title=title, markdown=body, doi=doi, pii=pii, source_type=source_type, source_path=source, overwrite=overwrite, metadata_fields=metadata_fields, provenance=provenance)
             if keep_sources:
                 destination = paths.sources / f"{entry['canonical_id']}{source.suffix.lower()}"
                 if source.resolve() != destination.resolve():
@@ -503,6 +833,7 @@ def import_directory(paths: RepositoryPaths, source_dir: Path, *, source_type: s
                     *entry.get("artifacts", []),
                     _artifact(_relative_artifact_path(paths, destination), "source_copy"),
                 ])
+                entry["generated_artifacts"] = [artifact["path"] for artifact in entry["artifacts"]]
                 metadata_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             result.duplicates += int(duplicate)
             result.imported += int(not duplicate)

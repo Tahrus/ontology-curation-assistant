@@ -566,6 +566,7 @@ def test_literature_pipeline_missing_zotero_storage_is_clear(tmp_path):
         generated_md_dir=tmp_path / "literature" / "Markdown",
         papers_dir=tmp_path / "literature" / "papers",
         combined_output_file=tmp_path / "literature" / "combined_literature.md",
+        extraction_mode="pdf_only",
     )
 
     try:
@@ -586,6 +587,7 @@ def test_literature_pipeline_empty_zotero_storage_is_clear(tmp_path):
         generated_md_dir=tmp_path / "literature" / "Markdown",
         papers_dir=tmp_path / "literature" / "papers",
         combined_output_file=tmp_path / "literature" / "combined_literature.md",
+        extraction_mode="pdf_only",
     )
 
     try:
@@ -618,6 +620,7 @@ def test_literature_pipeline_copies_sources_generates_staged_markdown_without_au
         generated_md_dir=tmp_path / "literature" / "Markdown",
         papers_dir=tmp_path / "literature" / "papers",
         combined_output_file=tmp_path / "literature" / "combined_literature.md",
+        extraction_mode="pdf_only",
     )
 
     result = run_literature_pipeline(config)
@@ -662,6 +665,7 @@ def test_literature_pipeline_repeated_run_does_not_duplicate_pdf_or_markdown_art
         generated_md_dir=tmp_path / "literature" / "Markdown",
         papers_dir=tmp_path / "literature" / "papers",
         combined_output_file=tmp_path / "literature" / "combined_literature.md",
+        extraction_mode="pdf_only",
     )
 
     first = run_literature_pipeline(config)

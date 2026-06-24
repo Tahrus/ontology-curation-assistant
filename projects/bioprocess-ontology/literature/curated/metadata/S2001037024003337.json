@@ -1,0 +1,67 @@
+{
+  "canonical_id": "S2001037024003337",
+  "title": "Osmolyte-induced protein stability changes explained by graph theory",
+  "authors": [
+    "Mattia Miotto",
+    "Nina Warner",
+    "Giancarlo Ruocco",
+    "Gian Gaetano Tartaglia",
+    "Oren A. Scherman",
+    "Edoardo Milanetti"
+  ],
+  "year": "2024",
+  "journal": "Computational and Structural Biotechnology Journal",
+  "doi": "10.1016/j.csbj.2024.10.014",
+  "pii": "S2001037024003337",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "S2001037024003337",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2001037024003337.json",
+  "source_type": "elsevier_article_retrieval_api",
+  "source_path": null,
+  "zotero_key": "BP3H7C9K",
+  "pipeline_version": "oca-canonical-v2",
+  "metadata_source": "zotero+elsevier_xml",
+  "content_source": "elsevier_xml",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "elsevier",
+  "doi_used": "10.1016/j.csbj.2024.10.014",
+  "pii_used": "S2001037024003337",
+  "xml_retrieved": true,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "success",
+  "extraction_errors": [],
+  "generated_artifacts": [
+    "markdown/S2001037024003337.md",
+    "markdown/S2001037024003337.md",
+    "metadata/S2001037024003337.json",
+    "sources/S2001037024003337.elsevier.xml"
+  ],
+  "extraction_warnings": [
+    "Appendix-like XML content was detected but could not be parsed cleanly."
+  ],
+  "api_retrieval_status": "success",
+  "crossref_retrieval_status": null,
+  "lookup_doi": "10.1016/j.csbj.2024.10.014",
+  "lookup_pii": "S2001037024003337",
+  "xml_artifact_path": "sources/S2001037024003337.elsevier.xml",
+  "xml_markdown_artifact_path": "markdown/S2001037024003337.md",
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-06-24T13:42:51.251718+00:00",
+  "curated_at": "2026-06-24T13:57:45.318474+00:00",
+  "updated_at": "2026-06-24T13:57:45.318474+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/S2001037024003337.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/S2001037024003337.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -14,14 +15,16 @@ from backend.app.config import get_settings
 from backend.app.db import session as db_session
 from backend.app.main import app
 from backend.app.cli import app as cli_app
-from backend.app.models.db import AppSetting
+from backend.app.models.db import AppSetting, LiteratureSource
 
 from backend.app.literature.canonical import (
+    LiteratureExtractionError,
     RepositoryPaths,
     build_combined,
     clean_llm_markdown,
     cleanup_unpromoted_staged,
     import_directory,
+    import_identified_item,
     list_curated_entries,
     list_entries,
     normalize_doi,
@@ -30,6 +33,46 @@ from backend.app.literature.canonical import (
     reset_repository,
     upsert_markdown,
 )
+from backend.app.literature.publisher_xml import (
+    ArticleApiRetrievalFailed,
+    ElsevierApiConfig,
+    ElsevierArticleClient,
+    ElsevierRetrieval,
+    LiteratureIdentification,
+    MissingApiConfigurationError,
+    collect_article_identifiers,
+    parse_elsevier_xml,
+    retrieve_article_via_api_with_identifier_fallback,
+)
+
+
+ELSEVIER_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<full-text-retrieval-response xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:prism="http://prismstandard.org/namespaces/basic/2.0/" xmlns:ce="http://www.elsevier.com/xml/common/dtd" xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+  <coredata>
+    <dc:title>Structured Protein Recovery</dc:title>
+    <dc:creator>Ada Curator</dc:creator>
+    <dc:creator>Ben Researcher</dc:creator>
+    <prism:publicationName>Journal of Structured Bioprocessing</prism:publicationName>
+    <prism:coverDate>2026-04-03</prism:coverDate>
+    <prism:doi>10.1000/structured.xml</prism:doi>
+    <xocs:pii-unformatted>S1234567890123456</xocs:pii-unformatted>
+  </coredata>
+  <originalText>
+    <article>
+      <head><ce:abstract><ce:para>Structured abstract text.</ce:para></ce:abstract></head>
+      <body><ce:sections>
+        <ce:section><ce:section-title>Introduction</ce:section-title><ce:para>XML body evidence.</ce:para>
+          <ce:section><ce:section-title>Nested method</ce:section-title><ce:para>Nested section evidence.</ce:para></ce:section>
+          <ce:figure><ce:caption>Recovery process figure.</ce:caption></ce:figure>
+          <ce:table><ce:caption>Recovery values</ce:caption><ce:row><ce:entry>Condition</ce:entry><ce:entry>Yield</ce:entry></ce:row><ce:row><ce:entry>A</ce:entry><ce:entry>95%</ce:entry></ce:row></ce:table>
+        </ce:section>
+      </ce:sections></body>
+      <ce:appendices><ce:appendix><ce:section-title>Appendix A</ce:section-title><ce:para>Appendix calibration details.</ce:para></ce:appendix></ce:appendices>
+      <tail><ce:bibliography><ce:reference>Reference Author. Reference title. 2020.</ce:reference></ce:bibliography></tail>
+    </article>
+  </originalText>
+</full-text-retrieval-response>
+"""
 
 
 @pytest.fixture()
@@ -49,6 +92,389 @@ def client(tmp_path: Path, monkeypatch):
 def test_identifier_normalization() -> None:
     assert {normalize_pii(value) for value in ("S0098-1354(25)00197-8", "S0098135425001978", "s0098 1354(25)00197 8")} == {"S0098135425001978"}
     assert {normalize_doi(value) for value in ("https://doi.org/10.1016/j.compchemeng.2025.109193", "doi:10.1016/j.compchemeng.2025.109193", "10.1016/J.COMPCHEMENG.2025.109193")} == {"10.1016/j.compchemeng.2025.109193"}
+
+
+def test_elsevier_xml_metadata_body_hierarchy_appendix_and_references() -> None:
+    article = parse_elsevier_xml(ELSEVIER_XML)
+    assert article.title == "Structured Protein Recovery"
+    assert article.authors == ["Ada Curator", "Ben Researcher"]
+    assert article.journal == "Journal of Structured Bioprocessing"
+    assert article.year == "2026"
+    assert article.doi == "10.1000/structured.xml"
+    assert article.pii == "S1234567890123456"
+    assert article.has_full_text is True
+    assert "# Structured Protein Recovery" in article.markdown
+    assert "## Introduction" in article.markdown
+    assert "### Nested method" in article.markdown
+    assert "**Figure:** Recovery process figure." in article.markdown
+    assert "| Condition | Yield |" in article.markdown
+    assert "## Appendix A" in article.markdown
+    assert "Appendix calibration details." in article.markdown
+    assert "## References" in article.markdown
+
+
+@pytest.mark.parametrize(("doi", "pii", "expected_segment"), [("10.1000/structured.xml", None, "/doi/"), (None, "S1234567890123456", "/pii/")])
+def test_elsevier_client_retrieves_xml_by_doi_or_pii(doi: str | None, pii: str | None, expected_segment: str) -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=ELSEVIER_XML)
+
+    retrieval = ElsevierArticleClient(
+        ElsevierApiConfig(api_key="test-key", enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    ).retrieve(doi=doi, pii=pii)
+    assert retrieval.status == "success"
+    assert retrieval.xml_text == ELSEVIER_XML.strip()
+    assert expected_segment in requests[0].url.path
+    assert requests[0].headers["Accept"] == "text/xml"
+    assert "apiKey" not in requests[0].url.params
+
+
+def test_elsevier_client_accepts_legacy_article_endpoint_base_url() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=ELSEVIER_XML)
+
+    ElsevierArticleClient(
+        ElsevierApiConfig(api_key="test-key", enabled=True, base_url="https://api.elsevier.com/content/article"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    ).retrieve(doi="10.1000/structured.xml")
+    assert requests[0].url.path.count("/content/article") == 1
+
+
+def test_collect_article_identifiers_normalizes_and_orders_zotero_metadata() -> None:
+    identifiers = collect_article_identifiers(
+        {
+            "URL": " https://www.sciencedirect.com/science/article/pii/S0098135425001978 ",
+            "DOI": "https://doi.org/10.1016/J.EXAMPLE.2026.1",
+            "ISSN": "1234-5678",
+            "ISBN": "978-1-2345-6789-0",
+            "extra": "PMID: 123456\nPMCID: PMC7654321",
+        }
+    )
+    assert [(item.kind, item.value) for item in identifiers] == [
+        ("pii", "S0098135425001978"),
+        ("doi", "10.1016/j.example.2026.1"),
+        ("issn", "1234-5678"),
+        ("isbn", "978-1-2345-6789-0"),
+        ("url", "https://www.sciencedirect.com/science/article/pii/S0098135425001978"),
+        ("pmid", "123456"),
+        ("pmcid", "PMC7654321"),
+    ]
+
+
+def test_identifier_fallback_pii_success_prevents_doi_call() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=ELSEVIER_XML)
+
+    result = retrieve_article_via_api_with_identifier_fallback(
+        {"pii": "S1234567890123456", "doi": "10.1000/structured.xml"},
+        ElsevierApiConfig(api_key="test-key", enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert result.used_identifier.kind == "pii"
+    assert len(requests) == 1
+    assert "/pii/" in requests[0].url.path
+
+
+def test_identifier_fallback_recoverable_pii_failure_tries_doi() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(404, text="not found") if "/pii/" in request.url.path else httpx.Response(200, text=ELSEVIER_XML)
+
+    result = retrieve_article_via_api_with_identifier_fallback(
+        {"pii": "S0000000000000000", "doi": "10.1000/structured.xml"},
+        ElsevierApiConfig(api_key="test-key", enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert result.used_identifier.kind == "doi"
+    assert [attempt["status"] for attempt in result.identifier_attempts] == ["http_404", "success"]
+    assert ["pii" if "/pii/" in request.url.path else "doi" for request in requests] == ["pii", "doi"]
+
+
+def test_canonical_import_records_identifier_fallback_provenance(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found") if "/pii/" in request.url.path else httpx.Response(200, text=ELSEVIER_XML)
+
+    entry, _ = import_identified_item(
+        RepositoryPaths.from_root(tmp_path / "literature"),
+        LiteratureIdentification(pii="S0000000000000000", doi="10.1000/structured.xml", metadata_source="zotero"),
+        publisher=ElsevierApiConfig(api_key="test-key", enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert entry["api_identifier_used_kind"] == "doi"
+    assert entry["api_identifier_used_value"] == "10.1000/structured.xml"
+    assert [(attempt["kind"], attempt["status"]) for attempt in entry["api_identifier_attempts"]] == [("pii", "http_404"), ("doi", "success")]
+    assert entry["api_retrieval_source"] == "elsevier_article_retrieval_api"
+    assert entry["pdf_used"] is False
+
+
+def test_identifier_fallback_missing_key_stops_before_requests() -> None:
+    requests = []
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200, text=ELSEVIER_XML)))
+    with pytest.raises(MissingApiConfigurationError, match="API key is missing"):
+        retrieve_article_via_api_with_identifier_fallback({"pii": "S1234567890123456", "doi": "10.1000/structured.xml"}, ElsevierApiConfig(api_key=None, enabled=True), http_client=client)
+    assert requests == []
+
+
+def test_identifier_fallback_records_unsupported_identifiers_and_clear_failure() -> None:
+    with pytest.raises(ArticleApiRetrievalFailed, match="all available identifiers") as caught:
+        retrieve_article_via_api_with_identifier_fallback(
+            {"ISSN": "1234-5678", "ISBN": "978-1-2345-6789-0", "PMID": "123456"},
+            ElsevierApiConfig(api_key="test-key", enabled=True),
+        )
+    assert [attempt["kind"] for attempt in caught.value.attempts] == ["issn", "isbn", "pmid"]
+    assert all(attempt["status"] == "skipped" for attempt in caught.value.attempts)
+
+
+def test_identifier_fallback_all_supported_attempts_fail_clearly() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(404, text="not found")))
+    with pytest.raises(ArticleApiRetrievalFailed, match="all available identifiers") as caught:
+        retrieve_article_via_api_with_identifier_fallback(
+            {"pii": "S0000000000000000", "doi": "10.1000/missing"},
+            ElsevierApiConfig(api_key="test-key", enabled=True),
+            http_client=client,
+        )
+    assert [(attempt["kind"], attempt["status"]) for attempt in caught.value.attempts] == [("pii", "http_404"), ("doi", "http_404")]
+
+
+def test_identified_import_prefers_elsevier_xml_and_does_not_extract_pdf(tmp_path: Path) -> None:
+    pdf = tmp_path / "fallback.pdf"
+    pdf.write_bytes(b"not read")
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=ELSEVIER_XML, headers={"Content-Type": "application/xml"})
+
+    def forbidden_pdf_extractor(path: Path) -> str:
+        raise AssertionError(f"PDF extractor must not run after XML success: {path}")
+
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    entry, duplicate = import_identified_item(
+        paths,
+        LiteratureIdentification(doi="10.1000/structured.xml", pdf_path=str(pdf), metadata_source="zotero", zotero_key="ABC123"),
+        publisher=ElsevierApiConfig(api_key="test-key", enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        pdf_extractor=forbidden_pdf_extractor,
+    )
+    assert duplicate is False
+    assert requests
+    assert entry["content_source"] == "elsevier_xml"
+    assert entry["extraction_mode"] == "publisher_api_required"
+    assert entry["pdf_used"] is False
+    assert entry["fallback_used"] is False
+    assert entry["xml_retrieved"] is True
+    assert entry["metadata_source"] == "zotero+elsevier_xml"
+    assert entry["api_retrieval_status"] == "success"
+    assert entry["authors"] == ["Ada Curator", "Ben Researcher"]
+    assert entry["journal"] == "Journal of Structured Bioprocessing"
+    assert entry["year"] == "2026"
+    assert "Appendix calibration details." in Path(paths.markdown / f"{entry['canonical_id']}.md").read_text(encoding="utf-8")
+    assert (paths.root / entry["xml_artifact_path"]).exists()
+    assert entry.get("pdf_fallback_markdown_path") is None
+
+
+def test_identified_import_uses_pdf_only_after_elsevier_failure(tmp_path: Path) -> None:
+    pdf = tmp_path / "fallback.pdf"
+    pdf.write_bytes(b"placeholder")
+    extracted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="unavailable")
+
+    def pdf_extractor(path: Path) -> str:
+        extracted.append(path)
+        return "# PDF fallback title\n\nDOI: 10.1000/fallback\n\nFallback evidence."
+
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    entry, _ = import_identified_item(
+        paths,
+        LiteratureIdentification(doi="10.1000/fallback", pdf_path=str(pdf)),
+        publisher=ElsevierApiConfig(api_key="test-key", enabled=True),
+        extraction_mode="pdf_fallback_allowed",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        pdf_extractor=pdf_extractor,
+    )
+    assert extracted == [pdf]
+    assert entry["content_source"] == "pdf_extraction"
+    assert entry["api_retrieval_status"] == "http_503"
+    assert any("PDF extraction was used as a fallback" in warning for warning in entry["extraction_warnings"])
+    assert entry["pdf_fallback_markdown_path"]
+    assert entry["pdf_used"] is True
+    assert entry["fallback_used"] is True
+    assert entry["fallback_authorized_by"] == "literature_extraction_mode=pdf_fallback_allowed"
+
+
+def test_strict_api_failure_never_reads_pdf_or_creates_staged_entry(tmp_path: Path) -> None:
+    pdf = tmp_path / "must-not-be-read.pdf"
+    pdf.write_bytes(b"placeholder")
+    extracted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="forbidden")
+
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    with pytest.raises(LiteratureExtractionError, match="status 403") as caught:
+        import_identified_item(
+            paths,
+            LiteratureIdentification(doi="10.1000/blocked", pdf_path=str(pdf)),
+            publisher=ElsevierApiConfig(api_key="bad-key", enabled=True),
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+            pdf_extractor=lambda path: extracted.append(path) or "forbidden",
+        )
+    assert extracted == []
+    assert list_entries(paths, ensure=False) == []
+    assert caught.value.diagnostics["pdf_used"] is False
+    assert caught.value.diagnostics["fallback_used"] is False
+
+
+def test_strict_mode_missing_api_key_stops_before_pdf(tmp_path: Path) -> None:
+    pdf = tmp_path / "must-not-be-read.pdf"
+    pdf.write_bytes(b"placeholder")
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    with pytest.raises(LiteratureExtractionError, match="API key is missing") as caught:
+        import_identified_item(paths, LiteratureIdentification(doi="10.1000/missing-key", pdf_path=str(pdf)), publisher=ElsevierApiConfig(api_key=None, enabled=True), pdf_extractor=lambda path: pytest.fail("PDF extractor was called"))
+    assert caught.value.diagnostics["api_retrieval_status"] == "not_configured"
+    assert list_entries(paths, ensure=False) == []
+
+
+def test_strict_mode_missing_identifiers_stops_before_pdf(tmp_path: Path) -> None:
+    pdf = tmp_path / "must-not-be-read.pdf"
+    pdf.write_bytes(b"placeholder")
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    with pytest.raises(LiteratureExtractionError, match="No DOI, PII, or ScienceDirect URL"):
+        import_identified_item(paths, LiteratureIdentification(pdf_path=str(pdf)), publisher=ElsevierApiConfig(api_key="key", enabled=True), pdf_extractor=lambda path: pytest.fail("PDF extractor was called"))
+    assert list_entries(paths, ensure=False) == []
+
+
+def test_reference_pipeline_xml_shape_has_equivalent_or_better_output() -> None:
+    reference_xml = """<article xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:ce="http://www.elsevier.com/xml/common/dtd"><dc:title>Dynamics of batch protein precipitation</dc:title><dc:description>A useful abstract.</dc:description><ce:section><ce:section-title>Introduction</ce:section-title><ce:para>First paragraph.</ce:para><ce:para>Second paragraph.</ce:para></ce:section><ce:section><ce:title>Results</ce:title><ce:para>Important result.</ce:para></ce:section><ce:bib-reference>Smith et al. 2025.</ce:bib-reference></article>"""
+    article = parse_elsevier_xml(reference_xml)
+    assert article.title == "Dynamics of batch protein precipitation"
+    assert article.abstract == "A useful abstract."
+    assert article.section_count == 2
+    assert article.reference_count == 1
+    assert "## Introduction" in article.markdown
+    assert "## Results" in article.markdown
+    assert "## References" in article.markdown
+
+
+def test_failed_strict_import_is_visible_in_diagnostics_api(client, tmp_path: Path, monkeypatch) -> None:
+    project = client.post("/api/projects", json={"name": "Strict diagnostics", "ontology_id": "strict-diag", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True}).json()
+    assert client.post("/api/config/publisher", json={"elsevier_api_key": "bad-key", "publisher_api_enrichment_enabled": True, "literature_extraction_mode": "publisher_api_required"}).status_code == 200
+    monkeypatch.setattr(ElsevierArticleClient, "retrieve", lambda self, **kwargs: ElsevierRetrieval("http_403", None, "doi", kwargs.get("doi"), 403))
+    failed = client.post("/api/literature/import", json={"project": project["slug"], "doi": "10.1000/blocked"})
+    assert failed.status_code == 400
+    assert "status 403" in failed.json()["detail"]["message"]
+    diagnostics = client.get("/api/literature/import-diagnostics").json()
+    assert diagnostics["extraction_mode"] == "publisher_api_required"
+    assert diagnostics["last_import"]["api_failures"] == 1
+    assert diagnostics["last_import"]["pdf_used"] is False
+    assert diagnostics["last_import"]["fallback_used"] is False
+
+
+def test_pdf_fallback_keeps_zotero_fields_and_fills_missing_metadata_from_crossref(tmp_path: Path) -> None:
+    pdf = tmp_path / "fallback.pdf"
+    pdf.write_bytes(b"placeholder")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "api.crossref.org" in request.url.host:
+            return httpx.Response(200, json={"message": {"title": ["Crossref title"], "author": [{"given": "Cross", "family": "Ref"}], "container-title": ["Crossref Journal"], "published-online": {"date-parts": [[2025, 1, 2]]}, "DOI": "10.1000/fallback"}})
+        return httpx.Response(404, text="not found")
+
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    entry, _ = import_identified_item(
+        paths,
+        LiteratureIdentification(doi="10.1000/fallback", title="Reliable Zotero title", pdf_path=str(pdf), metadata_source="zotero"),
+        publisher=ElsevierApiConfig(api_key="test-key", enabled=True),
+        extraction_mode="pdf_fallback_allowed",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        pdf_extractor=lambda path: "# Heuristic PDF title\n\nFallback evidence.",
+    )
+    assert entry["title"] == "Reliable Zotero title"
+    assert entry["authors"] == ["Cross Ref"]
+    assert entry["journal"] == "Crossref Journal"
+    assert entry["year"] == "2025"
+    assert entry["metadata_source"] == "zotero+crossref"
+    assert entry["crossref_retrieval_status"] == "success"
+
+
+def test_directory_import_keeps_xml_review_draft_and_saves_lower_priority_pdf_fallback(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "input"
+    source.mkdir()
+    (source / "article.xml").write_text(ELSEVIER_XML, encoding="utf-8")
+    (source / "article.pdf").write_bytes(b"placeholder")
+    monkeypatch.setattr("backend.app.literature.canonical._pdf_text", lambda path: "# PDF version\n\nDOI: 10.1000/structured.xml\n\nLong PDF fallback text that must not replace XML body evidence.")
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+
+    result = import_directory(paths, source, source_type="local_folder", extraction_mode="pdf_fallback_allowed")
+    entry = list_entries(paths)[0]
+    reviewed = Path(entry["markdown_file"]).read_text(encoding="utf-8")
+
+    assert result.failed == 0
+    assert entry["content_source"] == "elsevier_xml"
+    assert "XML body evidence." in reviewed
+    assert "Long PDF fallback text" not in reviewed
+    assert "Long PDF fallback text" in (paths.root / entry["pdf_fallback_markdown_path"]).read_text(encoding="utf-8")
+
+
+def test_staged_review_api_returns_xml_markdown_and_provenance(client, tmp_path: Path, monkeypatch) -> None:
+    project = client.post("/api/projects", json={"name": "XML review", "ontology_id": "xml-review", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True}).json()
+    assert client.post("/api/config/publisher", json={"elsevier_api_key": "test-key", "publisher_api_enrichment_enabled": True}).status_code == 200
+    monkeypatch.setattr(ElsevierArticleClient, "retrieve", lambda self, **kwargs: ElsevierRetrieval("success", ELSEVIER_XML, "doi", "10.1000/structured.xml"))
+    imported = client.post("/api/literature/import", json={"project": project["slug"], "doi": "10.1000/structured.xml", "zotero_key": "ABC123"})
+    assert imported.status_code == 200, imported.text
+    entry = client.get(f"/api/literature/canonical?project={project['slug']}").json()["staged_entries"][0]
+    assert entry["content_source"] == "elsevier_xml"
+    assert entry["metadata_source"] == "zotero+elsevier_xml"
+    assert "## Appendix A" in entry["literature_markdown"]
+
+
+def test_publisher_api_test_endpoint_never_uses_pdf_or_creates_staged_entry(client, tmp_path: Path, monkeypatch) -> None:
+    project = client.post("/api/projects", json={"name": "API test", "ontology_id": "api-test", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True}).json()
+    assert client.post("/api/config/publisher", json={"elsevier_api_key": "test-key", "publisher_api_enrichment_enabled": True}).status_code == 200
+    monkeypatch.setattr(ElsevierArticleClient, "retrieve", lambda self, **kwargs: ElsevierRetrieval("success", ELSEVIER_XML, "pii", kwargs.get("pii"), 200, "text/xml", "https://api.elsevier.test"))
+    tested = client.post("/api/literature/test-publisher-api", json={"project": project["slug"], "pii": "S1234567890123456"})
+    assert tested.status_code == 200, tested.text
+    assert tested.json()["xml_retrieved"] is True
+    assert tested.json()["pdf_used"] is False
+    assert tested.json()["section_count"] >= 2
+    assert Path(tested.json()["markdown_path"]).exists()
+    assert client.get(f"/api/literature/canonical?project={project['slug']}").json()["staged_entries"] == []
+
+
+def test_zotero_storage_import_uses_synced_identifiers_for_xml_before_pdf(client, tmp_path: Path, monkeypatch) -> None:
+    project = client.post("/api/projects", json={"name": "Zotero XML priority", "ontology_id": "zotero-xml", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True}).json()
+    storage = tmp_path / "zotero-storage"
+    storage.mkdir()
+    (storage / "fallback.pdf").write_bytes(b"placeholder")
+    with db_session.SessionLocal() as session:
+        session.add(LiteratureSource(provider="zotero", provider_item_key="XMLFIRST", title="Reliable Zotero title", normalized_title="reliable zotero title", creators_json="[]", doi="10.1000/structured.xml", normalized_doi="10.1000/structured.xml"))
+        session.commit()
+    assert client.post("/api/config/publisher", json={"elsevier_api_key": "test-key", "publisher_api_enrichment_enabled": True}).status_code == 200
+    monkeypatch.setattr(ElsevierArticleClient, "retrieve", lambda self, **kwargs: ElsevierRetrieval("success", ELSEVIER_XML, "doi", kwargs.get("doi")))
+    monkeypatch.setattr("backend.app.literature.canonical._pdf_text", lambda path: (_ for _ in ()).throw(AssertionError("PDF extraction must not run in strict mode")))
+
+    imported = client.post("/api/literature/import", json={"project": project["slug"], "zotero_storage": str(storage)})
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["xml_imported"] == 1
+    entry = client.get(f"/api/literature/canonical?project={project['slug']}").json()["staged_entries"][0]
+    assert entry["content_source"] == "elsevier_xml"
+    assert "XML body evidence." in entry["literature_markdown"]
+    assert "PDF fallback must not win" not in entry["literature_markdown"]
+    assert entry["pdf_fallback_markdown_path"] is None
+    assert entry["pdf_used"] is False
+    assert entry["fallback_used"] is False
 
 
 def test_markdown_header_is_minimal_and_identifiers_are_not_duplicated() -> None:
@@ -106,7 +532,7 @@ def test_project_scoped_import_api(client, tmp_path: Path) -> None:
     (source / "paper.md").write_text("# API imported paper title\n\nPII: S0098-1354(25)00197-8\nDOI: 10.1016/j.compchemeng.2025.109193\n\n## Abstract\nUseful.", encoding="utf-8")
     created = client.post("/api/projects", json={"name": "Literature API", "ontology_id": "litapi", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True})
     assert created.status_code == 200, created.text
-    imported = client.post("/api/literature/import", json={"project": created.json()["slug"], "pdf_dir": str(source)})
+    imported = client.post("/api/literature/import", json={"project": created.json()["slug"], "pdf_dir": str(source), "extraction_mode": "pdf_only"})
     assert imported.status_code == 200, imported.text
     assert imported.json()["imported"] == 1
     listing = client.get(f"/api/literature/canonical?project={created.json()['slug']}")
@@ -121,7 +547,7 @@ def test_api_promotion_later_tags_and_cleanup_are_safe(client, tmp_path: Path) -
     (source / "promote.md").write_text("# Promote this staged paper\n\nDOI: 10.1000/promote\n\nText", encoding="utf-8")
     (source / "discard.md").write_text("# Discard this staged paper\n\nDOI: 10.1000/discard\n\nText", encoding="utf-8")
     project = client.post("/api/projects", json={"name": "Review project", "ontology_id": "review", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True}).json()
-    assert client.post("/api/literature/import", json={"project": project["slug"], "pdf_dir": str(source)}).status_code == 200
+    assert client.post("/api/literature/import", json={"project": project["slug"], "pdf_dir": str(source), "extraction_mode": "pdf_only"}).status_code == 200
     repository = client.get(f"/api/literature/canonical?project={project['slug']}").json()
     promote_id = next(item["id"] for item in repository["staged_entries"] if item["doi"] == "10.1000/promote")
     before = client.post("/api/extraction/candidates", json={"dry_run": True})
@@ -199,7 +625,8 @@ def test_publisher_settings_have_non_null_defaults_without_saved_rows(client) ->
     assert response.status_code == 200
     publisher = response.json()["publisher"]
     assert publisher is not None
-    assert publisher["enable_publisher_api_enrichment"] is False
+    assert publisher["enable_publisher_api_enrichment"] is True
+    assert publisher["literature_extraction_mode"] == "publisher_api_required"
     assert publisher["elsevier_api_key"] == ""
     assert publisher["elsevier_inst_token"] == ""
     assert publisher["elsevier_api_base_url"] == "https://api.elsevier.com"
@@ -266,7 +693,7 @@ def test_import_registers_repository_relative_staged_artifacts(tmp_path: Path) -
     external = source / "paper.md"
     external.write_text("# Artifact tracked paper\n\nDOI: 10.1000/artifacts\n\nText", encoding="utf-8")
     paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
-    result = import_directory(paths, source, source_type="zotero_storage")
+    result = import_directory(paths, source, source_type="zotero_storage", extraction_mode="pdf_only")
     assert result.imported == 1
     entry = list_entries(paths)[0]
     assert entry["repository_stage"] == "staged"
@@ -347,7 +774,40 @@ def test_project_scoped_import_cli(tmp_path: Path, monkeypatch) -> None:
     paths = RepositoryPaths.from_root(tmp_path / "projects" / "cli" / "literature")
     fake_session = SimpleNamespace(close=lambda: None)
     monkeypatch.setattr("backend.app.cli._literature_project_paths", lambda project: (fake_session, SimpleNamespace(slug=project), paths))
-    result = CliRunner().invoke(cli_app, ["literature", "import", "--project", "cli", "--pdf-dir", str(source)])
+    result = CliRunner().invoke(cli_app, ["literature", "import", "--project", "cli", "--pdf-dir", str(source), "--extraction-mode", "pdf_only"])
     assert result.exit_code == 0, result.output
     assert "imported 1" in result.output
     assert len(list_entries(paths)) == 1
+
+
+def test_publisher_api_test_cli_reports_xml_and_never_needs_pdf(tmp_path: Path, monkeypatch) -> None:
+    paths = RepositoryPaths.from_root(tmp_path / "projects" / "cli" / "literature")
+    fake_session = SimpleNamespace(close=lambda: None)
+    publisher = SimpleNamespace(api_key="test-key", inst_token=None, base_url="https://api.elsevier.test", enabled=True)
+    monkeypatch.setattr("backend.app.cli._literature_project_paths", lambda project: (fake_session, SimpleNamespace(slug=project), paths))
+    monkeypatch.setattr("backend.app.services.runtime_config.publisher_config", lambda session: publisher)
+    monkeypatch.setattr(
+        "backend.app.literature.canonical.test_publisher_api",
+        lambda *args, **kwargs: {
+            "api_provider": "elsevier",
+            "request_status": "success",
+            "title": "Structured Protein Recovery",
+            "authors": ["Ada Curator"],
+            "journal": "Journal of Structured Bioprocessing",
+            "year": "2026",
+            "doi": "10.1000/structured.xml",
+            "pii": "S1234567890123456",
+            "section_count": 2,
+            "xml_retrieved": True,
+            "pdf_used": False,
+            "markdown_path": None,
+        },
+    )
+
+    result = CliRunner().invoke(cli_app, ["literature", "test-api", "--project", "cli", "--pii", "S1234567890123456", "--no-write-artifacts"])
+
+    assert result.exit_code == 0, result.output
+    assert '"api_provider": "elsevier"' in result.output
+    assert '"xml_retrieved": true' in result.output
+    assert '"pdf_used": false' in result.output
+    assert list_entries(paths, ensure=False) == []

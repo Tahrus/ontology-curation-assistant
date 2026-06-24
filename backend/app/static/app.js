@@ -130,7 +130,9 @@ async function api(path, options = {}) {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    const error = new Error(payload.detail || response.statusText);
+    const detail = payload.detail;
+    const message = (detail && typeof detail === "object" ? detail.message : detail) || response.statusText;
+    const error = new Error(message);
     error.status = response.status;
     error.detail = payload.detail || response.statusText;
     error.path = path;
@@ -371,6 +373,14 @@ async function loadStatus() {
   state.status = await api("/api/config/status");
   renderStatusGrid();
   populateLiteratureConfigForm();
+  await loadLiteratureImportDiagnostics().catch((error) => setError("#publisher-config-message", error.message));
+}
+
+async function loadLiteratureImportDiagnostics() {
+  const output = document.querySelector("#literature-import-diagnostics");
+  if (!output) return;
+  const diagnostics = await api("/api/literature/import-diagnostics");
+  output.textContent = JSON.stringify(diagnostics, null, 2);
 }
 
 function statusLabel(item) {
@@ -1163,10 +1173,12 @@ function populateLiteratureConfigForm() {
     const tokenInput = publisherForm.querySelector('[name="elsevier_inst_token"]');
     const baseUrlInput = publisherForm.querySelector('[name="elsevier_api_base_url"]');
     const enabledInput = publisherForm.querySelector('[name="publisher_api_enrichment_enabled"]');
+    const extractionModeInput = publisherForm.querySelector('[name="literature_extraction_mode"]');
     if (keyInput) keyInput.value = publisher.elsevier_api_key ?? "";
     if (tokenInput) tokenInput.value = publisher.elsevier_inst_token ?? "";
     if (baseUrlInput) baseUrlInput.value = publisher.elsevier_api_base_url ?? publisher.base_url ?? "https://api.elsevier.com";
     if (enabledInput) enabledInput.checked = Boolean(publisher.enable_publisher_api_enrichment ?? publisher.enabled ?? false);
+    if (extractionModeInput) extractionModeInput.value = publisher.literature_extraction_mode ?? "publisher_api_required";
   }
 }
 
@@ -1196,7 +1208,13 @@ function literatureEditor(entry, stage) {
       <label>PII<input data-field="pii" value="${escapeHtml(entry.pii || "")}" /></label>
       <label>Reviewed Markdown<textarea data-field="markdown" rows="18"></textarea></label>
       <label>Project tags<select data-field="project_tags" multiple size="${Math.min(Math.max(state.projects.length, 2), 8)}"></select></label>
-      <p class="description">Source: ${escapeHtml(entry.source_type || "unknown")} | Imported: ${escapeHtml(entry.import_status || "unknown")} | Pipeline: ${escapeHtml(entry.literature_metadata?.pipeline_version || entry.pipeline_version || "unknown")}</p>
+      <p class="description"><strong>Content source:</strong> ${escapeHtml(literatureSourceLabel(entry.content_source, "content"))} | <strong>Metadata source:</strong> ${escapeHtml(literatureSourceLabel(entry.metadata_source, "metadata"))}</p>
+      <p class="description"><strong>Extraction mode:</strong> ${escapeHtml(entry.extraction_mode || "publisher_api_required")} | <strong>PDF used:</strong> ${entry.pdf_used ? "Yes" : "No"} | <strong>Fallback used:</strong> ${entry.fallback_used ? "Yes" : "No"}</p>
+      <p class="description"><strong>DOI used:</strong> ${escapeHtml(entry.doi_used || entry.lookup_doi || "-")} | <strong>PII used:</strong> ${escapeHtml(entry.pii_used || entry.lookup_pii || "-")} | <strong>XML retrieved:</strong> ${entry.xml_retrieved ? "Yes" : "No"}</p>
+      <p class="description"><strong>API identifier used:</strong> ${escapeHtml(entry.api_identifier_used_kind ? `${entry.api_identifier_used_kind.toUpperCase()}: ${entry.api_identifier_used_value || ""}` : "-")} | <strong>Identifier attempts:</strong> ${escapeHtml((entry.api_identifier_attempts || []).map((attempt) => `${attempt.kind}:${attempt.status}`).join(", ") || "-")}</p>
+      ${entry.fallback_authorized_by ? `<p class="warning"><strong>Fallback authorization:</strong> ${escapeHtml(entry.fallback_authorized_by)}</p>` : ""}
+      ${(entry.extraction_warnings || []).length ? `<div class="warning"><strong>Extraction warnings</strong><ul>${entry.extraction_warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></div>` : ""}
+      <p class="description">Import provider: ${escapeHtml(entry.source_type || "unknown")} | API retrieval: ${escapeHtml(entry.api_retrieval_status || "not attempted")} | Imported: ${escapeHtml(entry.import_status || "unknown")} | Pipeline: ${escapeHtml(entry.literature_metadata?.pipeline_version || entry.pipeline_version || "unknown")}</p>
       <div class="button-row"></div>
     </div>
   </details>`;
@@ -1257,6 +1275,21 @@ function literatureEditor(entry, stage) {
     actions.append(promote, remove);
   }
   return record;
+}
+
+function literatureSourceLabel(value, kind) {
+  const labels = {
+    elsevier_xml: kind === "metadata" ? "Elsevier API" : "Elsevier XML",
+    pdf_extraction: "PDF fallback",
+    pdf_heuristic: "PDF heuristic",
+    "zotero+elsevier_xml": "Zotero + Elsevier API",
+    "zotero+crossref": "Zotero + Crossref",
+    crossref: "Crossref",
+    zotero: "Zotero",
+    manual: "Manual input",
+    provided_markdown: "Provided Markdown",
+  };
+  return labels[value] || value || "Unknown";
 }
 
 function renderTwoStageLiterature() {
@@ -2289,6 +2322,7 @@ document.querySelector("#publisher-config-form")?.addEventListener("submit", asy
           elsevier_inst_token: payload.elsevier_inst_token ?? "",
           elsevier_api_base_url: payload.elsevier_api_base_url || "https://api.elsevier.com",
           publisher_api_enrichment_enabled: Boolean(payload.publisher_api_enrichment_enabled),
+          literature_extraction_mode: payload.literature_extraction_mode || "publisher_api_required",
         }),
       });
       const keyInput = form.querySelector('[name="elsevier_api_key"]');
@@ -2296,6 +2330,7 @@ document.querySelector("#publisher-config-form")?.addEventListener("submit", asy
       if (keyInput) keyInput.value = "";
       if (tokenInput) tokenInput.value = "";
       await loadStatus();
+      await loadSavedConfigs();
       setSuccess("#publisher-config-message", `Publisher settings saved. Key source: ${result.api_key_source}.`);
     });
   } catch (error) {
@@ -2303,9 +2338,36 @@ document.querySelector("#publisher-config-form")?.addEventListener("submit", asy
   }
 });
 
+document.querySelector("#publisher-api-test-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const payload = formPayload(form);
+  try {
+    await withButtonFeedback(button, "Testing", async () => {
+      const result = await api("/api/literature/test-publisher-api", {
+        method: "POST",
+        body: JSON.stringify({ doi: payload.doi || null, pii: payload.pii || null, sciencedirect_url: payload.sciencedirect_url || null }),
+      });
+      document.querySelector("#publisher-api-test-result").textContent = JSON.stringify(result, null, 2);
+      setSuccess("#publisher-api-test-message", `Elsevier XML retrieved. Sections: ${result.section_count}; PDF used: ${result.pdf_used ? "Yes" : "No"}.`);
+    });
+  } catch (error) {
+    setError("#publisher-api-test-message", error.message);
+  }
+});
+
+document.querySelector("#refresh-literature-import-diagnostics")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Refreshing", loadLiteratureImportDiagnostics);
+  } catch (error) {
+    setError("#publisher-config-message", error.message);
+  }
+});
+
 document.querySelector("#run-literature-pipeline").addEventListener("click", async (event) => {
   try {
-    setMessage("#literature-import-message", "Importing Zotero PDFs and generating Markdown...");
+    setMessage("#literature-import-message", "Retrieving structured publisher XML. PDFs are not used unless the configured mode explicitly allows them...");
     await withButtonFeedback(event.currentTarget, "Importing", async () => {
       const form = document.querySelector("#literature-config-form");
       const values = formPayload(form);
@@ -2315,7 +2377,7 @@ document.querySelector("#run-literature-pipeline").addEventListener("click", asy
       const result = await api("/api/literature/import", { method: "POST", body: JSON.stringify(body) });
       setSuccess(
         "#literature-import-message",
-        `Import complete. Scanned ${result.files_scanned}; imported ${result.imported}; duplicates reused ${result.duplicates}; failed ${result.failed}. Combined: ${result.combined_output_file}`
+        `Import complete. Mode: ${result.extraction_mode || state.status?.publisher?.literature_extraction_mode || "publisher_api_required"}; XML imported: ${result.xml_imported ?? result.imported}; PDF used: ${result.pdf_used ? "Yes" : "No"}; fallback used: ${result.fallback_used ? "Yes" : "No"}; failed: ${result.failed}.`
       );
       await loadStatus();
       await loadEntries();
@@ -2354,8 +2416,8 @@ async function loadSavedConfigs() {
     row.className = "saved-config-row";
     row.innerHTML = `<strong>${config.alias || config.kind}</strong>
       <p>${config.kind} ${config.active ? "| active" : ""}</p>
-      <p>${[config.provider, config.library_type, config.library_id, config.base_url, config.model].filter(Boolean).map(safeText).join(" | ")}</p>
-      <p>Secret: ${config.api_key || "not configured"} | Updated: ${config.updated_at || ""}</p>
+      <p>${[config.provider, config.library_type, config.library_id, config.base_url, config.model, config.extraction_mode].filter(Boolean).map(safeText).join(" | ")}</p>
+      <p>API key: ${config.api_key || "not configured"}${config.kind === "publisher" ? ` | Institutional token: ${config.inst_token || "not configured"}` : ""} | Updated: ${config.updated_at || ""}</p>
       <div class="button-row">
         <button type="button" class="activate">Activate</button>
         <button type="button" class="delete danger">Delete</button>

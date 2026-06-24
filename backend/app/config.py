@@ -55,7 +55,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ELSEVIER_INSTTOKEN", "OCA_ELSEVIER_INST_TOKEN"),
     )
     elsevier_api_base_url: str = "https://api.elsevier.com"
-    publisher_api_enrichment_enabled: bool = False
+    publisher_api_enrichment_enabled: bool = True
+    literature_extraction_mode: str = "publisher_api_required"
     ppo_odk_ontology_path: Path = Field(
         default=Path("/odk/ontology/src/ontology"),
         validation_alias=AliasChoices("PPO_ODK_ONTOLOGY_PATH", "OCA_PPO_ODK_ONTOLOGY_PATH"),

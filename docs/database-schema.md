@@ -21,6 +21,8 @@ odk_exports
 odk_builds
 ```
 
+`literature_sources.identifiers_json` stores the Zotero identifier fields needed for publisher lookup (`pii`, DOI, ISSN, ISBN, URL, PMID, PMCID, and `extra`). It preserves metadata for deterministic API fallback without storing or inspecting PDF content.
+
 ## Important Relationships
 
 - A literature source stores upstream bibliographic metadata, currently from offline Zotero/Better BibTeX-style exports or metadata-only Zotero Web API sync.

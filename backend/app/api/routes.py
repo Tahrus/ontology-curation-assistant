@@ -39,10 +39,14 @@ from backend.app.literature.exporter import (
 )
 from backend.app.literature.pipeline import run_literature_pipeline
 from backend.app.literature.canonical import (
+    DEFAULT_EXTRACTION_MODE,
+    LiteratureExtractionError,
     RepositoryPaths,
     build_combined as build_canonical_combined,
     deduplicate as deduplicate_canonical,
     import_directory as import_canonical_directory,
+    import_identified_item,
+    test_publisher_api as run_publisher_api_test,
     cleanup_unpromoted_staged,
     list_entries as list_canonical_entries,
     list_curated_entries,
@@ -54,6 +58,7 @@ from backend.app.literature.canonical import (
     update_staged_entry,
     write_project_settings,
 )
+from backend.app.literature.publisher_xml import ElsevierApiConfig, LiteratureIdentification
 from backend.app.literature.repository import (
     LiteratureRepositoryLoadResult,
     build_combined_context_files,
@@ -157,7 +162,7 @@ class LlmConfigPayload(BaseModel):
 
 
 class SavedApiConfigPayload(BaseModel):
-    kind: Literal["zotero", "llm"]
+    kind: Literal["zotero", "llm", "publisher"]
     alias: str | None = None
     provider: str | None = None
     library_type: Literal["user", "group"] | None = None
@@ -172,6 +177,9 @@ class SavedApiConfigPayload(BaseModel):
     timeout_seconds: float | None = None
     retry_count: int | None = None
     stream: bool | None = None
+    inst_token: str | None = None
+    enabled: bool | None = None
+    extraction_mode: Literal["publisher_api_required", "pdf_fallback_allowed", "pdf_only"] | None = None
 
 
 class RejectionPayload(BaseModel):
@@ -211,6 +219,17 @@ class CanonicalLiteratureImportPayload(BaseModel):
     pdf_dir: str | None = None
     keep_sources: bool = True
     overwrite: bool = False
+    local_pdf_path: str | None = None
+    zotero_key: str | None = None
+    doi: str | None = None
+    pii: str | None = None
+    sciencedirect_url: str | None = None
+    title: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    year: str | None = None
+    journal: str | None = None
+    extraction_mode: Literal["publisher_api_required", "pdf_fallback_allowed", "pdf_only"] | None = None
+    allow_pdf_fallback: bool = False
 
 
 class CanonicalLiteratureActionPayload(BaseModel):
@@ -241,6 +260,15 @@ class PublisherConfigPayload(BaseModel):
     elsevier_inst_token: str | None = None
     elsevier_api_base_url: str | None = None
     publisher_api_enrichment_enabled: bool | None = None
+    literature_extraction_mode: Literal["publisher_api_required", "pdf_fallback_allowed", "pdf_only"] | None = None
+
+
+class PublisherApiTestPayload(BaseModel):
+    project: str | int | None = None
+    doi: str | None = None
+    pii: str | None = None
+    sciencedirect_url: str | None = None
+    write_artifacts: bool = True
 
 
 class CurationPromptPayload(BaseModel):
@@ -1076,8 +1104,9 @@ def _write_saved_configs(session: Session, configs: list[dict[str, Any]]) -> Non
 
 
 def _public_saved_config(config: dict[str, Any], active_id: str | None) -> dict[str, Any]:
-    public = {key: value for key, value in config.items() if key != "api_key"}
+    public = {key: value for key, value in config.items() if key not in {"api_key", "inst_token"}}
     public["api_key"] = _masked_secret(config.get("api_key"))
+    public["inst_token"] = _masked_secret(config.get("inst_token"))
     public["active"] = config.get("id") == active_id
     return public
 
@@ -1085,7 +1114,7 @@ def _public_saved_config(config: dict[str, Any], active_id: str | None) -> dict[
 def _upsert_saved_config(
     session: Session,
     *,
-    kind: Literal["zotero", "llm"],
+    kind: Literal["zotero", "llm", "publisher"],
     values: dict[str, Any],
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
@@ -1107,6 +1136,9 @@ def _upsert_saved_config(
         "timeout_seconds": values.get("timeout_seconds"),
         "retry_count": values.get("retry_count"),
         "stream": values.get("stream"),
+        "inst_token": values.get("inst_token"),
+        "enabled": values.get("enabled"),
+        "extraction_mode": values.get("extraction_mode"),
         "created_at": values.get("created_at") or now,
         "updated_at": now,
     }
@@ -1443,6 +1475,7 @@ def list_saved_api_configs(session: Session = Depends(get_session)) -> list[dict
     active_ids = {
         "zotero": _active_config_id(session, "zotero"),
         "llm": _active_config_id(session, "llm"),
+        "publisher": _active_config_id(session, "publisher"),
     }
     return [
         _public_saved_config(config, active_ids.get(config.get("kind", "")))
@@ -1499,6 +1532,18 @@ def activate_saved_api_config(
                 "llm_retry_count": str(config.get("retry_count")) if config.get("retry_count") is not None else None,
                 "llm_stream": str(bool(config.get("stream"))).lower() if config.get("stream") is not None else None,
                 "active_llm_config_id": config_id,
+            },
+        )
+    elif kind == "publisher":
+        set_runtime_values(
+            session,
+            {
+                "elsevier_api_key": config.get("api_key"),
+                "elsevier_inst_token": config.get("inst_token"),
+                "elsevier_api_base_url": config.get("base_url"),
+                "publisher_api_enrichment_enabled": str(bool(config.get("enabled"))).lower(),
+                "literature_extraction_mode": config.get("extraction_mode") or "publisher_api_required",
+                "active_publisher_config_id": config_id,
             },
         )
     else:
@@ -1559,8 +1604,27 @@ def save_publisher_config(payload: PublisherConfigPayload, session: Session = De
         values["elsevier_api_base_url"] = payload.elsevier_api_base_url
     if payload.publisher_api_enrichment_enabled is not None:
         values["publisher_api_enrichment_enabled"] = str(payload.publisher_api_enrichment_enabled).lower()
+    if payload.literature_extraction_mode is not None:
+        values["literature_extraction_mode"] = payload.literature_extraction_mode
     set_runtime_values(session, values)
     config = publisher_config(session)
+    active_id = _active_config_id(session, "publisher")
+    existing = next((item for item in _saved_configs(session) if item.get("id") == active_id), None)
+    saved = _upsert_saved_config(
+        session,
+        kind="publisher",
+        values={
+            "id": active_id,
+            "created_at": existing.get("created_at") if existing else None,
+            "alias": "Elsevier Publisher API",
+            "provider": "elsevier",
+            "base_url": config.base_url,
+            "api_key": payload.elsevier_api_key if payload.elsevier_api_key is not None else (existing or {}).get("api_key"),
+            "inst_token": payload.elsevier_inst_token if payload.elsevier_inst_token is not None else (existing or {}).get("inst_token"),
+            "enabled": config.enabled,
+            "extraction_mode": config.extraction_mode,
+        },
+    )
     return {
         "configured": bool(config.api_key),
         "enabled": config.enabled,
@@ -1568,6 +1632,9 @@ def save_publisher_config(payload: PublisherConfigPayload, session: Session = De
         "api_key": "configured" if config.api_key else "missing",
         "inst_token": "configured" if config.inst_token else "missing",
         "api_key_source": config.api_key_source,
+        "literature_extraction_mode": config.extraction_mode,
+        "pdf_fallback_enabled": config.extraction_mode == "pdf_fallback_allowed",
+        "saved_config_id": saved["id"],
     }
 
 
@@ -1575,6 +1642,49 @@ def _canonical_project_paths(session: Session, project_ref: str | int | None = N
     project = get_project(session, project_ref)
     root = Path(project.literature_repository_path or (Path(project.local_path) / "literature"))
     return project, RepositoryPaths.from_root(root)
+
+
+def _save_import_diagnostics(session: Session, report: dict[str, Any]) -> None:
+    set_runtime_values(session, {"literature_last_import_diagnostics": json.dumps(report, ensure_ascii=False)})
+
+
+def _import_diagnostics_payload(session: Session) -> dict[str, Any]:
+    publisher = publisher_config(session)
+    zotero = zotero_config(session)
+    setting = session.get(AppSetting, "literature_last_import_diagnostics")
+    try:
+        last_import = json.loads(setting.value) if setting else None
+    except json.JSONDecodeError:
+        last_import = None
+    return {
+        "extraction_mode": publisher.extraction_mode,
+        "elsevier_api_configured": bool(publisher.api_key),
+        "zotero_configured": bool(zotero.library_type and zotero.library_id),
+        "pdf_fallback_enabled": publisher.extraction_mode == "pdf_fallback_allowed",
+        "last_import": last_import,
+    }
+
+
+@router.get("/literature/import-diagnostics")
+def literature_import_diagnostics(session: Session = Depends(get_session)) -> dict[str, Any]:
+    return _import_diagnostics_payload(session)
+
+
+@router.post("/literature/test-publisher-api")
+def test_literature_publisher_api(payload: PublisherApiTestPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    if not payload.doi and not payload.pii and not payload.sciencedirect_url:
+        raise HTTPException(status_code=400, detail="Provide a DOI, PII, or ScienceDirect URL.")
+    _, paths = _canonical_project_paths(session, payload.project)
+    publisher = publisher_config(session)
+    try:
+        return run_publisher_api_test(
+            paths,
+            LiteratureIdentification(doi=payload.doi, pii=payload.pii, sciencedirect_url=payload.sciencedirect_url),
+            publisher=ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled),
+            write_artifacts=payload.write_artifacts,
+        )
+    except LiteratureExtractionError as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc), "diagnostics": exc.diagnostics}) from exc
 
 
 def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
@@ -1594,6 +1704,27 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
         "duplicate_status": item.get("duplicate_status"),
         "curation_status": item.get("curation_status"),
         "pipeline_version": item.get("pipeline_version"),
+        "metadata_source": item.get("metadata_source"),
+        "content_source": item.get("content_source"),
+        "extraction_mode": item.get("extraction_mode"),
+        "used_api_provider": item.get("used_api_provider"),
+        "doi_used": item.get("doi_used"),
+        "pii_used": item.get("pii_used"),
+        "xml_retrieved": bool(item.get("xml_retrieved")),
+        "pdf_used": bool(item.get("pdf_used")),
+        "fallback_used": bool(item.get("fallback_used")),
+        "fallback_authorized_by": item.get("fallback_authorized_by"),
+        "extraction_status": item.get("extraction_status"),
+        "extraction_errors": item.get("extraction_errors") or [],
+        "generated_artifacts": item.get("generated_artifacts") or [],
+        "extraction_warnings": item.get("extraction_warnings") or [],
+        "api_retrieval_status": item.get("api_retrieval_status"),
+        "crossref_retrieval_status": item.get("crossref_retrieval_status"),
+        "lookup_doi": item.get("lookup_doi"),
+        "lookup_pii": item.get("lookup_pii"),
+        "xml_artifact_path": item.get("xml_artifact_path"),
+        "xml_markdown_artifact_path": item.get("xml_markdown_artifact_path"),
+        "pdf_fallback_markdown_path": item.get("pdf_fallback_markdown_path"),
         "imported_at": item.get("imported_at") or item.get("created_at"),
         "staged_entry_id": item.get("staged_entry_id"),
         "markdown_available": item.get("markdown_available"),
@@ -1611,6 +1742,14 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
             "duplicate_status": item.get("duplicate_status"),
             "markdown_source_file": item.get("markdown_file"),
             "has_markdown": bool(item.get("markdown_file")),
+            "metadata_source": item.get("metadata_source"),
+            "content_source": item.get("content_source"),
+            "extraction_mode": item.get("extraction_mode"),
+            "pdf_used": bool(item.get("pdf_used")),
+            "fallback_used": bool(item.get("fallback_used")),
+            "extraction_warnings": item.get("extraction_warnings") or [],
+            "api_retrieval_status": item.get("api_retrieval_status"),
+            "crossref_retrieval_status": item.get("crossref_retrieval_status"),
         },
     }
 
@@ -1717,6 +1856,41 @@ def cleanup_staged_literature(payload: CanonicalLiteratureActionPayload, session
 @router.post("/literature/import")
 def import_canonical_literature(payload: CanonicalLiteratureImportPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
     project, paths = _canonical_project_paths(session, payload.project)
+    publisher = publisher_config(session)
+    extraction_mode = "pdf_fallback_allowed" if payload.allow_pdf_fallback else (payload.extraction_mode or publisher.extraction_mode or DEFAULT_EXTRACTION_MODE)
+    api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled)
+    if payload.local_pdf_path or payload.doi or payload.pii or payload.sciencedirect_url:
+        try:
+            entry, duplicate = import_identified_item(
+                paths,
+                LiteratureIdentification(
+                    zotero_key=payload.zotero_key,
+                    doi=payload.doi,
+                    pii=payload.pii,
+                    sciencedirect_url=payload.sciencedirect_url,
+                    title=payload.title,
+                    authors=payload.authors,
+                    year=payload.year,
+                    journal=payload.journal,
+                    pdf_path=payload.local_pdf_path,
+                    metadata_source="zotero" if payload.zotero_key else "manual",
+                ),
+                publisher=api_config,
+                extraction_mode=extraction_mode,
+                keep_sources=payload.keep_sources,
+                overwrite=payload.overwrite,
+            )
+        except LiteratureExtractionError as exc:
+            report = {**exc.diagnostics, "last_import_status": "failed", "items_imported_through_xml": 0, "api_failures": 1, "pdf_fallbacks": 0}
+            _save_import_diagnostics(session, report)
+            raise HTTPException(status_code=400, detail={"message": str(exc), "diagnostics": report}) from exc
+        except (OSError, ValueError) as exc:
+            report = {"extraction_mode": extraction_mode, "last_import_status": "failed", "items_imported_through_xml": 0, "api_failures": 1, "pdf_fallbacks": 0, "extraction_errors": [str(exc)]}
+            _save_import_diagnostics(session, report)
+            raise HTTPException(status_code=400, detail={"message": str(exc), "diagnostics": report}) from exc
+        report = {"extraction_mode": extraction_mode, "last_import_status": "success", "items_imported_through_xml": int(entry.get("xml_retrieved", False)), "api_failures": 0, "pdf_fallbacks": int(entry.get("fallback_used", False)), "content_source": entry.get("content_source"), "pdf_used": bool(entry.get("pdf_used")), "fallback_used": bool(entry.get("fallback_used")), "api_retrieval_status": entry.get("api_retrieval_status"), "extraction_errors": entry.get("extraction_errors") or []}
+        _save_import_diagnostics(session, report)
+        return {"ok": True, "project": project.slug, "files_scanned": 1, "imported": int(not duplicate), "duplicates": int(duplicate), "failed": 0, "entry": _canonical_entry_payload(entry), "combined_count": build_canonical_combined(paths), "combined_output_file": str(paths.combined)}
     source_value = payload.zotero_storage or payload.pdf_dir
     if not source_value:
         settings: dict[str, Any] = {}
@@ -1727,12 +1901,62 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
     if not source_value:
         raise HTTPException(status_code=400, detail="Provide zotero_storage or pdf_dir for the active project.")
     source_type = "zotero_storage" if payload.zotero_storage else "local_pdf_folder"
+    xml_imported = 0
+    failures: list[dict[str, Any]] = []
+    source_records = []
+    if source_type == "zotero_storage" and extraction_mode != "pdf_only":
+        source_records = session.scalars(select(LiteratureSource).where((LiteratureSource.project_id.is_(None)) | (LiteratureSource.project_id == project.id))).all()
+        for source in source_records:
+            try:
+                creators_data = json.loads(source.creators_json or "[]")
+            except json.JSONDecodeError:
+                creators_data = []
+            creators = [" ".join(str(creator.get(key) or "").strip() for key in ("given", "family")).strip() for creator in creators_data if isinstance(creator, dict)]
+            try:
+                entry, _ = import_identified_item(
+                    paths,
+                    LiteratureIdentification(
+                        zotero_key=source.provider_item_key,
+                        doi=source.doi,
+                        sciencedirect_url=source.url,
+                        title=source.title,
+                        authors=[creator for creator in creators if creator],
+                        year=source.year,
+                        pdf_path=None,
+                        metadata_source="zotero",
+                        identifier_metadata=_json_loads(source.identifiers_json, {}),
+                    ),
+                    publisher=api_config,
+                    extraction_mode="publisher_api_required",
+                    keep_sources=payload.keep_sources,
+                    overwrite=payload.overwrite,
+                )
+                xml_imported += int(entry.get("xml_retrieved", False))
+            except LiteratureExtractionError as exc:
+                failures.append({"zotero_key": source.provider_item_key, "title": source.title, "message": str(exc), "diagnostics": exc.diagnostics})
+
+    if source_type == "zotero_storage" and extraction_mode == "publisher_api_required":
+        if not source_records:
+            message = "No synced Zotero literature identifiers are available. Sync Zotero first; PDFs are not inspected in publisher_api_required mode."
+            failures.append({"message": message, "diagnostics": {"extraction_mode": extraction_mode, "pdf_used": False, "fallback_used": False}})
+        report = {"extraction_mode": extraction_mode, "last_import_status": "failed" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": 0, "pdf_used": False, "fallback_used": False, "extraction_errors": [failure["message"] for failure in failures]}
+        _save_import_diagnostics(session, report)
+        if failures:
+            raise HTTPException(status_code=400, detail={"message": failures[0]["message"], "diagnostics": report, "failures": failures})
+        write_project_settings(paths, zotero_storage_path=payload.zotero_storage, literature_source_directory=source_value, keep_temporary_pdfs=False, overwrite_existing_markdown=payload.overwrite, preserve_curated_metadata=True)
+        return {"ok": True, "project": project.slug, "extraction_mode": extraction_mode, "files_scanned": len(source_records), "imported": xml_imported, "duplicates": len(source_records) - xml_imported, "failed": 0, "xml_imported": xml_imported, "pdf_used": False, "fallback_used": False, "combined_count": build_canonical_combined(paths), "combined_output_file": str(paths.combined), "failures": []}
     try:
-        result = import_canonical_directory(paths, Path(source_value), source_type=source_type, keep_sources=payload.keep_sources, overwrite=payload.overwrite)
+        result = import_canonical_directory(paths, Path(source_value), source_type=source_type, extraction_mode=extraction_mode, keep_sources=payload.keep_sources, overwrite=payload.overwrite)
         write_project_settings(paths, zotero_storage_path=payload.zotero_storage, literature_source_directory=source_value, keep_temporary_pdfs=payload.keep_sources, overwrite_existing_markdown=payload.overwrite, preserve_curated_metadata=True)
+    except LiteratureExtractionError as exc:
+        report = {**exc.diagnostics, "last_import_status": "failed", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": 0}
+        _save_import_diagnostics(session, report)
+        raise HTTPException(status_code=400, detail={"message": str(exc), "diagnostics": report}) from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "project": project.slug, **result.to_dict()}
+    report = {"extraction_mode": extraction_mode, "last_import_status": "success" if not result.failed else "partial_failure", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": result.imported + result.duplicates if extraction_mode == "pdf_fallback_allowed" else 0, "pdf_used": True, "fallback_used": extraction_mode == "pdf_fallback_allowed", "extraction_errors": [failure["error"] for failure in (result.failures or [])]}
+    _save_import_diagnostics(session, report)
+    return {"ok": True, "project": project.slug, "extraction_mode": extraction_mode, "xml_imported": xml_imported, "pdf_used": True, "fallback_used": extraction_mode == "pdf_fallback_allowed", **result.to_dict()}
 
 
 @router.post("/literature/build-combined")
@@ -1858,7 +2082,7 @@ def run_literature_pipeline_action(session: Session = Depends(get_session)) -> d
     project = None
     try:
         project, paths = _canonical_project_paths(session)
-        config = type(config)(zotero_literature_storage_path=config.zotero_literature_storage_path, base_dir=paths.root, pdf_dir=paths.sources, generated_md_dir=paths.markdown, papers_dir=paths.markdown, combined_output_file=paths.combined, fuzzy_min_score=config.fuzzy_min_score)
+        config = type(config)(zotero_literature_storage_path=config.zotero_literature_storage_path, base_dir=paths.root, pdf_dir=paths.sources, generated_md_dir=paths.markdown, papers_dir=paths.markdown, combined_output_file=paths.combined, fuzzy_min_score=config.fuzzy_min_score, extraction_mode=config.extraction_mode)
     except LookupError:
         pass
     try:
@@ -2248,7 +2472,7 @@ def retry_literature_repository_extraction(payload: LiteratureActionPayload) -> 
 def sync_zotero(
     payload: ZoteroSyncPayload,
     session: Session = Depends(get_session),
-) -> dict[str, int]:
+) -> dict[str, Any]:
     config = zotero_config(session)
     try:
         client = ZoteroApiClient(
@@ -2281,21 +2505,68 @@ def sync_zotero(
     except Exception as exc:
         session.rollback()
         raise HTTPException(status_code=400, detail=f"Zotero sync import failed: {exc}") from exc
-    refresh_literature_markdown_repository(session)
-
-    pipeline_config = literature_pipeline_config(session)
+    publisher = publisher_config(session)
+    extraction_mode = publisher.extraction_mode
+    api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled)
+    xml_imported = 0
+    failures: list[dict[str, Any]] = []
     try:
-        run_literature_pipeline(pipeline_config)
-    except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
-        logger.warning(f"Zotero PDF pipeline skipped during sync: {exc}")
-    except Exception as exc:
-        logger.error(f"Zotero PDF pipeline failed during sync: {exc}")
+        _, canonical_paths = _canonical_project_paths(session)
+    except LookupError:
+        canonical_paths = None
+    if canonical_paths and extraction_mode != "pdf_only":
+        for source in sources:
+            creators = [" ".join(part for part in (creator.get("given"), creator.get("family")) if part).strip() for creator in source.creators]
+            try:
+                entry, duplicate = import_identified_item(
+                    canonical_paths,
+                    LiteratureIdentification(
+                        zotero_key=source.provider_item_key,
+                        doi=source.doi,
+                        sciencedirect_url=source.url,
+                        title=source.title,
+                        authors=[creator for creator in creators if creator],
+                        year=source.year,
+                        pdf_path=None,
+                        metadata_source="zotero",
+                        identifier_metadata=source.identifier_metadata,
+                    ),
+                    publisher=api_config,
+                    extraction_mode="publisher_api_required",
+                )
+                xml_imported += int(not duplicate and entry.get("xml_retrieved", False))
+            except LiteratureExtractionError as exc:
+                failures.append({"zotero_key": source.provider_item_key, "title": source.title, "message": str(exc), "diagnostics": exc.diagnostics})
 
+    if extraction_mode == "publisher_api_required":
+        if canonical_paths is None:
+            failures.append({"message": "Create or select an active project before importing Zotero literature."})
+        report = {"extraction_mode": extraction_mode, "last_import_status": "failed" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": 0, "pdf_used": False, "fallback_used": False, "extraction_errors": [failure["message"] for failure in failures]}
+        _save_import_diagnostics(session, report)
+        if failures:
+            raise HTTPException(status_code=400, detail={"message": failures[0]["message"], "diagnostics": report, "failures": failures})
+        return {"fetched": len(items), "inserted": result.inserted, "updated": result.updated, "skipped": result.skipped, "xml_imported": xml_imported, "pdf_used": False, "fallback_used": False, "extraction_mode": extraction_mode}
+
+    pdf_fallbacks = 0
+    if canonical_paths is not None:
+        pipeline_config = literature_pipeline_config(session)
+        try:
+            pipeline_result = run_literature_pipeline(pipeline_config)
+            pdf_fallbacks = pipeline_result.converted_markdown_count
+        except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
+            failures.append({"message": str(exc)})
+    report = {"extraction_mode": extraction_mode, "last_import_status": "partial_failure" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": pdf_fallbacks, "pdf_used": pdf_fallbacks > 0, "fallback_used": extraction_mode == "pdf_fallback_allowed" and pdf_fallbacks > 0, "extraction_errors": [failure["message"] for failure in failures]}
+    _save_import_diagnostics(session, report)
     return {
         "fetched": len(items),
         "inserted": result.inserted,
         "updated": result.updated,
         "skipped": result.skipped,
+        "xml_imported": xml_imported,
+        "pdf_used": pdf_fallbacks > 0,
+        "fallback_used": extraction_mode == "pdf_fallback_allowed" and pdf_fallbacks > 0,
+        "extraction_mode": extraction_mode,
+        "failures": failures,
     }
 
 
