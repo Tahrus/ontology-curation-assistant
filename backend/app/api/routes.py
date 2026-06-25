@@ -114,6 +114,7 @@ from backend.app.projects import (
     project_payload,
     review_payload,
     select_project,
+    slugify,
     suggest_base_iri,
     suggestion_payload,
     update_project_metadata,
@@ -526,10 +527,11 @@ def _clean_string_list(values: list[str]) -> list[str]:
     return cleaned
 
 
-def _entry_matches_project_tags(entry: dict[str, Any], wanted: set[str]) -> bool:
+def _entry_matches_project_tags(entry: dict[str, Any], wanted: set[str], mapping: dict[str, str] | None = None) -> bool:
     if not wanted:
         return True
-    values = {str(tag).strip().casefold() for tag in (entry.get("project_tags") or []) if str(tag).strip()}
+    lookup = mapping or {}
+    values = {_canonicalize_project_tag(str(tag), lookup).casefold() for tag in (entry.get("project_tags") or []) if str(tag).strip()}
     return wanted.issubset(values)
 
 
@@ -537,8 +539,25 @@ def _parse_tag_filter(tags: str | None) -> set[str]:
     return {tag.strip().casefold() for tag in (tags or "").split(",") if tag.strip()}
 
 
+def _parse_canonical_tag_filter(tags: str | None, mapping: dict[str, str]) -> set[str]:
+    return {_canonicalize_project_tag(tag, mapping).casefold() for tag in (tags or "").split(",") if tag.strip()}
+
+
 def _project_canonical_tag(project: Project) -> str:
     return (project.ontology_id or project.slug).strip()
+
+
+def _project_tag_lookup_keys(value: str | None) -> set[str]:
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    keys = {text.casefold()}
+    slug = slugify(text)
+    if slug:
+        keys.add(slug.casefold())
+    keys.add(re.sub(r"[\s_]+", "-", text).casefold())
+    keys.add(re.sub(r"[-_]+", " ", text).casefold())
+    return {key for key in keys if key}
 
 
 def _canonical_project_tag_map(session: Session) -> dict[str, str]:
@@ -546,9 +565,28 @@ def _canonical_project_tag_map(session: Session) -> dict[str, str]:
     for project in session.scalars(select(Project)).all():
         canonical = _project_canonical_tag(project)
         for alias in {project.slug, project.ontology_id, str(project.id), project.name, canonical}:
-            if alias:
-                mapping[str(alias).strip().casefold()] = canonical
+            for key in _project_tag_lookup_keys(alias):
+                mapping[key] = canonical
     return mapping
+
+
+def _canonicalize_project_tag(tag: str, mapping: dict[str, str]) -> str:
+    for key in _project_tag_lookup_keys(tag):
+        if key in mapping:
+            return mapping[key]
+    return str(tag).strip()
+
+
+def _canonicalize_project_tags(tags: list[Any], mapping: dict[str, str]) -> list[str]:
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for raw in _clean_string_list([str(tag) for tag in tags]):
+        mapped = _canonicalize_project_tag(raw, mapping)
+        key = mapped.casefold()
+        if key not in seen:
+            canonical.append(mapped)
+            seen.add(key)
+    return canonical
 
 
 def _normalize_project_tags_for_storage(session: Session, tags: list[str]) -> tuple[list[str], list[str]]:
@@ -557,7 +595,7 @@ def _normalize_project_tags_for_storage(session: Session, tags: list[str]) -> tu
     legacy: list[str] = []
     seen: set[str] = set()
     for raw in _clean_string_list(tags):
-        mapped = mapping.get(raw.casefold()) or raw
+        mapped = _canonicalize_project_tag(raw, mapping)
         key = mapped.casefold()
         if key not in seen:
             canonical.append(mapped)
@@ -1796,9 +1834,11 @@ def test_literature_publisher_api(payload: PublisherApiTestPayload, session: Ses
 
 def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
     markdown = Path(item["markdown_file"]).read_text(encoding="utf-8", errors="replace") if item.get("markdown_file") else None
+    repository_stage = item.get("repository_stage") or "staged"
+    curation_status = item.get("curation_status") or ("curated" if repository_stage == "curated" else None)
     return {
         "id": item["canonical_id"],
-        "repository_stage": item.get("repository_stage") or "staged",
+        "repository_stage": repository_stage,
         "provider": item.get("source_type") or "canonical_pipeline",
         "title": item.get("title"),
         "authors": item.get("authors") or [],
@@ -1812,7 +1852,7 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
         "markdown_quality": item.get("markdown_quality") or {},
         "import_status": item.get("import_status"),
         "duplicate_status": item.get("duplicate_status"),
-        "curation_status": item.get("curation_status"),
+        "curation_status": curation_status,
         "pipeline_version": item.get("pipeline_version"),
         "metadata_source": item.get("metadata_source"),
         "content_source": item.get("content_source"),
@@ -1884,12 +1924,39 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _literature_status_values(item: dict[str, Any]) -> set[str]:
+    return {
+        str(value).strip().casefold()
+        for value in (
+            item.get("curation_status"),
+            item.get("import_status"),
+            item.get("duplicate_status"),
+            item.get("state"),
+            item.get("markdown_status"),
+            item.get("fulltext_status"),
+            item.get("repository_stage"),
+        )
+        if str(value or "").strip()
+    }
+
+
+def _is_curated_literature_entry(item: dict[str, Any]) -> bool:
+    values = _literature_status_values(item)
+    return item.get("repository_stage") == "curated" or bool(values & {"curated", "accepted"})
+
+
+def _is_uncurated_literature_entry(item: dict[str, Any]) -> bool:
+    values = _literature_status_values(item)
+    return not (item.get("repository_stage") == "curated" or bool(values & {"curated", "accepted", "promoted"}))
+
+
 @router.get("/literature/canonical")
 def list_canonical_literature(project: str | None = None, tags: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
     selected, paths = _canonical_project_paths(session, project)
-    wanted = _parse_tag_filter(tags)
-    staged = [_canonical_entry_payload(item) for item in list_canonical_entries(paths) if _entry_matches_project_tags(item, wanted)]
-    curated = [_canonical_entry_payload(item) for item in list_curated_entries(paths) if _entry_matches_project_tags(item, wanted)]
+    mapping = _canonical_project_tag_map(session)
+    wanted = _parse_canonical_tag_filter(tags, mapping)
+    staged = [_canonical_entry_payload({**item, "project_tags": _canonicalize_project_tags(item.get("project_tags") or [], mapping)}) for item in list_canonical_entries(paths) if _is_uncurated_literature_entry(item) and _entry_matches_project_tags(item, wanted, mapping)]
+    curated = [_canonical_entry_payload({**item, "project_tags": _canonicalize_project_tags(item.get("project_tags") or [], mapping)}) for item in list_curated_entries(paths) if _is_curated_literature_entry({**item, "repository_stage": "curated"}) and _entry_matches_project_tags(item, wanted, mapping)]
     return {"project": selected.slug, "repository": str(paths.root), "entries": curated, "staged_entries": staged, "curated_entries": curated, "combined_output_file": str(paths.combined)}
 
 
@@ -2345,6 +2412,8 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "canonical_source": "markdown_repository" if markdown_paper else "database_metadata",
     }
     review_status = _literature_review_status(markdown_paper or {})
+    tag_mapping = _canonical_project_tag_map(session)
+    project_tags = _canonicalize_project_tags(_json_loads(source.project_tags_json, []), tag_mapping)
     return {
         "id": source.id,
         "provider": source.provider,
@@ -2358,7 +2427,7 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "url": markdown_metadata.get("url") or source.url,
         "abstract": (markdown_paper or {}).get("abstract") or source.abstract,
         "tags": _json_loads(source.tags_json, []),
-        "project_tags": _json_loads(source.project_tags_json, []),
+        "project_tags": project_tags,
         "collections": _json_loads(source.collections_json, []),
         "item_type": source.item_type,
         "literature_type": _source_literature_type(source.item_type),
@@ -2481,13 +2550,14 @@ def _literature_review_status(paper: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/zotero/entries")
 def list_zotero_entries(tags: str | None = None, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    wanted = _parse_tag_filter(tags)
+    mapping = _canonical_project_tag_map(session)
+    wanted = _parse_canonical_tag_filter(tags, mapping)
     sources = session.scalars(
         select(LiteratureSource)
         .where(LiteratureSource.provider == "zotero")
         .order_by(LiteratureSource.id)
     ).all()
-    entries = [entry for source in sources if _entry_matches_project_tags((entry := _source_payload(source, session)), wanted)]
+    entries = [entry for source in sources if _entry_matches_project_tags((entry := _source_payload(source, session)), wanted, mapping)]
     matched_markdown_files = {
         entry["markdown_file"]
         for entry in entries
@@ -2506,17 +2576,18 @@ def list_zotero_entries(tags: str | None = None, session: Session = Depends(get_
         entries.extend(
             _canonical_entry_payload(item)
             for item in list_canonical_entries(canonical_paths)
-            if item.get("markdown_file") not in canonical_files and _entry_matches_project_tags(item, wanted)
+            if item.get("markdown_file") not in canonical_files and _is_uncurated_literature_entry(item) and _entry_matches_project_tags(item, wanted, mapping)
         )
     except LookupError:
         canonical_paths = RepositoryPaths.from_root(Path(get_settings().literature_base_dir))
         canonical_files = {entry.get("markdown_file") for entry in entries}
-        entries.extend(_canonical_entry_payload(item) for item in list_canonical_entries(canonical_paths) if item.get("markdown_file") not in canonical_files and _entry_matches_project_tags(item, wanted))
+        entries.extend(_canonical_entry_payload(item) for item in list_canonical_entries(canonical_paths) if item.get("markdown_file") not in canonical_files and _is_uncurated_literature_entry(item) and _entry_matches_project_tags(item, wanted, mapping))
     return entries
 
 
 @router.get("/project-tags")
 def list_project_tags(session: Session = Depends(get_session)) -> dict[str, Any]:
+    mapping = _canonical_project_tag_map(session)
     display: dict[str, str] = {}
     for project in session.scalars(select(Project).order_by(Project.name)).all():
         value = _project_canonical_tag(project)
@@ -2525,7 +2596,8 @@ def list_project_tags(session: Session = Depends(get_session)) -> dict[str, Any]
         for tag in _json_loads(source.project_tags_json, []):
             text = str(tag).strip()
             if text:
-                display.setdefault(text.casefold(), text)
+                canonical = _canonicalize_project_tag(text, mapping)
+                display.setdefault(canonical.casefold(), canonical)
     try:
         _, paths = _canonical_project_paths(session)
         entries = [*list_canonical_entries(paths), *list_curated_entries(paths)]
@@ -2535,7 +2607,8 @@ def list_project_tags(session: Session = Depends(get_session)) -> dict[str, Any]
         for tag in entry.get("project_tags") or []:
             text = str(tag).strip()
             if text:
-                display.setdefault(text.casefold(), text)
+                canonical = _canonicalize_project_tag(text, mapping)
+                display.setdefault(canonical.casefold(), canonical)
     return {"tags": [{"key": key, "label": label} for key, label in sorted(display.items(), key=lambda item: item[1].casefold())]}
 
 

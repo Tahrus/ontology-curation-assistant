@@ -1218,10 +1218,6 @@ async function loadProjectTags() {
 function projectTagOptions() {
   const byKey = new Map();
   (state.projectTags || []).forEach((tag) => byKey.set(tag.key || normalizeText(tag.label), tag.label));
-  (state.projects || []).forEach((project) => {
-    if (project.slug) byKey.set(normalizeText(project.slug), project.slug);
-    if (project.ontology_id) byKey.set(normalizeText(project.ontology_id), project.ontology_id);
-  });
   return [...byKey.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
 }
 
@@ -1432,10 +1428,11 @@ function filteredTwoStageEntries(stage) {
   const source = isCurated ? state.curatedLiteratureEntries || [] : state.stagedLiteratureEntries || [];
   return source.filter((entry) => {
     const status = literatureWorkflowStatus(entry, stage);
+    const isAcceptedOrCurated = ["accepted", "curated"].includes(status) || entry.curation_status === "accepted" || entry.curation_status === "curated";
     const isPromoted = entry.import_status === "promoted" || entry.repository_stage === "curated";
     if (isCurated) {
-      if (["rejected", "duplicate"].includes(status)) return false;
-    } else if (isPromoted) {
+      if (["rejected", "duplicate"].includes(status) || !isAcceptedOrCurated) return false;
+    } else if (isPromoted || isAcceptedOrCurated) {
       return false;
     }
     const matchesSearch = !search || literatureSearchText(entry).includes(search);

@@ -11,6 +11,7 @@ from backend.app.config import get_settings
 from backend.app.db import session as db_session
 from backend.app.main import app
 from backend.app.models.db import AppSetting, CandidateTermRecord, LiteratureDocument, LiteratureSource
+from backend.app.literature.canonical import RepositoryPaths, promote_staged_entry, upsert_markdown
 from backend.app.literature.repository import load_literature_markdown, save_literature_markdown
 from backend.app.ontology.local import index_ontology_file, scan_ontology_folder
 from backend.app.ontology.ols import OlsLookupService, parse_ols_search_response
@@ -506,6 +507,59 @@ def test_project_tag_alias_is_normalized_to_single_canonical_tag(client, tmp_pat
 
     assert tagged.status_code == 200
     assert tagged.json()["item"]["project_tags"] == ["ppo"]
+
+
+def test_canonical_literature_tabs_are_mutually_exclusive(client, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Bioprocess Ontology", "ontology_id": "bpo", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True},
+    ).json()
+    paths = RepositoryPaths.from_root(Path(project["literature_repository_path"]))
+    curated_entry, _ = upsert_markdown(
+        paths,
+        title="Accepted bioprocess article",
+        markdown="# Accepted bioprocess article\n\n## Abstract\nCurated abstract.\n\n## Results\nUseful curated body text with enough content for review.",
+        doi="10.1000/accepted-bpo",
+        metadata_fields={"project_tags": ["bpo"]},
+    )
+    upsert_markdown(
+        paths,
+        title="Uncurated bioprocess article",
+        markdown="# Uncurated bioprocess article\n\n## Abstract\nNew abstract.\n\n## Results\nUseful uncurated body text with enough content for review.",
+        doi="10.1000/uncurated-bpo",
+        metadata_fields={"project_tags": ["bpo"]},
+    )
+    promote_staged_entry(paths, curated_entry["canonical_id"], project_tags=["bpo"])
+
+    payload = client.get("/api/literature/canonical", params={"project": project["slug"], "tags": "bpo"}).json()
+    curated_titles = {entry["title"] for entry in payload["curated_entries"]}
+    staged_titles = {entry["title"] for entry in payload["staged_entries"]}
+
+    assert "Accepted bioprocess article" in curated_titles
+    assert "Accepted bioprocess article" not in staged_titles
+    assert "Uncurated bioprocess article" in staged_titles
+    assert "Uncurated bioprocess article" not in curated_titles
+
+
+def test_bioprocess_project_legacy_tag_collapses_to_canonical_button(client, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Bioprocess Ontology", "ontology_id": "bpo", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path)},
+    ).json()
+    assert project["canonical_project_tag"] == "bpo"
+    assert client.post("/api/zotero/import-test", json={}).status_code == 200
+    source_id = client.get("/api/zotero/entries").json()[0]["id"]
+
+    tagged = client.post(f"/api/literature/{source_id}/tags", json={"project_tags": ["Bioprocess-ontology", "bpo"]})
+
+    assert tagged.status_code == 200
+    assert tagged.json()["item"]["project_tags"] == ["bpo"]
+    tags = client.get("/api/project-tags").json()["tags"]
+    labels = [tag["label"] for tag in tags]
+    assert labels.count("bpo") == 1
+    assert "Bioprocess-ontology" not in labels
+    assert client.get("/api/zotero/entries", params={"tags": "bpo"}).json()[0]["id"] == source_id
+    assert client.get("/api/zotero/entries", params={"tags": "Bioprocess-ontology"}).json()[0]["id"] == source_id
 
 
 def test_extended_publisher_settings_are_masked_and_persist(client):
@@ -1288,6 +1342,7 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "function literatureWorkflowStatus" in script
     assert "function filteredTwoStageEntries" in script
     assert "function setLiteratureTab" in script
+    assert "state.projects || []" not in script.split("function projectTagOptions", 1)[1].split("function renderProjectTagButtons", 1)[0]
     assert 'state.activeLiteratureTab = "uncurated"' in script
     assert "subtab-row" in styles
     assert "literature-tab-panel" in styles

@@ -108,7 +108,7 @@ The browser UI is split into small pages:
 - Project Dashboard: active project metadata, local status, project hierarchy tree, and links to the main workflows.
 - Project Management: wizard-style create/edit/select flow, clear project cards, detail/next-step guidance, active project selection, hierarchy metadata, workspace/repository paths, and optional path statuses.
 - Settings: Zotero metadata sync settings, LLM provider/model settings, LLM connection testing, Docker/ODK diagnostics, Zotero connection testing, Zotero metadata sync, and the local Zotero literature source path used for PDF import.
-- Literature: two clear sub-tabs for `Curated Literature` and `New / Uncurated Literature`, each with search/status filtering, project-tag filtering, metadata/Markdown/source provenance display, and open/review/edit actions for staged or curated entries.
+- Literature: two clear, mutually exclusive sub-tabs for `Curated Literature` and `New / Uncurated Literature`, each with search/status filtering, canonical project-tag filtering, metadata/Markdown/source provenance display, and open/review/edit actions for staged or curated entries.
 - Ontology: local PPO ontology path, detected ontology files, indexing, term search, and a collapsible parent-child ontology tree.
 - Curation Prompt: editable ontology-curation LLM prompt and run controls.
 - Curation: document ingestion, candidate extraction, candidate editing, local PPO matching, and external OLS matching.
