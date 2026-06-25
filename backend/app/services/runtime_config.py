@@ -11,7 +11,7 @@ from backend.app.literature.pipeline import LiteraturePipelineConfig
 from backend.app.models.db import AppSetting
 
 
-SECRET_KEYS = {"zotero_api_key", "llm_api_key", "elsevier_api_key", "elsevier_inst_token"}
+SECRET_KEYS = {"zotero_api_key", "llm_api_key", "elsevier_api_key", "elsevier_inst_token", "springer_api_key", "wiley_tdm_token", "ncbi_api_key"}
 
 
 @dataclass(frozen=True)
@@ -91,6 +91,24 @@ def publisher_config(session: Session) -> PublisherRuntimeConfig:
         api_key_source="environment" if env_key else ("stored" if get_runtime_value(session, "elsevier_api_key") else "missing"),
         extraction_mode=extraction_mode,
     )
+
+
+def publisher_provider_status(session: Session) -> dict[str, dict[str, str | bool | None]]:
+    publisher = publisher_config(session)
+    springer_key = get_runtime_value(session, "springer_api_key")
+    wiley_token = get_runtime_value(session, "wiley_tdm_token")
+    crossref_email = get_runtime_value(session, "crossref_contact_email")
+    ncbi_email = get_runtime_value(session, "ncbi_contact_email")
+    ncbi_key = get_runtime_value(session, "ncbi_api_key")
+    openalex_email = get_runtime_value(session, "openalex_email")
+    return {
+        "elsevier": {"status": "configured" if publisher.api_key else "missing", "working": bool(publisher.api_key), "api_key": mask_secret(publisher.api_key), "base_url": publisher.base_url},
+        "springer": {"status": "configured" if springer_key else "missing", "api_key": mask_secret(springer_key)},
+        "wiley": {"status": "configured" if wiley_token else "missing", "tdm_token": mask_secret(wiley_token)},
+        "crossref": {"status": "configured" if crossref_email else "missing", "contact_email": crossref_email or ""},
+        "ncbi": {"status": "configured" if (ncbi_email or ncbi_key) else "missing", "contact_email": ncbi_email or "", "api_key": mask_secret(ncbi_key)},
+        "openalex": {"status": "configured" if openalex_email else "missing", "contact_email": openalex_email or ""},
+    }
 
 
 def get_runtime_value(session: Session, key: str) -> str | None:
@@ -275,5 +293,6 @@ def config_status(session: Session) -> dict[str, object]:
             "elsevier_api_base_url": publisher.base_url,
             "literature_extraction_mode": publisher.extraction_mode,
             "pdf_fallback_enabled": publisher.extraction_mode == "pdf_fallback_allowed",
+            "providers": publisher_provider_status(session),
         },
     }

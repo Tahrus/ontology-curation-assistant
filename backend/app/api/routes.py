@@ -46,6 +46,7 @@ from backend.app.literature.canonical import (
     deduplicate as deduplicate_canonical,
     import_directory as import_canonical_directory,
     import_identified_item,
+    literature_identity_keys,
     test_publisher_api as run_publisher_api_test,
     cleanup_unpromoted_staged,
     list_entries as list_canonical_entries,
@@ -54,6 +55,7 @@ from backend.app.literature.canonical import (
     promote_staged_entry,
     reject_staged_entry,
     reset_repository as reset_canonical_repository,
+    upload_manual_markdown,
     update_curated_entry,
     update_staged_entry,
     write_project_settings,
@@ -246,6 +248,12 @@ class LiteratureEntryEditPayload(BaseModel):
     project_tags: list[str] | None = None
 
 
+class ManualMarkdownPayload(BaseModel):
+    project: str | int | None = None
+    markdown: str = Field(min_length=1)
+    run_validation: bool = True
+
+
 class StagedLiteratureDecisionPayload(BaseModel):
     project: str | int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -261,6 +269,12 @@ class PublisherConfigPayload(BaseModel):
     elsevier_api_base_url: str | None = None
     publisher_api_enrichment_enabled: bool | None = None
     literature_extraction_mode: Literal["publisher_api_required", "pdf_fallback_allowed", "pdf_only"] | None = None
+    springer_api_key: str | None = None
+    wiley_tdm_token: str | None = None
+    crossref_contact_email: str | None = None
+    ncbi_contact_email: str | None = None
+    ncbi_api_key: str | None = None
+    openalex_email: str | None = None
 
 
 class PublisherApiTestPayload(BaseModel):
@@ -504,11 +518,89 @@ def _clean_string_list(values: list[str]) -> list[str]:
     cleaned: list[str] = []
     for value in values:
         item = str(value).strip()
-        if not item or item in seen:
+        key = item.casefold()
+        if not item or key in seen:
             continue
-        seen.add(item)
+        seen.add(key)
         cleaned.append(item)
     return cleaned
+
+
+def _entry_matches_project_tags(entry: dict[str, Any], wanted: set[str]) -> bool:
+    if not wanted:
+        return True
+    values = {str(tag).strip().casefold() for tag in (entry.get("project_tags") or []) if str(tag).strip()}
+    return wanted.issubset(values)
+
+
+def _parse_tag_filter(tags: str | None) -> set[str]:
+    return {tag.strip().casefold() for tag in (tags or "").split(",") if tag.strip()}
+
+
+def _project_canonical_tag(project: Project) -> str:
+    return (project.ontology_id or project.slug).strip()
+
+
+def _canonical_project_tag_map(session: Session) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for project in session.scalars(select(Project)).all():
+        canonical = _project_canonical_tag(project)
+        for alias in {project.slug, project.ontology_id, str(project.id), project.name, canonical}:
+            if alias:
+                mapping[str(alias).strip().casefold()] = canonical
+    return mapping
+
+
+def _normalize_project_tags_for_storage(session: Session, tags: list[str]) -> tuple[list[str], list[str]]:
+    mapping = _canonical_project_tag_map(session)
+    canonical: list[str] = []
+    legacy: list[str] = []
+    seen: set[str] = set()
+    for raw in _clean_string_list(tags):
+        mapped = mapping.get(raw.casefold()) or raw
+        key = mapped.casefold()
+        if key not in seen:
+            canonical.append(mapped)
+            seen.add(key)
+        if raw != mapped:
+            legacy.append(raw)
+    return canonical, legacy
+
+
+def _source_identity_metadata(source: LiteratureSource) -> dict[str, Any]:
+    metadata = _json_loads(source.identifiers_json, {})
+    metadata.update({"doi": source.doi, "url": source.url, "title": source.title, "year": source.year, "item_type": source.item_type})
+    return metadata
+
+
+def _source_literature_type(item_type: str | None) -> str:
+    normalized = (item_type or "").casefold()
+    if normalized in {"book", "editedbook"}:
+        return "book"
+    if normalized in {"booksection", "chapter"}:
+        return "book_chapter"
+    if normalized == "conferencepaper":
+        return "conference_paper"
+    if normalized == "report":
+        return "report"
+    return "journal_article"
+
+
+def _source_identity_metadata_from_parsed(source: ParsedSource) -> dict[str, Any]:
+    metadata = dict(source.identifier_metadata)
+    metadata.update({"doi": source.doi, "url": source.url, "title": source.title, "year": source.year, "item_type": source.item_type})
+    return metadata
+
+
+def _repository_identity_key_set(paths: RepositoryPaths) -> set[str]:
+    keys: set[str] = set()
+    for entry in [*list_canonical_entries(paths), *list_curated_entries(paths)]:
+        keys.update(literature_identity_keys(entry))
+    return keys
+
+
+def _source_exists_in_repository(source: ParsedSource, repository_keys: set[str]) -> bool:
+    return bool(set(literature_identity_keys(_source_identity_metadata_from_parsed(source))) & repository_keys)
 
 
 def _project_or_404(session: Session, project_ref: str | int | None = None) -> Project:
@@ -1606,6 +1698,10 @@ def save_publisher_config(payload: PublisherConfigPayload, session: Session = De
         values["publisher_api_enrichment_enabled"] = str(payload.publisher_api_enrichment_enabled).lower()
     if payload.literature_extraction_mode is not None:
         values["literature_extraction_mode"] = payload.literature_extraction_mode
+    for key in ("springer_api_key", "wiley_tdm_token", "crossref_contact_email", "ncbi_contact_email", "ncbi_api_key", "openalex_email"):
+        value = getattr(payload, key)
+        if value is not None:
+            values[key] = value
     set_runtime_values(session, values)
     config = publisher_config(session)
     active_id = _active_config_id(session, "publisher")
@@ -1634,7 +1730,18 @@ def save_publisher_config(payload: PublisherConfigPayload, session: Session = De
         "api_key_source": config.api_key_source,
         "literature_extraction_mode": config.extraction_mode,
         "pdf_fallback_enabled": config.extraction_mode == "pdf_fallback_allowed",
+        "providers": config_status(session)["publisher"]["providers"],
         "saved_config_id": saved["id"],
+    }
+
+
+@router.post("/config/publisher/test")
+def test_publisher_provider_settings(session: Session = Depends(get_session)) -> dict[str, Any]:
+    providers = config_status(session)["publisher"]["providers"]
+    return {
+        "ok": True,
+        "providers": providers,
+        "message": "Provider settings loaded. Live network validation is not performed in this local diagnostic; use Elsevier XML test for retrieval validation.",
     }
 
 
@@ -1700,6 +1807,9 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
         "pii": item.get("pii"),
         "doi": item.get("doi"),
         "source_type": item.get("source_type"),
+        "literature_type": item.get("literature_type"),
+        "metadata_quality": item.get("metadata_quality") or {},
+        "markdown_quality": item.get("markdown_quality") or {},
         "import_status": item.get("import_status"),
         "duplicate_status": item.get("duplicate_status"),
         "curation_status": item.get("curation_status"),
@@ -1708,6 +1818,22 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
         "content_source": item.get("content_source"),
         "extraction_mode": item.get("extraction_mode"),
         "used_api_provider": item.get("used_api_provider"),
+        "attempted_providers": item.get("attempted_providers") or [],
+        "selected_provider": item.get("selected_provider"),
+        "fulltext_source": item.get("fulltext_source"),
+        "fulltext_format": item.get("fulltext_format"),
+        "fulltext_status": item.get("fulltext_status"),
+        "markdown_status": item.get("markdown_status"),
+        "source_quality": item.get("source_quality"),
+        "blocked_reason": item.get("blocked_reason"),
+        "recommended_action": item.get("recommended_action"),
+        "source_report_path": item.get("source_report_path"),
+        "manual_markdown_path": item.get("manual_markdown_path"),
+        "auto_markdown_path": item.get("auto_markdown_path"),
+        "canonical_markdown_path": item.get("canonical_markdown_path"),
+        "validation_report_path": item.get("validation_report_path"),
+        "validation_errors": item.get("validation_errors") or [],
+        "validation_warnings": item.get("validation_warnings") or [],
         "doi_used": item.get("doi_used"),
         "pii_used": item.get("pii_used"),
         "xml_retrieved": bool(item.get("xml_retrieved")),
@@ -1745,6 +1871,10 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
             "metadata_source": item.get("metadata_source"),
             "content_source": item.get("content_source"),
             "extraction_mode": item.get("extraction_mode"),
+            "fulltext_status": item.get("fulltext_status"),
+            "markdown_status": item.get("markdown_status"),
+            "source_quality": item.get("source_quality"),
+            "blocked_reason": item.get("blocked_reason"),
             "pdf_used": bool(item.get("pdf_used")),
             "fallback_used": bool(item.get("fallback_used")),
             "extraction_warnings": item.get("extraction_warnings") or [],
@@ -1755,10 +1885,11 @@ def _canonical_entry_payload(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/literature/canonical")
-def list_canonical_literature(project: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
+def list_canonical_literature(project: str | None = None, tags: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
     selected, paths = _canonical_project_paths(session, project)
-    staged = [_canonical_entry_payload(item) for item in list_canonical_entries(paths)]
-    curated = [_canonical_entry_payload(item) for item in list_curated_entries(paths)]
+    wanted = _parse_tag_filter(tags)
+    staged = [_canonical_entry_payload(item) for item in list_canonical_entries(paths) if _entry_matches_project_tags(item, wanted)]
+    curated = [_canonical_entry_payload(item) for item in list_curated_entries(paths) if _entry_matches_project_tags(item, wanted)]
     return {"project": selected.slug, "repository": str(paths.root), "entries": curated, "staged_entries": staged, "curated_entries": curated, "combined_output_file": str(paths.combined)}
 
 
@@ -1778,6 +1909,16 @@ def edit_staged_literature(entry_id: str, payload: LiteratureEntryEditPayload, s
         return _canonical_entry_payload(update_staged_entry(paths, entry_id, metadata=payload.metadata, markdown=payload.markdown, project_tags=payload.project_tags))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/literature/staged/{entry_id}/manual-markdown")
+def upload_staged_manual_markdown(entry_id: str, payload: ManualMarkdownPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    _, paths = _canonical_project_paths(session, payload.project)
+    try:
+        item = upload_manual_markdown(paths, entry_id, markdown=payload.markdown, validate=payload.run_validation)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "entry": _canonical_entry_payload(item), "validation_report": item.get("validation_report"), "combined_output_file": str(paths.combined)}
 
 
 @router.post("/literature/staged/{entry_id}/promote")
@@ -1872,6 +2013,7 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
                     authors=payload.authors,
                     year=payload.year,
                     journal=payload.journal,
+                    item_type=None,
                     pdf_path=payload.local_pdf_path,
                     metadata_source="zotero" if payload.zotero_key else "manual",
                 ),
@@ -1922,6 +2064,7 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
                         title=source.title,
                         authors=[creator for creator in creators if creator],
                         year=source.year,
+                        item_type=source.item_type,
                         pdf_path=None,
                         metadata_source="zotero",
                         identifier_metadata=_json_loads(source.identifiers_json, {}),
@@ -2004,8 +2147,12 @@ def test_zotero_connection(session: Session = Depends(get_session)) -> dict[str,
 
 
 @router.get("/literature")
-def list_literature(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+def list_literature(tags: str | None = None, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
     documents = session.scalars(select(LiteratureDocument).order_by(LiteratureDocument.id)).all()
+    # Legacy document rows do not carry project tags; expose the query parameter for API
+    # compatibility and return no untagged legacy rows when a tag filter is requested.
+    if _parse_tag_filter(tags):
+        return []
     return [
         {
             "id": document.id,
@@ -2214,6 +2361,7 @@ def _source_payload(source: LiteratureSource, session: Session) -> dict[str, Any
         "project_tags": _json_loads(source.project_tags_json, []),
         "collections": _json_loads(source.collections_json, []),
         "item_type": source.item_type,
+        "literature_type": _source_literature_type(source.item_type),
         "publication_venue": source.item_type,
         "zotero": zotero,
         "zotero_select_uri": zotero.get("uri"),
@@ -2332,13 +2480,14 @@ def _literature_review_status(paper: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/zotero/entries")
-def list_zotero_entries(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+def list_zotero_entries(tags: str | None = None, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    wanted = _parse_tag_filter(tags)
     sources = session.scalars(
         select(LiteratureSource)
         .where(LiteratureSource.provider == "zotero")
         .order_by(LiteratureSource.id)
     ).all()
-    entries = [_source_payload(source, session) for source in sources]
+    entries = [entry for source in sources if _entry_matches_project_tags((entry := _source_payload(source, session)), wanted)]
     matched_markdown_files = {
         entry["markdown_file"]
         for entry in entries
@@ -2346,6 +2495,8 @@ def list_zotero_entries(session: Session = Depends(get_session)) -> list[dict[st
     }
     repository_result = load_llm_ready_repository_with_diagnostics()
     for index, paper in enumerate(repository_result.papers, start=1):
+        if wanted:
+            continue
         if paper.get("source_file") in matched_markdown_files:
             continue
         entries.append(_repository_paper_payload(paper, index))
@@ -2355,13 +2506,62 @@ def list_zotero_entries(session: Session = Depends(get_session)) -> list[dict[st
         entries.extend(
             _canonical_entry_payload(item)
             for item in list_canonical_entries(canonical_paths)
-            if item.get("markdown_file") not in canonical_files
+            if item.get("markdown_file") not in canonical_files and _entry_matches_project_tags(item, wanted)
         )
     except LookupError:
         canonical_paths = RepositoryPaths.from_root(Path(get_settings().literature_base_dir))
         canonical_files = {entry.get("markdown_file") for entry in entries}
-        entries.extend(_canonical_entry_payload(item) for item in list_canonical_entries(canonical_paths) if item.get("markdown_file") not in canonical_files)
+        entries.extend(_canonical_entry_payload(item) for item in list_canonical_entries(canonical_paths) if item.get("markdown_file") not in canonical_files and _entry_matches_project_tags(item, wanted))
     return entries
+
+
+@router.get("/project-tags")
+def list_project_tags(session: Session = Depends(get_session)) -> dict[str, Any]:
+    display: dict[str, str] = {}
+    for project in session.scalars(select(Project).order_by(Project.name)).all():
+        value = _project_canonical_tag(project)
+        display.setdefault(value.casefold(), value)
+    for source in session.scalars(select(LiteratureSource)).all():
+        for tag in _json_loads(source.project_tags_json, []):
+            text = str(tag).strip()
+            if text:
+                display.setdefault(text.casefold(), text)
+    try:
+        _, paths = _canonical_project_paths(session)
+        entries = [*list_canonical_entries(paths), *list_curated_entries(paths)]
+    except LookupError:
+        entries = []
+    for entry in entries:
+        for tag in entry.get("project_tags") or []:
+            text = str(tag).strip()
+            if text:
+                display.setdefault(text.casefold(), text)
+    return {"tags": [{"key": key, "label": label} for key, label in sorted(display.items(), key=lambda item: item[1].casefold())]}
+
+
+@router.post("/literature/{item_id}/tags")
+def update_literature_item_tags(item_id: str, payload: LiteratureProjectTagsPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    tags, legacy_tags = _normalize_project_tags_for_storage(session, payload.project_tags)
+    if item_id.isdigit():
+        source = session.get(LiteratureSource, int(item_id))
+        if source is not None:
+            source.project_tags_json = json.dumps(tags)
+            if legacy_tags:
+                identifiers = _json_loads(source.identifiers_json, {})
+                identifiers["legacy_project_tags"] = legacy_tags
+                source.identifiers_json = json.dumps(identifiers)
+            session.commit()
+            session.refresh(source)
+            return {"ok": True, "item": _source_payload(source, session)}
+    try:
+        _, paths = _canonical_project_paths(session)
+        if any(entry.get("canonical_id") == item_id for entry in list_canonical_entries(paths)):
+            return {"ok": True, "item": _canonical_entry_payload(update_staged_entry(paths, item_id, project_tags=tags))}
+        if any(entry.get("canonical_id") == item_id for entry in list_curated_entries(paths)):
+            return {"ok": True, "item": _canonical_entry_payload(update_curated_entry(paths, item_id, project_tags=tags))}
+    except LookupError:
+        pass
+    raise HTTPException(status_code=404, detail="Literature item not found")
 
 
 @router.get("/zotero/entries/{source_id}")
@@ -2381,7 +2581,12 @@ def update_zotero_entry_project_tags(
     source = session.get(LiteratureSource, source_id)
     if source is None or source.provider != "zotero":
         raise HTTPException(status_code=404, detail="Zotero entry not found")
-    source.project_tags_json = json.dumps(_clean_string_list(payload.project_tags))
+    tags, legacy_tags = _normalize_project_tags_for_storage(session, payload.project_tags)
+    source.project_tags_json = json.dumps(tags)
+    if legacy_tags:
+        identifiers = _json_loads(source.identifiers_json, {})
+        identifiers["legacy_project_tags"] = legacy_tags
+        source.identifiers_json = json.dumps(identifiers)
     session.commit()
     session.refresh(source)
     return _source_payload(source, session)
@@ -2515,7 +2720,10 @@ def sync_zotero(
     except LookupError:
         canonical_paths = None
     if canonical_paths and extraction_mode != "pdf_only":
+        repository_keys = _repository_identity_key_set(canonical_paths)
         for source in sources:
+            if _source_exists_in_repository(source, repository_keys):
+                continue
             creators = [" ".join(part for part in (creator.get("given"), creator.get("family")) if part).strip() for creator in source.creators]
             try:
                 entry, duplicate = import_identified_item(
@@ -2527,6 +2735,7 @@ def sync_zotero(
                         title=source.title,
                         authors=[creator for creator in creators if creator],
                         year=source.year,
+                        item_type=source.item_type,
                         pdf_path=None,
                         metadata_source="zotero",
                         identifier_metadata=source.identifier_metadata,

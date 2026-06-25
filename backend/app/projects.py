@@ -188,7 +188,7 @@ def project_children(session: Session, project: Project) -> list[Project]:
 
 
 def literature_project_tag_count(session: Session, project: Project) -> int:
-    tags = {project.slug, project.ontology_id, str(project.id)}
+    tags = {project.ontology_id}
     count = 0
     for source in session.scalars(select(LiteratureSource)).all():
         project_tags = set(_json_list(source.project_tags_json))
@@ -382,6 +382,8 @@ def project_payload(project: Project, session: Session | None = None) -> dict[st
         "slug": project.slug,
         "description": project.description,
         "ontology_id": project.ontology_id,
+        "canonical_project_tag": project.ontology_id,
+        "project_tag": project.ontology_id,
         "ontology_title": project.ontology_title,
         "project_type": project.project_type,
         "parent_project_id": project.parent_project_id,

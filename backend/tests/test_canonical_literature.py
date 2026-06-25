@@ -18,7 +18,6 @@ from backend.app.cli import app as cli_app
 from backend.app.models.db import AppSetting, LiteratureSource
 
 from backend.app.literature.canonical import (
-    LiteratureExtractionError,
     RepositoryPaths,
     build_combined,
     clean_llm_markdown,
@@ -31,6 +30,7 @@ from backend.app.literature.canonical import (
     normalize_pii,
     promote_staged_entry,
     reset_repository,
+    upload_manual_markdown,
     upsert_markdown,
 )
 from backend.app.literature.publisher_xml import (
@@ -159,11 +159,11 @@ def test_collect_article_identifiers_normalizes_and_orders_zotero_metadata() -> 
     assert [(item.kind, item.value) for item in identifiers] == [
         ("pii", "S0098135425001978"),
         ("doi", "10.1016/j.example.2026.1"),
-        ("issn", "1234-5678"),
-        ("isbn", "978-1-2345-6789-0"),
-        ("url", "https://www.sciencedirect.com/science/article/pii/S0098135425001978"),
         ("pmid", "123456"),
         ("pmcid", "PMC7654321"),
+        ("isbn", "978-1-2345-6789-0"),
+        ("issn", "1234-5678"),
+        ("url", "https://www.sciencedirect.com/science/article/pii/S0098135425001978"),
     ]
 
 
@@ -232,7 +232,7 @@ def test_identifier_fallback_records_unsupported_identifiers_and_clear_failure()
             {"ISSN": "1234-5678", "ISBN": "978-1-2345-6789-0", "PMID": "123456"},
             ElsevierApiConfig(api_key="test-key", enabled=True),
         )
-    assert [attempt["kind"] for attempt in caught.value.attempts] == ["issn", "isbn", "pmid"]
+    assert [attempt["kind"] for attempt in caught.value.attempts] == ["pmid", "isbn", "issn"]
     assert all(attempt["status"] == "skipped" for attempt in caught.value.attempts)
 
 
@@ -315,7 +315,7 @@ def test_identified_import_uses_pdf_only_after_elsevier_failure(tmp_path: Path) 
     assert entry["fallback_authorized_by"] == "literature_extraction_mode=pdf_fallback_allowed"
 
 
-def test_strict_api_failure_never_reads_pdf_or_creates_staged_entry(tmp_path: Path) -> None:
+def test_strict_api_failure_creates_blocked_metadata_entry_without_pdf(tmp_path: Path) -> None:
     pdf = tmp_path / "must-not-be-read.pdf"
     pdf.write_bytes(b"placeholder")
     extracted = []
@@ -324,37 +324,96 @@ def test_strict_api_failure_never_reads_pdf_or_creates_staged_entry(tmp_path: Pa
         return httpx.Response(403, text="forbidden")
 
     paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
-    with pytest.raises(LiteratureExtractionError, match="status 403") as caught:
-        import_identified_item(
-            paths,
-            LiteratureIdentification(doi="10.1000/blocked", pdf_path=str(pdf)),
-            publisher=ElsevierApiConfig(api_key="bad-key", enabled=True),
-            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
-            pdf_extractor=lambda path: extracted.append(path) or "forbidden",
-        )
+    entry, duplicate = import_identified_item(
+        paths,
+        LiteratureIdentification(doi="10.1000/blocked", pdf_path=str(pdf)),
+        publisher=ElsevierApiConfig(api_key="bad-key", enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        pdf_extractor=lambda path: extracted.append(path) or "forbidden",
+    )
     assert extracted == []
-    assert list_entries(paths, ensure=False) == []
-    assert caught.value.diagnostics["pdf_used"] is False
-    assert caught.value.diagnostics["fallback_used"] is False
+    assert duplicate is False
+    assert entry["markdown_status"] == "manual_markdown_required"
+    assert entry["state"] == "curation_blocked"
+    assert entry["markdown_available"] is False
+    assert entry["pdf_used"] is False
+    assert entry["fallback_used"] is False
+    assert Path(paths.root / entry["source_report_path"]).exists()
+    assert len(list_entries(paths, ensure=False)) == 1
 
 
 def test_strict_mode_missing_api_key_stops_before_pdf(tmp_path: Path) -> None:
     pdf = tmp_path / "must-not-be-read.pdf"
     pdf.write_bytes(b"placeholder")
     paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
-    with pytest.raises(LiteratureExtractionError, match="API key is missing") as caught:
-        import_identified_item(paths, LiteratureIdentification(doi="10.1000/missing-key", pdf_path=str(pdf)), publisher=ElsevierApiConfig(api_key=None, enabled=True), pdf_extractor=lambda path: pytest.fail("PDF extractor was called"))
-    assert caught.value.diagnostics["api_retrieval_status"] == "not_configured"
-    assert list_entries(paths, ensure=False) == []
+    entry, _ = import_identified_item(paths, LiteratureIdentification(doi="10.1000/missing-key", pdf_path=str(pdf)), publisher=ElsevierApiConfig(api_key=None, enabled=True), pdf_extractor=lambda path: pytest.fail("PDF extractor was called"))
+    assert entry["api_retrieval_status"] == "structured_fulltext_unavailable"
+    assert entry["markdown_status"] == "manual_markdown_required"
+    assert list_entries(paths, ensure=False)[0]["pdf_used"] is False
 
 
 def test_strict_mode_missing_identifiers_stops_before_pdf(tmp_path: Path) -> None:
     pdf = tmp_path / "must-not-be-read.pdf"
     pdf.write_bytes(b"placeholder")
     paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
-    with pytest.raises(LiteratureExtractionError, match="No DOI, PII, or ScienceDirect URL"):
-        import_identified_item(paths, LiteratureIdentification(pdf_path=str(pdf)), publisher=ElsevierApiConfig(api_key="key", enabled=True), pdf_extractor=lambda path: pytest.fail("PDF extractor was called"))
-    assert list_entries(paths, ensure=False) == []
+    entry, _ = import_identified_item(paths, LiteratureIdentification(title="Metadata only item", pdf_path=str(pdf)), publisher=ElsevierApiConfig(api_key="key", enabled=True), pdf_extractor=lambda path: pytest.fail("PDF extractor was called"))
+    assert entry["title"] == "Metadata only item"
+    assert entry["markdown_status"] == "manual_markdown_required"
+    assert entry["pdf_used"] is False
+
+
+def test_manual_markdown_upload_validates_and_selects_canonical(tmp_path: Path) -> None:
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    entry, _ = import_identified_item(paths, LiteratureIdentification(title="Manual paper", doi="10.1000/manual"), publisher=ElsevierApiConfig(api_key=None, enabled=True))
+    invalid = upload_manual_markdown(paths, entry["canonical_id"], markdown="# Manual paper\n\nToo short.")
+    assert invalid["markdown_available"] is False
+    assert invalid["validation_errors"]
+
+    valid = upload_manual_markdown(
+        paths,
+        entry["canonical_id"],
+        markdown="# Manual paper\n\nDOI: 10.1000/manual\n\n## Provenance\n\nManual structured Markdown supplied by curator.\n\n## Abstract\n\nThis paper describes a reliable manual literature workflow.\n\n## Methods\n\n" + "Validated structured body text. " * 20,
+    )
+    assert valid["markdown_available"] is True
+    assert valid["markdown_status"] == "markdown_validated"
+    assert valid["content_source"] == "manual_markdown"
+    assert Path(valid["markdown_file"]).exists()
+
+
+def test_acs_doi_with_crossref_pdf_link_creates_metadata_only_entry_without_pdf(tmp_path: Path) -> None:
+    pdf_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "api.crossref.org" in request.url.host:
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "title": ["ACS structured access test"],
+                        "publisher": "American Chemical Society (ACS)",
+                        "container-title": ["ACS Journal"],
+                        "issued": {"date-parts": [[2026]]},
+                        "DOI": "10.1021/acs.example.6b00001",
+                        "link": [{"URL": "https://pubs.acs.org/doi/pdf/10.1021/acs.example.6b00001", "content-type": "application/pdf"}],
+                    }
+                },
+            )
+        pdf_requests.append(request)
+        return httpx.Response(200, text="should not be used")
+
+    paths = RepositoryPaths.from_root(tmp_path / "project" / "literature")
+    entry, _ = import_identified_item(
+        paths,
+        LiteratureIdentification(doi="10.1021/acs.example.6b00001"),
+        publisher=ElsevierApiConfig(api_key=None, enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert pdf_requests == []
+    assert entry["title"] == "ACS structured access test"
+    assert entry["fulltext_status"] == "pdf_available_but_not_used"
+    assert entry["markdown_status"] == "manual_markdown_required"
+    assert entry["pdf_used"] is False
+    assert "No structured ACS full text" in entry["blocked_reason"]
 
 
 def test_reference_pipeline_xml_shape_has_equivalent_or_better_output() -> None:
@@ -369,16 +428,16 @@ def test_reference_pipeline_xml_shape_has_equivalent_or_better_output() -> None:
     assert "## References" in article.markdown
 
 
-def test_failed_strict_import_is_visible_in_diagnostics_api(client, tmp_path: Path, monkeypatch) -> None:
+def test_strict_import_metadata_only_result_is_visible_in_diagnostics_api(client, tmp_path: Path, monkeypatch) -> None:
     project = client.post("/api/projects", json={"name": "Strict diagnostics", "ontology_id": "strict-diag", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True}).json()
     assert client.post("/api/config/publisher", json={"elsevier_api_key": "bad-key", "publisher_api_enrichment_enabled": True, "literature_extraction_mode": "publisher_api_required"}).status_code == 200
     monkeypatch.setattr(ElsevierArticleClient, "retrieve", lambda self, **kwargs: ElsevierRetrieval("http_403", None, "doi", kwargs.get("doi"), 403))
-    failed = client.post("/api/literature/import", json={"project": project["slug"], "doi": "10.1000/blocked"})
-    assert failed.status_code == 400
-    assert "status 403" in failed.json()["detail"]["message"]
+    imported = client.post("/api/literature/import", json={"project": project["slug"], "doi": "10.1000/blocked"})
+    assert imported.status_code == 200
+    assert imported.json()["entry"]["markdown_status"] == "manual_markdown_required"
     diagnostics = client.get("/api/literature/import-diagnostics").json()
     assert diagnostics["extraction_mode"] == "publisher_api_required"
-    assert diagnostics["last_import"]["api_failures"] == 1
+    assert diagnostics["last_import"]["api_failures"] == 0
     assert diagnostics["last_import"]["pdf_used"] is False
     assert diagnostics["last_import"]["fallback_used"] is False
 

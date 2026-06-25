@@ -10,7 +10,7 @@ import httpx
 
 
 LOGGER = logging.getLogger(__name__)
-IDENTIFIER_ORDER = ("pii", "doi", "issn", "isbn", "url", "pmid", "pmcid")
+IDENTIFIER_ORDER = ("pii", "doi", "pmid", "pmcid", "arxiv", "isbn", "issn", "url")
 ELSEVIER_SUPPORTED_IDENTIFIERS = {"pii", "doi"}
 
 
@@ -39,6 +39,7 @@ class LiteratureIdentification:
     authors: list[str] = field(default_factory=list)
     year: str | None = None
     journal: str | None = None
+    item_type: str | None = None
     pdf_path: str | None = None
     metadata_source: str = "manual"
     identifier_metadata: dict[str, object] = field(default_factory=dict)
@@ -176,6 +177,11 @@ def collect_article_identifiers(metadata: dict[str, object]) -> list[ArticleIden
         add("pmid", metadata.get(key))
     for key in ("PMCID", "pmcid"):
         add("pmcid", metadata.get(key))
+    for key in ("arxiv", "arXiv", "arxiv_id", "arXiv ID"):
+        add("arxiv", metadata.get(key))
+    for candidate in url_values:
+        if match := re.search(r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?)", str(candidate or ""), re.I):
+            add("arxiv", match.group(1), "zotero_url")
     extra = str(metadata.get("extra") or "")
     if match := re.search(r"^\s*PMID\s*:\s*(\d+)\s*$", extra, re.I | re.M):
         add("pmid", match.group(1), "zotero_extra")
@@ -261,6 +267,8 @@ def _normalize_article_identifier(kind: str, value: object) -> str:
     if kind == "pmcid":
         normalized = re.sub(r"^PMCID\s*:\s*", "", text, flags=re.I).strip().upper()
         return normalized
+    if kind == "arxiv":
+        return re.sub(r"^(?:arxiv\s*:\s*)", "", text, flags=re.I).strip()
     return text
 
 

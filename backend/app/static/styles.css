@@ -14,6 +14,10 @@
   --danger: #a43131;
   --warning-bg: #fff7ea;
   --warning-ink: #61410f;
+  --tag-bg: #eef5f6;
+  --tag-active-bg: #176c72;
+  --tag-active-border: #0f555a;
+  --focus-color: #8d5b16;
   --graph-edge: #667380;
   --graph-node: #176c72;
   --graph-node-2: #8d5b16;
@@ -35,6 +39,10 @@
   --danger: #e46d6d;
   --warning-bg: #302515;
   --warning-ink: #f7d99c;
+  --tag-bg: #1d2a30;
+  --tag-active-bg: #4fb8b7;
+  --tag-active-border: #7bd2d1;
+  --focus-color: #d99b38;
   --graph-edge: #91a0aa;
   --graph-node: #4fb8b7;
   --graph-node-2: #d99b38;
@@ -183,6 +191,78 @@ button.secondary,
 button.danger {
   border-color: var(--danger);
   background: var(--danger);
+}
+
+.project-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+button.project-tag {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--tag-bg);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+button.project-tag.active,
+button.project-tag[aria-pressed="true"] {
+  border-color: var(--tag-active-border);
+  background: var(--tag-active-bg);
+  color: #fff;
+  font-weight: 750;
+}
+
+button.project-tag:focus-visible {
+  outline: 2px solid var(--focus-color);
+  outline-offset: 2px;
+}
+
+.subtab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+button.subtab {
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--panel-soft);
+  color: var(--ink);
+}
+
+button.subtab.active,
+button.subtab[aria-selected="true"] {
+  background: var(--panel);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.literature-tab-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.literature-tab-panel.hidden,
+.hidden[hidden] {
+  display: none;
+}
+
+.filter-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px);
+  gap: 10px;
+  align-items: end;
 }
 
 button:disabled {

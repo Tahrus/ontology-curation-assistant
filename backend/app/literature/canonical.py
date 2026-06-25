@@ -19,6 +19,7 @@ from backend.app.literature.publisher_xml import (
     retrieve_article_via_api_with_identifier_fallback,
     retrieve_crossref_metadata,
 )
+from backend.app.literature.providers import AcsProvider, CrossrefProvider, ElsevierProvider
 
 DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:a-z0-9]+", re.I)
 PII_RE = re.compile(r"S\d{4}[\s-]?\d{4}\s*\(\d{2}\)\s*\d{5}[\s-]?\d|S\d{16}", re.I)
@@ -120,6 +121,43 @@ def normalize_title(value: str | None) -> str:
     return re.sub(r"\s+", " ", "".join(c if c.isalnum() or c.isspace() else " " for c in value)).strip()
 
 
+def literature_identity_keys(metadata: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+
+    def add(kind: str, value: object) -> None:
+        text = str(value or "").strip()
+        if text:
+            keys.append(f"{kind}:{text.casefold()}")
+
+    add("doi", normalize_doi(str(metadata.get("doi") or metadata.get("DOI") or "")))
+    add("pii", normalize_pii(str(metadata.get("pii") or metadata.get("PII") or "")))
+    for key in ("pmid", "PMID"):
+        add("pmid", metadata.get(key))
+    for key in ("pmcid", "PMCID"):
+        add("pmcid", metadata.get(key))
+    for key in ("arxiv", "arXiv", "arxiv_id"):
+        add("arxiv", metadata.get(key))
+    for key in ("isbn", "ISBN"):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            for item in value:
+                add("isbn", item)
+        else:
+            add("isbn", value)
+    title = normalize_title(str(metadata.get("title") or ""))
+    for key in ("issn", "ISSN"):
+        value = metadata.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if item and title:
+                add("issn_title", f"{item}|{title}")
+    add("url", metadata.get("url") or metadata.get("URL") or metadata.get("sciencedirect_url"))
+    year = str(metadata.get("year") or "").strip()
+    if title and year:
+        add("title_year", f"{title}|{year}")
+    return list(dict.fromkeys(keys))
+
+
 def canonical_id(*, pii: str | None = None, doi: str | None = None, title: str | None = None) -> str:
     if value := normalize_pii(pii):
         return value
@@ -185,7 +223,7 @@ def list_entries(paths: RepositoryPaths, *, ensure: bool = True) -> list[dict[st
         item = _read_json(path)
         if not item or item.get("archived") or not item.get("canonical_id"):
             continue
-        markdown = paths.markdown / f"{item.get('canonical_id', path.stem)}.md"
+        markdown = Path(item["markdown_file"]) if item.get("markdown_file") else paths.markdown / f"{item.get('canonical_id', path.stem)}.md"
         item.setdefault("import_status", "staged")
         item.setdefault("curation_status", "needs_review")
         item.update(metadata_file=str(path), markdown_file=str(markdown) if markdown.exists() else None, markdown_available=markdown.exists(), repository_stage="staged")
@@ -255,6 +293,7 @@ def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: s
     for key, value in (metadata_fields or {}).items():
         if value not in (None, "", []):
             metadata[key] = value
+    metadata.setdefault("literature_type", _literature_type(str(metadata.get("item_type") or "")))
     metadata.update(provenance or {})
     metadata.setdefault("created_at", now)
     target = paths.markdown / f"{target_id}.md"
@@ -290,6 +329,12 @@ def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: s
             if key in previous:
                 metadata[key] = previous[key]
     metadata_path = paths.metadata / f"{target_id}.json"
+    metadata["metadata_quality"] = metadata_quality(metadata)
+    metadata["markdown_quality"] = markdown_quality(candidate, metadata)
+    if not metadata["markdown_quality"]["ok"] and incoming_content_source != "manual_markdown":
+        metadata["markdown_status"] = "manual_markdown_required"
+        metadata["state"] = "curation_blocked"
+        metadata["blocked_reason"] = "Structured Markdown quality checks failed. Please upload reviewed structured Markdown manually."
     metadata["artifacts"] = _deduplicate_artifacts([
         *(previous or {}).get("artifacts", []),
         *fallback_artifacts,
@@ -303,6 +348,268 @@ def upsert_markdown(paths: RepositoryPaths, *, title: str, markdown: str, doi: s
 
 def _unique_tags(values: list[str] | None) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in (values or []) if value.strip()))
+
+
+def _metadata_from_identification(identification: LiteratureIdentification, *, fallback_title: str | None = None) -> dict[str, Any]:
+    literature_type = _literature_type(identification.item_type or str(identification.identifier_metadata.get("itemType") or ""))
+    metadata = {
+        "title": identification.title or fallback_title,
+        "authors": identification.authors,
+        "year": identification.year,
+        "journal": identification.journal,
+        "literature_type": literature_type,
+        "item_type": identification.item_type,
+        "doi": normalize_doi(identification.doi),
+        "pii": normalize_pii(identification.pii),
+        "url": identification.sciencedirect_url,
+        "zotero_key": identification.zotero_key,
+    }
+    for key in (
+        "pmid", "PMID", "pmcid", "PMCID", "arxiv", "arXiv", "arxiv_id", "isbn", "ISBN", "issn", "ISSN",
+        "publisher", "abstract", "subtitle", "place", "edition", "volume", "series", "bookTitle",
+        "book_title", "pages", "numPages", "language",
+    ):
+        if identification.identifier_metadata.get(key) not in (None, "", []):
+            metadata[key.lower()] = identification.identifier_metadata[key]
+    return {key: value for key, value in metadata.items() if value not in (None, "", [])}
+
+
+def _literature_type(item_type: str | None) -> str:
+    normalized = (item_type or "").strip().casefold()
+    if normalized in {"book"}:
+        return "book"
+    if normalized in {"booksection", "book_section", "chapter"}:
+        return "book_chapter"
+    if normalized in {"editedbook", "edited_book"}:
+        return "book"
+    if normalized in {"conferencepaper", "conference_paper", "proceedings"}:
+        return "conference_paper"
+    if normalized in {"report"}:
+        return "report"
+    if normalized in {"preprint"}:
+        return "preprint"
+    return "journal_article"
+
+
+def metadata_quality(entry: dict[str, Any]) -> dict[str, Any]:
+    literature_type = entry.get("literature_type") or "journal_article"
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not entry.get("title"):
+        errors.append("title is missing")
+    authors = entry.get("authors") or []
+    editors = entry.get("editors") or []
+    if literature_type == "book" and not authors and not editors:
+        errors.append("book author or editor is missing")
+    elif literature_type != "book" and not authors:
+        warnings.append("authors are missing")
+    if not entry.get("year"):
+        warnings.append("year is missing")
+    if literature_type == "book":
+        if not (entry.get("publisher") or entry.get("isbn")):
+            warnings.append("book publisher or ISBN is missing")
+    elif literature_type == "book_chapter":
+        if not (entry.get("booktitle") or entry.get("book_title")):
+            warnings.append("book chapter title/container is missing")
+    elif not (entry.get("journal") or entry.get("publisher")):
+        warnings.append("journal/source is missing")
+    if not any(entry.get(key) for key in ("doi", "pii", "pmid", "pmcid", "arxiv", "arxiv_id", "isbn", "issn", "url")):
+        warnings.append("stable identifier is missing")
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+def markdown_quality(markdown: str, entry: dict[str, Any]) -> dict[str, Any]:
+    report = validate_markdown_candidate(markdown, entry)
+    text = markdown.strip()
+    warnings = list(report["warnings"])
+    errors = list(report["errors"])
+    literature_type = entry.get("literature_type") or "journal_article"
+    if literature_type not in {"book", "book_chapter"} and "abstract" not in text.casefold():
+        warnings.append("abstract is missing or not labelled")
+    if len(re.findall(r"(?m)^#{2,3}\s+", text)) < 1:
+        errors.append("no article/body sections were detected")
+    if re.search(r"(?im)^#{1,3}\s+references\b", text) is None:
+        warnings.append("references are not separated")
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+def create_metadata_only_entry(
+    paths: RepositoryPaths,
+    identification: LiteratureIdentification,
+    *,
+    extraction_mode: str,
+    fulltext_status: str,
+    message: str,
+    attempted_providers: list[dict[str, Any]] | None = None,
+    provider_errors: list[str] | None = None,
+    http_client: Any = None,
+    overwrite: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """Create a staged metadata-only entry when structured full text is unavailable."""
+    paths.ensure()
+    metadata = _metadata_from_identification(identification)
+    crossref_status = "not_attempted"
+    crossref_links: list[dict[str, Any]] = []
+    if metadata.get("doi"):
+        crossref = CrossrefProvider(http_client=http_client).resolve_metadata(metadata)
+        crossref_status = crossref.status
+        crossref_links = crossref.links
+        if crossref.status == "success":
+            for key in ("title", "authors", "year", "journal", "publisher", "doi", "issn", "isbn", "url"):
+                if not metadata.get(key) and crossref.metadata.get(key):
+                    metadata[key] = crossref.metadata[key]
+    metadata.setdefault("title", "Untitled literature item")
+    metadata.setdefault("literature_type", _literature_type(str(metadata.get("item_type") or "")))
+    metadata_quality_report = metadata_quality(metadata)
+
+    provider_name = "acs" if AcsProvider(http_client=http_client).can_handle(metadata) else None
+    if provider_name == "acs" and fulltext_status in {"failed", "not_configured", "disabled", "not_eligible", "structured_fulltext_unavailable"}:
+        fulltext_status = "pdf_available_but_not_used" if any("pdf" in str(link.get("content-type") or "").casefold() for link in crossref_links) else "structured_fulltext_unavailable"
+        message = "No structured ACS full text was found. A literature entry was created from metadata. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+
+    target_id = canonical_id(pii=str(metadata.get("pii") or ""), doi=str(metadata.get("doi") or ""), title=str(metadata.get("title") or ""))
+    existing = _existing(paths, str(metadata.get("doi") or ""), str(metadata.get("pii") or ""), str(metadata.get("title") or ""))
+    duplicate = existing is not None and not overwrite
+    previous = existing or {}
+    now = datetime.now(timezone.utc).isoformat()
+    report = {
+        "metadata_source": "crossref" if crossref_status == "success" and identification.metadata_source == "manual" else f"{identification.metadata_source}+crossref" if crossref_status == "success" else identification.metadata_source,
+        "attempted_providers": attempted_providers or [],
+        "selected_provider": None,
+        "fulltext_source": None,
+        "fulltext_format": None,
+        "fulltext_status": fulltext_status,
+        "markdown_status": "manual_markdown_required",
+        "source_quality": "metadata_only",
+        "blocked_reason": message,
+        "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+        "provider_errors": provider_errors or ([message] if message else []),
+        "crossref_status": crossref_status,
+        "crossref_links": crossref_links,
+    }
+    source_report_path = paths.metadata / f"{target_id}.source_report.json"
+    metadata_path = paths.metadata / f"{target_id}.json"
+    entry = {
+        **previous,
+        **metadata,
+        "canonical_id": target_id,
+        "source_type": "metadata_only",
+        "import_status": "staged",
+        "curation_status": "needs_manual_markdown",
+        "duplicate_status": "canonical_reused" if previous else "unique",
+        "pipeline_version": "oca-provider-v1",
+        "extraction_mode": extraction_mode,
+        "metadata_source": report["metadata_source"],
+        "content_source": None,
+        "used_api_provider": provider_name or "provider_registry",
+        "fulltext_status": fulltext_status,
+        "markdown_status": "manual_markdown_required",
+        "source_quality": "metadata_only",
+        "metadata_quality": metadata_quality_report,
+        "state": "curation_blocked",
+        "blocked_reason": message,
+        "recommended_action": report["recommended_action"],
+        "source_report_path": _relative_artifact_path(paths, source_report_path),
+        "markdown_file": None,
+        "markdown_available": False,
+        "xml_retrieved": False,
+        "pdf_used": False,
+        "fallback_used": False,
+        "fallback_authorized_by": None,
+        "extraction_status": "manual_markdown_required",
+        "extraction_errors": report["provider_errors"],
+        "extraction_warnings": [message] if message else [],
+        "api_retrieval_status": fulltext_status,
+        "api_identifier_attempts": [attempt for provider in report["attempted_providers"] for attempt in provider.get("attempts", []) if isinstance(provider, dict)],
+        "created_at": previous.get("created_at") or now,
+        "imported_at": previous.get("imported_at") or now,
+        "updated_at": now,
+    }
+    entry["artifacts"] = _deduplicate_artifacts([
+        *(previous.get("artifacts") or []),
+        _artifact(_relative_artifact_path(paths, metadata_path), "metadata_json"),
+        _artifact(entry["source_report_path"], "source_report_json"),
+    ])
+    entry["generated_artifacts"] = [artifact["path"] for artifact in entry["artifacts"]]
+    source_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    metadata_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return entry, duplicate
+
+
+def validate_markdown_candidate(markdown: str, entry: dict[str, Any]) -> dict[str, Any]:
+    text = markdown.strip()
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not re.search(r"(?m)^#\s+\S", text) and not entry.get("title"):
+        errors.append("A title heading or metadata title is required.")
+    if not (normalize_doi(entry.get("doi")) or normalize_pii(entry.get("pii")) or entry.get("pmid") or entry.get("pmcid") or entry.get("isbn") or entry.get("issn") or re.search(r"(?i)\b(doi|pii|pmid|pmcid|isbn|issn)\b", text)):
+        errors.append("A stable identifier such as DOI, PII, PMID, PMCID, ISBN, or ISSN is required.")
+    if not re.search(r"(?im)^#{1,3}\s+(source|provenance|metadata|abstract|introduction|methods?|results?|discussion|references?)\b", text):
+        errors.append("Meaningful section headings or a provenance/source note are required.")
+    words = re.findall(r"\b\w+\b", text)
+    if len(words) < 40:
+        errors.append("Markdown body is too short to curate safely.")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines:
+        short_line_ratio = sum(1 for line in lines if len(line) < 35 and not line.startswith("#")) / len(lines)
+        if short_line_ratio > 0.65:
+            errors.append("Body text appears to be mostly broken line fragments.")
+        repeated_ratio = (len(lines) - len(set(lines))) / len(lines)
+        if repeated_ratio > 0.25:
+            warnings.append("Repeated lines may indicate headers or footers; review before curation.")
+    if re.search(r"(?im)^#{1,3}\s+references\b", text) is None and re.search(r"(?i)\bdoi:\s*10\.\d{4,9}/", text):
+        warnings.append("References may be present but are not separated under a References heading.")
+    if re.search(r"(?i)\btable\b", text) and "|" not in text and "omitted" not in text.casefold():
+        warnings.append("Tables are mentioned; ensure they are preserved or explicitly marked as omitted.")
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+def upload_manual_markdown(paths: RepositoryPaths, entry_id: str, *, markdown: str, validate: bool = True) -> dict[str, Any]:
+    entry = _entry_by_id(list_entries(paths), entry_id, "Staged")
+    paths.markdown.mkdir(parents=True, exist_ok=True)
+    manual_path = paths.markdown / f"{entry_id}.manual.md"
+    canonical_path = paths.markdown / f"{entry_id}.md"
+    canonical_artifact_path = paths.markdown / f"{entry_id}.canonical.md"
+    validation_path = paths.metadata / f"{entry_id}.validation_report.json"
+    cleaned = clean_llm_markdown(markdown, title=entry.get("title") or "Untitled article", pii=entry.get("pii") or "", doi=entry.get("doi") or "")
+    manual_path.write_text(cleaned, encoding="utf-8")
+    validation = validate_markdown_candidate(cleaned, entry) if validate else {"ok": True, "errors": [], "warnings": []}
+    validation_path.write_text(json.dumps(validation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    entry["manual_markdown_path"] = _relative_artifact_path(paths, manual_path)
+    entry["validation_report_path"] = _relative_artifact_path(paths, validation_path)
+    entry["markdown_status"] = "manual_markdown_uploaded"
+    entry["fulltext_status"] = "structured_fulltext_unavailable"
+    entry["source_quality"] = "metadata_only"
+    entry["validation_errors"] = validation["errors"]
+    entry["validation_warnings"] = validation["warnings"]
+    if validation["ok"]:
+        canonical_path.write_text(cleaned, encoding="utf-8")
+        canonical_artifact_path.write_text(cleaned, encoding="utf-8")
+        entry["markdown_file"] = str(canonical_path)
+        entry["canonical_markdown_path"] = _relative_artifact_path(paths, canonical_artifact_path)
+        entry["markdown_available"] = True
+        entry["markdown_status"] = "markdown_validated"
+        entry["state"] = "ready_for_curation"
+        entry["curation_status"] = "needs_review"
+        entry["content_source"] = "manual_markdown"
+        entry["source_quality"] = "manual_markdown"
+        entry["blocked_reason"] = None
+    else:
+        entry["markdown_file"] = None
+        entry["markdown_available"] = False
+        entry["state"] = "curation_blocked"
+        entry["curation_status"] = "needs_manual_markdown"
+        entry["blocked_reason"] = "Manual Markdown validation failed. Fix the reported errors before curation."
+    entry["artifacts"] = _deduplicate_artifacts([
+        *entry.get("artifacts", []),
+        _artifact(entry["manual_markdown_path"], "manual_markdown"),
+        *([_artifact(entry["canonical_markdown_path"], "canonical_markdown")] if entry.get("canonical_markdown_path") else []),
+        _artifact(entry["validation_report_path"], "validation_report_json"),
+    ])
+    entry["generated_artifacts"] = [artifact["path"] for artifact in entry["artifacts"]]
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    (paths.metadata / f"{entry_id}.json").write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {**entry, "validation_report": validation}
 
 
 def _entry_by_id(entries: list[dict[str, Any]], entry_id: str, label: str) -> dict[str, Any]:
@@ -587,30 +894,63 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
     if extraction_mode != "pdf_only" and not has_identifier:
         message = _failure_message("not_eligible", has_sciencedirect_url=bool(identification.sciencedirect_url))
         if extraction_mode == "publisher_api_required":
-            raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, "not_eligible", message))
+            return create_metadata_only_entry(
+                paths,
+                identification,
+                extraction_mode=extraction_mode,
+                fulltext_status="structured_fulltext_unavailable",
+                message=message,
+                attempted_providers=[],
+                provider_errors=[message],
+                http_client=http_client,
+                overwrite=overwrite,
+            )
         warnings.append(message)
         retrieval_status = "not_eligible"
     if extraction_mode != "pdf_only" and has_identifier and (publisher is None or not publisher.api_key or not publisher.enabled):
         status = "disabled" if publisher is not None and publisher.api_key and not publisher.enabled else "not_configured"
         message = _failure_message(status)
         if extraction_mode == "publisher_api_required":
-            raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, status, message, doi=lookup_doi, pii=lookup_pii))
+            return create_metadata_only_entry(
+                paths,
+                identification,
+                extraction_mode=extraction_mode,
+                fulltext_status="structured_fulltext_unavailable",
+                message=message,
+                attempted_providers=[{"provider": "elsevier", "status": status, "attempts": []}],
+                provider_errors=[message],
+                http_client=http_client,
+                overwrite=overwrite,
+            )
         warnings.append(message)
         retrieval_status = status
     if extraction_mode != "pdf_only" and publisher and publisher.api_key and has_identifier:
         paths.ensure()
+        attempted_provider: dict[str, Any] = {"provider": "elsevier", "status": "not_attempted", "attempts": []}
         try:
-            api_result = retrieve_article_via_api_with_identifier_fallback(identifier_metadata, publisher, http_client=http_client)
+            fulltext = ElsevierProvider(publisher, http_client=http_client).fetch_structured_fulltext(identifier_metadata)
+            if fulltext.status != "success":
+                attempts = fulltext.metadata.get("identifier_attempts") if isinstance(fulltext.metadata, dict) else []
+                raise ArticleApiRetrievalFailed("; ".join(fulltext.errors) or "Elsevier structured full text was unavailable.", attempts)
+            api_result = type("ElsevierProviderResult", (), {
+                "retrieval": fulltext.metadata["retrieval"],
+                "article": fulltext.metadata["article"],
+                "used_identifier": fulltext.metadata["used_identifier"],
+                "identifier_attempts": fulltext.metadata["identifier_attempts"],
+                "api_retrieval_source": fulltext.metadata["api_retrieval_source"],
+            })()
         except ArticleApiRetrievalFailed as exc:
             retrieval_status = str(exc.attempts[-1].get("status") or "failed") if exc.attempts else "failed"
             retrieval_error_message = str(exc)
             warnings.append(retrieval_error_message)
             identifier_attempts = exc.attempts
+            attempted_provider = {"provider": "elsevier", "status": retrieval_status, "attempts": identifier_attempts}
         else:
             retrieval = api_result.retrieval
             article = api_result.article
             retrieval_status = retrieval.status
             identifier_attempts = api_result.identifier_attempts
+            attempted_provider = {"provider": "elsevier", "status": retrieval_status, "attempts": identifier_attempts}
             metadata_source = "zotero+elsevier_xml" if identification.metadata_source == "zotero" else "elsevier_xml"
             entry, duplicate = upsert_markdown(
                 paths,
@@ -624,6 +964,8 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
                     "authors": identification.authors or article.authors,
                     "year": identification.year or article.year,
                     "journal": identification.journal or article.journal,
+                    "item_type": identification.item_type,
+                    "literature_type": _literature_type(identification.item_type),
                     "zotero_key": identification.zotero_key,
                     "sciencedirect_url": identification.sciencedirect_url,
                     "abstract": article.abstract,
@@ -634,6 +976,13 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
                     "metadata_source": metadata_source,
                     "content_source": "elsevier_xml",
                     "used_api_provider": "elsevier",
+                    "attempted_providers": [attempted_provider],
+                    "selected_provider": "elsevier",
+                    "fulltext_source": "elsevier_article_retrieval_api",
+                    "fulltext_format": "elsevier_xml",
+                    "fulltext_status": "structured_fulltext_available",
+                    "markdown_status": "markdown_validated",
+                    "source_quality": "structured_xml",
                     "extraction_warnings": article.warnings,
                     "api_retrieval_status": retrieval_status,
                     "api_identifier_used_kind": api_result.used_identifier.kind,
@@ -658,6 +1007,8 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
             markdown_path = paths.markdown / f"{entry['canonical_id']}.md"
             entry["xml_artifact_path"] = _relative_artifact_path(paths, xml_path)
             entry["xml_markdown_artifact_path"] = _relative_artifact_path(paths, markdown_path)
+            entry["auto_markdown_path"] = _relative_artifact_path(paths, markdown_path)
+            entry["canonical_markdown_path"] = _relative_artifact_path(paths, markdown_path)
             entry["artifacts"] = _deduplicate_artifacts([
                 *entry.get("artifacts", []),
                 _artifact(entry["xml_artifact_path"], "elsevier_xml"),
@@ -669,8 +1020,18 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
 
     if extraction_mode == "publisher_api_required":
         message = retrieval_error_message or _failure_message(retrieval_status, has_sciencedirect_url=bool(identification.sciencedirect_url))
-        message = f"{message} Publisher API extraction failed. PDF fallback is disabled. Enable PDF fallback manually if you want to use PDF extraction."
-        raise LiteratureExtractionError(message, _failure_diagnostics(extraction_mode, retrieval_status, message, doi=lookup_doi, pii=lookup_pii, attempts=identifier_attempts))
+        message = f"{message} No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+        return create_metadata_only_entry(
+            paths,
+            identification,
+            extraction_mode=extraction_mode,
+            fulltext_status="structured_fulltext_unavailable" if retrieval_status not in {"http_401", "http_403", "http_429"} else retrieval_status,
+            message=message,
+            attempted_providers=[{"provider": "elsevier", "status": retrieval_status, "attempts": identifier_attempts}],
+            provider_errors=warnings or [message],
+            http_client=http_client,
+            overwrite=overwrite,
+        )
 
     crossref = None
     if lookup_doi and not (identification.title and identification.authors and identification.year and identification.journal):
@@ -702,6 +1063,8 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
             "authors": identification.authors or (crossref.authors if crossref else []),
             "year": identification.year or (crossref.year if crossref else None),
             "journal": identification.journal or (crossref.journal if crossref else None),
+            "item_type": identification.item_type,
+            "literature_type": _literature_type(identification.item_type),
             "zotero_key": identification.zotero_key,
             "sciencedirect_url": identification.sciencedirect_url,
         },

@@ -20,6 +20,9 @@ const state = {
   relationTypes: [],
   activeCandidateId: null,
   savedConfigs: [],
+  projectTags: [],
+  activeProjectTagFilters: new Set(),
+  activeLiteratureTab: "curated",
   llmProviders: [],
   curationPrompt: null,
   projectWizardStep: 0,
@@ -189,7 +192,7 @@ async function refreshCurrentPageData() {
     await Promise.all([loadSavedConfigs(), loadLlmProviders()]);
   } else if (page === "zotero") {
     await loadProjects();
-    await loadEntries();
+    await Promise.all([loadProjectTags(), loadEntries()]);
   } else if (page === "ontology") {
     await loadProjects();
     await loadOntologyStatus();
@@ -1179,6 +1182,18 @@ function populateLiteratureConfigForm() {
     if (baseUrlInput) baseUrlInput.value = publisher.elsevier_api_base_url ?? publisher.base_url ?? "https://api.elsevier.com";
     if (enabledInput) enabledInput.checked = Boolean(publisher.enable_publisher_api_enrichment ?? publisher.enabled ?? false);
     if (extractionModeInput) extractionModeInput.value = publisher.literature_extraction_mode ?? "publisher_api_required";
+    const providers = publisher.providers || {};
+    [
+      ["springer_api_key", providers.springer?.api_key === "configured" ? "" : ""],
+      ["wiley_tdm_token", providers.wiley?.tdm_token === "configured" ? "" : ""],
+      ["crossref_contact_email", providers.crossref?.contact_email || ""],
+      ["ncbi_contact_email", providers.ncbi?.contact_email || ""],
+      ["ncbi_api_key", providers.ncbi?.api_key === "configured" ? "" : ""],
+      ["openalex_email", providers.openalex?.contact_email || ""],
+    ].forEach(([name, value]) => {
+      const input = publisherForm.querySelector(`[name="${name}"]`);
+      if (input) input.value = value;
+    });
   }
 }
 
@@ -1187,18 +1202,68 @@ async function loadDocuments() {
 }
 
 async function loadEntries() {
-  const repository = await api("/api/literature/canonical");
+  const params = [...state.activeProjectTagFilters].map((tag) => encodeURIComponent(tag)).join(",");
+  const repository = await api(`/api/literature/canonical${params ? `?tags=${params}` : ""}`);
   state.stagedLiteratureEntries = repository.staged_entries || [];
   state.curatedLiteratureEntries = repository.curated_entries || [];
   renderTwoStageLiterature();
 }
 
+async function loadProjectTags() {
+  const result = await api("/api/project-tags");
+  state.projectTags = result.tags || [];
+  renderProjectTagFilters();
+}
+
+function projectTagOptions() {
+  const byKey = new Map();
+  (state.projectTags || []).forEach((tag) => byKey.set(tag.key || normalizeText(tag.label), tag.label));
+  (state.projects || []).forEach((project) => {
+    if (project.slug) byKey.set(normalizeText(project.slug), project.slug);
+    if (project.ontology_id) byKey.set(normalizeText(project.ontology_id), project.ontology_id);
+  });
+  return [...byKey.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function renderProjectTagButtons(container, selectedTags, onToggle) {
+  container.innerHTML = "";
+  const selected = new Set((selectedTags || []).map((tag) => normalizeText(tag)));
+  projectTagOptions().forEach((tag) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `project-tag${selected.has(tag.key) ? " active" : ""}`;
+    button.textContent = tag.label;
+    button.setAttribute("aria-pressed", selected.has(tag.key) ? "true" : "false");
+    button.addEventListener("click", () => onToggle(tag.label, button));
+    container.append(button);
+  });
+  if (!container.children.length) {
+    const empty = document.createElement("span");
+    empty.className = "message";
+    empty.textContent = "No project tags available yet.";
+    container.append(empty);
+  }
+}
+
+function renderProjectTagFilters() {
+  const container = document.querySelector("#literature-tag-filters");
+  if (!container) return;
+  renderProjectTagButtons(container, [...state.activeProjectTagFilters], (label) => {
+    const key = normalizeText(label);
+    if (state.activeProjectTagFilters.has(key)) state.activeProjectTagFilters.delete(key);
+    else state.activeProjectTagFilters.add(key);
+    renderProjectTagFilters();
+    loadEntries().catch((error) => setError("#literature-repository-message", error.message));
+  });
+}
+
 function literatureEditor(entry, stage) {
   const record = document.createElement("article");
   record.className = "literature-record";
-  const tags = new Set(entry.project_tags || []);
+  const selectedTagLabels = new Set(entry.project_tags || []);
+  const status = literatureWorkflowStatus(entry, stage);
   record.innerHTML = `<details open class="markdown-details">
-    <summary>${escapeHtml(entry.title || "Untitled literature entry")} | ${escapeHtml(stage)}</summary>
+    <summary>${escapeHtml(entry.title || "Untitled literature entry")} | ${escapeHtml(stage === "curated" ? "Curated Literature" : "New / Uncurated Literature")} | ${escapeHtml(status)}</summary>
     <div class="stack literature-entry-editor">
       <label>Title<input data-field="title" value="${escapeHtml(entry.title || "")}" /></label>
       <label>Authors<input data-field="authors" value="${escapeHtml(Array.isArray(entry.authors) ? entry.authors.join("; ") : entry.authors || "")}" /></label>
@@ -1207,11 +1272,18 @@ function literatureEditor(entry, stage) {
       <label>DOI<input data-field="doi" value="${escapeHtml(entry.doi || "")}" /></label>
       <label>PII<input data-field="pii" value="${escapeHtml(entry.pii || "")}" /></label>
       <label>Reviewed Markdown<textarea data-field="markdown" rows="18"></textarea></label>
-      <label>Project tags<select data-field="project_tags" multiple size="${Math.min(Math.max(state.projects.length, 2), 8)}"></select></label>
+      <div><span class="helper">Project tags</span><div data-field="project_tags" class="project-tag-row"></div></div>
+      <p class="description"><strong>Curation status:</strong> ${escapeHtml(status)} | <strong>Repository:</strong> ${escapeHtml(entry.repository_stage || stage)}</p>
       <p class="description"><strong>Content source:</strong> ${escapeHtml(literatureSourceLabel(entry.content_source, "content"))} | <strong>Metadata source:</strong> ${escapeHtml(literatureSourceLabel(entry.metadata_source, "metadata"))}</p>
       <p class="description"><strong>Extraction mode:</strong> ${escapeHtml(entry.extraction_mode || "publisher_api_required")} | <strong>PDF used:</strong> ${entry.pdf_used ? "Yes" : "No"} | <strong>Fallback used:</strong> ${entry.fallback_used ? "Yes" : "No"}</p>
+      <p class="description"><strong>Literature type:</strong> ${escapeHtml(entry.literature_type || "journal_article")} | <strong>Metadata quality:</strong> ${entry.metadata_quality?.ok === false ? "Needs attention" : "OK"} | <strong>Markdown quality:</strong> ${entry.markdown_quality?.ok === false ? "Needs manual review" : "OK"}</p>
       <p class="description"><strong>DOI used:</strong> ${escapeHtml(entry.doi_used || entry.lookup_doi || "-")} | <strong>PII used:</strong> ${escapeHtml(entry.pii_used || entry.lookup_pii || "-")} | <strong>XML retrieved:</strong> ${entry.xml_retrieved ? "Yes" : "No"}</p>
+      <p class="description"><strong>Full text:</strong> ${escapeHtml(entry.fulltext_status || "unknown")} | <strong>Markdown:</strong> ${escapeHtml(entry.markdown_status || (entry.markdown_available ? "available" : "manual_markdown_required"))} | <strong>Source quality:</strong> ${escapeHtml(entry.source_quality || "unknown")}</p>
+      ${entry.blocked_reason ? `<p class="warning"><strong>Blocked:</strong> ${escapeHtml(entry.blocked_reason)}</p>` : ""}
       <p class="description"><strong>API identifier used:</strong> ${escapeHtml(entry.api_identifier_used_kind ? `${entry.api_identifier_used_kind.toUpperCase()}: ${entry.api_identifier_used_value || ""}` : "-")} | <strong>Identifier attempts:</strong> ${escapeHtml((entry.api_identifier_attempts || []).map((attempt) => `${attempt.kind}:${attempt.status}`).join(", ") || "-")}</p>
+      ${(entry.validation_errors || []).length ? `<div class="warning"><strong>Validation errors</strong><ul>${entry.validation_errors.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></div>` : ""}
+      ${(entry.metadata_quality?.warnings || []).length ? `<div class="warning"><strong>Metadata warnings</strong><ul>${entry.metadata_quality.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></div>` : ""}
+      ${(entry.markdown_quality?.errors || []).length ? `<div class="warning"><strong>Markdown quality errors</strong><ul>${entry.markdown_quality.errors.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></div>` : ""}
       ${entry.fallback_authorized_by ? `<p class="warning"><strong>Fallback authorization:</strong> ${escapeHtml(entry.fallback_authorized_by)}</p>` : ""}
       ${(entry.extraction_warnings || []).length ? `<div class="warning"><strong>Extraction warnings</strong><ul>${entry.extraction_warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></div>` : ""}
       <p class="description">Import provider: ${escapeHtml(entry.source_type || "unknown")} | API retrieval: ${escapeHtml(entry.api_retrieval_status || "not attempted")} | Imported: ${escapeHtml(entry.import_status || "unknown")} | Pipeline: ${escapeHtml(entry.literature_metadata?.pipeline_version || entry.pipeline_version || "unknown")}</p>
@@ -1219,14 +1291,14 @@ function literatureEditor(entry, stage) {
     </div>
   </details>`;
   record.querySelector('[data-field="markdown"]').value = entry.literature_markdown || "";
-  const tagSelect = record.querySelector('[data-field="project_tags"]');
-  state.projects.forEach((project) => {
-    const option = document.createElement("option");
-    option.value = project.slug;
-    option.textContent = `${project.name} (${project.ontology_id})`;
-    option.selected = tags.has(project.slug) || tags.has(project.ontology_id) || tags.has(String(project.id));
-    tagSelect.append(option);
+  const tagContainer = record.querySelector('[data-field="project_tags"]');
+  const rerenderTags = () => renderProjectTagButtons(tagContainer, [...selectedTagLabels], (label) => {
+    const existing = [...selectedTagLabels].find((tag) => normalizeText(tag) === normalizeText(label));
+    if (existing) selectedTagLabels.delete(existing);
+    else selectedTagLabels.add(label);
+    rerenderTags();
   });
+  rerenderTags();
   const values = () => ({
     metadata: {
       title: record.querySelector('[data-field="title"]').value,
@@ -1237,7 +1309,7 @@ function literatureEditor(entry, stage) {
       pii: record.querySelector('[data-field="pii"]').value,
     },
     markdown: record.querySelector('[data-field="markdown"]').value,
-    project_tags: [...tagSelect.selectedOptions].map((option) => option.value),
+    project_tags: [...selectedTagLabels],
   });
   const actions = record.querySelector(".button-row");
   const save = document.createElement("button");
@@ -1252,12 +1324,25 @@ function literatureEditor(entry, stage) {
   });
   actions.append(save);
   if (stage === "staged") {
+    const uploadManual = document.createElement("button");
+    uploadManual.type = "button";
+    uploadManual.className = "secondary";
+    uploadManual.textContent = entry.markdown_available ? "Validate as manual Markdown" : "Upload / validate manual Markdown";
+    uploadManual.addEventListener("click", async (event) => {
+      await withButtonFeedback(event.currentTarget, "Validating", async () => {
+        const result = await api(`/api/literature/staged/${encodeURIComponent(entry.id)}/manual-markdown`, { method: "POST", body: JSON.stringify({ markdown: record.querySelector('[data-field="markdown"]').value }) });
+        await loadEntries();
+        if (result.validation_report?.ok) setSuccess("#literature-repository-message", "Manual Markdown validated and selected as canonical Markdown.");
+        else setError("#literature-repository-message", `Manual Markdown is still blocked: ${(result.validation_report?.errors || []).join("; ")}`);
+      }).catch((error) => setError("#literature-repository-message", error.message));
+    });
     const promote = document.createElement("button");
     promote.type = "button";
     promote.textContent = "Promote to curated literature";
     promote.addEventListener("click", async (event) => {
       await withButtonFeedback(event.currentTarget, "Promoting", async () => {
         await api(`/api/literature/staged/${encodeURIComponent(entry.id)}/promote`, { method: "POST", body: JSON.stringify(values()) });
+        state.activeLiteratureTab = "curated";
         await loadEntries();
         setSuccess("#literature-repository-message", "Entry promoted to curated literature.");
       }).catch((error) => setError("#literature-repository-message", error.message));
@@ -1272,7 +1357,7 @@ function literatureEditor(entry, stage) {
       await loadEntries();
       setSuccess("#literature-repository-message", "Staged entry deleted.");
     });
-    actions.append(promote, remove);
+    actions.append(uploadManual, promote, remove);
   }
   return record;
 }
@@ -1292,16 +1377,98 @@ function literatureSourceLabel(value, kind) {
   return labels[value] || value || "Unknown";
 }
 
+function literatureWorkflowStatus(entry, stage) {
+  const values = [
+    entry.curation_status,
+    entry.import_status,
+    entry.duplicate_status,
+    entry.literature_status?.state,
+    entry.markdown_status,
+    entry.fulltext_status,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  if (values.some((value) => ["duplicate", "duplicated"].includes(value))) return "duplicate";
+  if (values.includes("rejected")) return "rejected";
+  if (stage === "curated") {
+    if (values.includes("accepted")) return "accepted";
+    if (values.includes("promoted")) return "promoted";
+    return "curated";
+  }
+  if (values.includes("manual_markdown_required") || values.includes("needs_manual_markdown")) return "needs_manual_markdown";
+  if (values.includes("needs_review") || values.includes("curation_blocked")) return "needs_review";
+  if (entry.markdown_available || entry.markdown_file || values.includes("structured_markdown_created")) return "structured_markdown_created";
+  if (entry.title || entry.doi || entry.pii || values.includes("metadata_resolved")) return "metadata_resolved";
+  return "new";
+}
+
+function literatureSearchText(entry) {
+  return normalizeText([
+    entry.title,
+    Array.isArray(entry.authors) ? entry.authors.join(" ") : entry.authors,
+    entry.year,
+    entry.journal,
+    entry.doi,
+    entry.pii,
+    entry.literature_type,
+    entry.metadata_source,
+    entry.content_source,
+    entry.source_type,
+    entry.api_retrieval_status,
+    entry.fulltext_status,
+    entry.markdown_status,
+    ...(entry.project_tags || []),
+  ].filter(Boolean).join(" "));
+}
+
+function entryMatchesActiveProjectTags(entry) {
+  if (!state.activeProjectTagFilters.size) return true;
+  const tags = new Set((entry.project_tags || []).map((tag) => normalizeText(tag)));
+  return [...state.activeProjectTagFilters].every((tag) => tags.has(tag));
+}
+
+function filteredTwoStageEntries(stage) {
+  const isCurated = stage === "curated";
+  const search = normalizeText(document.querySelector(`#${isCurated ? "curated" : "uncurated"}-literature-search`)?.value || "");
+  const statusFilter = document.querySelector(`#${isCurated ? "curated" : "uncurated"}-literature-status-filter`)?.value || "all";
+  const source = isCurated ? state.curatedLiteratureEntries || [] : state.stagedLiteratureEntries || [];
+  return source.filter((entry) => {
+    const status = literatureWorkflowStatus(entry, stage);
+    const isPromoted = entry.import_status === "promoted" || entry.repository_stage === "curated";
+    if (isCurated) {
+      if (["rejected", "duplicate"].includes(status)) return false;
+    } else if (isPromoted) {
+      return false;
+    }
+    const matchesSearch = !search || literatureSearchText(entry).includes(search);
+    const matchesStatus = statusFilter === "all" || status === statusFilter || entry.import_status === statusFilter || entry.curation_status === statusFilter;
+    return matchesSearch && matchesStatus && entryMatchesActiveProjectTags(entry);
+  });
+}
+
+function setLiteratureTab(tab) {
+  state.activeLiteratureTab = tab === "uncurated" ? "uncurated" : "curated";
+  document.querySelectorAll("[data-literature-tab]").forEach((button) => {
+    const active = button.dataset.literatureTab === state.activeLiteratureTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll("[data-literature-panel]").forEach((panel) => {
+    const active = panel.dataset.literaturePanel === state.activeLiteratureTab;
+    panel.classList.toggle("hidden", !active);
+    panel.toggleAttribute("hidden", !active);
+  });
+}
+
 function renderTwoStageLiterature() {
   const staged = document.querySelector("#staged-literature-entries");
   const curated = document.querySelector("#curated-literature-entries");
   if (!staged || !curated) return;
   staged.innerHTML = "";
   curated.innerHTML = "";
-  (state.stagedLiteratureEntries || []).filter((entry) => !["promoted", "rejected"].includes(entry.import_status)).forEach((entry) => staged.append(literatureEditor(entry, "staged")));
-  (state.curatedLiteratureEntries || []).forEach((entry) => curated.append(literatureEditor(entry, "curated")));
-  if (!staged.children.length) staged.innerHTML = '<p class="message">No imported literature is awaiting review.</p>';
-  if (!curated.children.length) curated.innerHTML = '<p class="message">No literature has been promoted yet.</p>';
+  setLiteratureTab(state.activeLiteratureTab);
+  filteredTwoStageEntries("staged").forEach((entry) => staged.append(literatureEditor(entry, "staged")));
+  filteredTwoStageEntries("curated").forEach((entry) => curated.append(literatureEditor(entry, "curated")));
+  if (!staged.children.length) staged.innerHTML = '<p class="message">No new or uncurated literature matches the current filters.</p>';
+  if (!curated.children.length) curated.innerHTML = '<p class="message">No curated literature matches the current filters.</p>';
 }
 
 function renderEntries() {
@@ -1321,7 +1488,9 @@ function renderEntries() {
       review.metadata_match_status === reviewFilter ||
       review.extraction_quality === reviewFilter ||
       (reviewFilter === "requires_manual_review" && review.requires_manual_review);
-    return matchesText && matchesReview;
+    const tags = new Set((entry.project_tags || []).map((tag) => normalizeText(tag)));
+    const matchesTags = !state.activeProjectTagFilters.size || [...state.activeProjectTagFilters].every((tag) => tags.has(tag));
+    return matchesText && matchesReview && matchesTags;
   }).forEach((entry) => {
     const authors = (Array.isArray(entry.creators) ? entry.creators : [])
       .map((creator) => [creator?.given, creator?.family].filter(Boolean).map(safeText).join(" "))
@@ -1390,31 +1559,28 @@ function renderEntries() {
       });
     }
 
-    const tagSelect = document.createElement("select");
-    tagSelect.multiple = true;
-    tagSelect.size = Math.min(Math.max(state.projects.length, 2), 6);
-    tagSelect.setAttribute("aria-label", "Project tags");
-    state.projects.forEach((project) => {
-      const option = document.createElement("option");
-      option.value = project.ontology_id;
-      option.textContent = `${project.name} (${project.ontology_id})`;
-      option.selected = (entry.project_tags || []).includes(project.ontology_id) ||
-        (entry.project_tags || []).includes(project.slug) ||
-        (entry.project_tags || []).includes(String(project.id));
-      tagSelect.append(option);
+    const selectedTagLabels = new Set(entry.project_tags || []);
+    const tagButtons = document.createElement("div");
+    tagButtons.className = "project-tag-row";
+    tagButtons.setAttribute("aria-label", "Project tags");
+    const rerenderEntryTags = () => renderProjectTagButtons(tagButtons, [...selectedTagLabels], (label) => {
+      const existing = [...selectedTagLabels].find((tag) => normalizeText(tag) === normalizeText(label));
+      if (existing) selectedTagLabels.delete(existing);
+      else selectedTagLabels.add(label);
+      rerenderEntryTags();
     });
+    rerenderEntryTags();
     const saveTags = document.createElement("button");
     saveTags.type = "button";
     saveTags.textContent = "Save project tags";
-    saveTags.disabled = entry.provider !== "zotero";
     saveTags.addEventListener("click", async (event) => {
       await withButtonFeedback(event.currentTarget, "Saving tags", async () => {
-        const projectTags = [...tagSelect.selectedOptions].map((option) => option.value);
-        await api(`/api/zotero/entries/${encodeURIComponent(entry.id)}/project-tags`, {
-          method: "PATCH",
+        const projectTags = [...selectedTagLabels];
+        await api(`/api/literature/${encodeURIComponent(entry.id)}/tags`, {
+          method: "POST",
           body: JSON.stringify({ project_tags: projectTags }),
         });
-        await Promise.all([loadEntries(), loadProjects()]);
+        await Promise.all([loadProjectTags(), loadEntries(), loadProjects()]);
         setSuccess("#literature-repository-message", "Project tags saved.");
       }).catch((error) => setError("#literature-repository-message", error.message));
     });
@@ -1424,7 +1590,7 @@ function renderEntries() {
       ? `Project tags: ${(entry.project_tags || []).join(", ")}`
       : "No project tags";
 
-    actions.append(zoteroLink, tagSelect, saveTags, tagMeta);
+    actions.append(zoteroLink, tagButtons, saveTags, tagMeta);
     if (entry.markdown_file) {
       const toggleInclude = document.createElement("button");
       toggleInclude.type = "button";
@@ -2323,15 +2489,33 @@ document.querySelector("#publisher-config-form")?.addEventListener("submit", asy
           elsevier_api_base_url: payload.elsevier_api_base_url || "https://api.elsevier.com",
           publisher_api_enrichment_enabled: Boolean(payload.publisher_api_enrichment_enabled),
           literature_extraction_mode: payload.literature_extraction_mode || "publisher_api_required",
+          springer_api_key: payload.springer_api_key ?? "",
+          wiley_tdm_token: payload.wiley_tdm_token ?? "",
+          crossref_contact_email: payload.crossref_contact_email ?? "",
+          ncbi_contact_email: payload.ncbi_contact_email ?? "",
+          ncbi_api_key: payload.ncbi_api_key ?? "",
+          openalex_email: payload.openalex_email ?? "",
         }),
       });
-      const keyInput = form.querySelector('[name="elsevier_api_key"]');
-      const tokenInput = form.querySelector('[name="elsevier_inst_token"]');
-      if (keyInput) keyInput.value = "";
-      if (tokenInput) tokenInput.value = "";
+      ["elsevier_api_key", "elsevier_inst_token", "springer_api_key", "wiley_tdm_token", "ncbi_api_key"].forEach((name) => {
+        const input = form.querySelector(`[name="${name}"]`);
+        if (input) input.value = "";
+      });
       await loadStatus();
       await loadSavedConfigs();
       setSuccess("#publisher-config-message", `Publisher settings saved. Key source: ${result.api_key_source}.`);
+    });
+  } catch (error) {
+    setError("#publisher-config-message", error.message);
+  }
+});
+
+document.querySelector("#test-provider-settings")?.addEventListener("click", async (event) => {
+  try {
+    await withButtonFeedback(event.currentTarget, "Testing", async () => {
+      const result = await api("/api/config/publisher/test", { method: "POST", body: "{}" });
+      document.querySelector("#publisher-api-test-result").textContent = JSON.stringify(result, null, 2);
+      setSuccess("#publisher-config-message", "Provider API settings loaded with masked credential status.");
     });
   } catch (error) {
     setError("#publisher-config-message", error.message);
@@ -2379,6 +2563,7 @@ document.querySelector("#run-literature-pipeline").addEventListener("click", asy
         "#literature-import-message",
         `Import complete. Mode: ${result.extraction_mode || state.status?.publisher?.literature_extraction_mode || "publisher_api_required"}; XML imported: ${result.xml_imported ?? result.imported}; PDF used: ${result.pdf_used ? "Yes" : "No"}; fallback used: ${result.fallback_used ? "Yes" : "No"}; failed: ${result.failed}.`
       );
+      state.activeLiteratureTab = "uncurated";
       await loadStatus();
       await loadEntries();
     });
@@ -3430,6 +3615,18 @@ document.querySelector("#graph-relation-target-search")?.addEventListener("chang
 
 document.querySelector("#zotero-filter")?.addEventListener("input", renderEntries);
 document.querySelector("#literature-review-filter")?.addEventListener("change", renderEntries);
+document.querySelectorAll("[data-literature-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    setLiteratureTab(button.dataset.literatureTab);
+    renderTwoStageLiterature();
+  });
+});
+["#curated-literature-search", "#uncurated-literature-search"].forEach((selector) => {
+  document.querySelector(selector)?.addEventListener("input", renderTwoStageLiterature);
+});
+["#curated-literature-status-filter", "#uncurated-literature-status-filter"].forEach((selector) => {
+  document.querySelector(selector)?.addEventListener("change", renderTwoStageLiterature);
+});
 
 document.querySelector("#curation-prompt-form").addEventListener("submit", async (event) => {
   event.preventDefault();

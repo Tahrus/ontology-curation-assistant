@@ -343,8 +343,16 @@ def _clean_string(value: object) -> str | None:
 
 
 def _identifier_metadata(data: dict[str, object]) -> dict[str, object]:
-    keys = ("pii", "PII", "DOI", "doi", "ISSN", "issn", "ISBN", "isbn", "url", "URL", "PMID", "pmid", "PMCID", "pmcid", "extra")
-    return {key: data[key] for key in keys if data.get(key) not in (None, "")}
+    keys = (
+        "pii", "PII", "DOI", "doi", "ISSN", "issn", "ISBN", "isbn", "url", "URL",
+        "PMID", "pmid", "PMCID", "pmcid", "arXiv", "arxiv", "arxiv_id", "extra",
+        "subtitle", "shortTitle", "publisher", "place", "edition", "volume", "series",
+        "bookTitle", "publicationTitle", "pages", "numPages", "language", "itemType",
+    )
+    metadata = {key: data[key] for key in keys if data.get(key) not in (None, "")}
+    if creators := data.get("creators"):
+        metadata["creators"] = creators
+    return metadata
 
 
 def _parse_csl_creators(value: object) -> list[dict[str, str | None]]:

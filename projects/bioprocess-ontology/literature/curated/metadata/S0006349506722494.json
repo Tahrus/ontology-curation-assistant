@@ -9,9 +9,7 @@
   "journal": "Biophysical Journal",
   "doi": "10.1529/biophysj.105.074112",
   "pii": "S0006349506722494",
-  "project_tags": [
-    "bioprocess-ontology"
-  ],
+  "project_tags": [],
   "curation_status": "curated",
   "staged_entry_id": "S0006349506722494",
   "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S0006349506722494.json",
@@ -45,9 +43,9 @@
   "xml_artifact_path": "sources/S0006349506722494.elsevier.xml",
   "xml_markdown_artifact_path": "markdown/S0006349506722494.md",
   "pdf_fallback_markdown_path": null,
-  "imported_at": "2026-06-24T13:42:42.591480+00:00",
+  "imported_at": "2026-06-24T13:58:28.702060+00:00",
   "curated_at": "2026-06-24T13:57:33.830900+00:00",
-  "updated_at": "2026-06-24T13:58:00.664741+00:00",
+  "updated_at": "2026-06-25T12:19:37.180701+00:00",
   "artifacts": [
     {
       "path": "curated/markdown/S0006349506722494.md",

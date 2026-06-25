@@ -5,12 +5,12 @@
   "doi": "10.1529/biophysj.105.074112",
   "source_type": "elsevier_article_retrieval_api",
   "source_path": null,
-  "import_status": "staged",
+  "import_status": "promoted",
   "curation_status": "needs_review",
   "duplicate_status": "canonical_reused",
   "pipeline_version": "oca-canonical-v2",
   "imported_at": "2026-06-24T13:58:28.702060+00:00",
-  "updated_at": "2026-06-24T13:58:28.702060+00:00",
+  "updated_at": "2026-06-25T12:19:37.177678+00:00",
   "authors": [
     "Ivan L. Shulgin",
     "Eli Ruckenstein"
@@ -82,9 +82,7 @@
   "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S0006349506722494.md",
   "markdown_available": true,
   "repository_stage": "staged",
-  "project_tags": [
-    "bioprocess-ontology"
-  ],
+  "project_tags": [],
   "promoted_literature_id": "S0006349506722494",
-  "promoted_at": "2026-06-24T13:57:33.830900+00:00"
+  "promoted_at": "2026-06-25T12:19:37.180701+00:00"
 }

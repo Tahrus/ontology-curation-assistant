@@ -280,6 +280,12 @@
           <label>Elsevier API key<input name="elsevier_api_key" type="password" autocomplete="off" /></label>
           <label>Elsevier institutional token<input name="elsevier_inst_token" type="password" autocomplete="off" /></label>
           <label>Elsevier API base URL<input name="elsevier_api_base_url" value="https://api.elsevier.com" /></label>
+          <label>Springer Nature API key<input name="springer_api_key" type="password" autocomplete="off" /></label>
+          <label>Wiley TDM token<input name="wiley_tdm_token" type="password" autocomplete="off" /></label>
+          <label>Crossref contact email<input name="crossref_contact_email" type="email" autocomplete="email" /></label>
+          <label>NCBI contact email<input name="ncbi_contact_email" type="email" autocomplete="email" /></label>
+          <label>NCBI API key<input name="ncbi_api_key" type="password" autocomplete="off" /></label>
+          <label>OpenAlex email<input name="openalex_email" type="email" autocomplete="email" /></label>
           <label>Literature extraction mode
             <select name="literature_extraction_mode">
               <option value="publisher_api_required">Publisher API required (default; no PDF fallback)</option>
@@ -289,6 +295,7 @@
           </label>
           <label class="inline"><input name="publisher_api_enrichment_enabled" type="checkbox" /> Enable publisher API enrichment</label>
           <button type="submit">Save publisher settings</button>
+          <button id="test-provider-settings" type="button" class="secondary">Test API settings</button>
         </form>
         <p id="publisher-config-message" class="message" role="status" aria-live="polite"></p>
         <h3>Test publisher API extraction</h3>
@@ -324,12 +331,48 @@
           <button id="run-literature-pipeline" type="button">Import literature</button>
           <button id="cleanup-staged-literature" type="button" class="danger">Delete uncurated imported literature and generated files</button>
         </div>
+        <div>
+          <span class="helper">Project-tag filter</span>
+          <div id="literature-tag-filters" class="project-tag-row" aria-label="Filter literature by project tags"></div>
+        </div>
         <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
         <p id="literature-repository-message" class="message" role="status" aria-live="polite"></p>
-        <h3>Imported literature awaiting review</h3>
-        <div id="staged-literature-entries" class="table-list"></div>
-        <h3>Curated literature</h3>
-        <div id="curated-literature-entries" class="table-list"></div>
+        <div class="subtab-row" role="tablist" aria-label="Literature status">
+          <button id="literature-tab-curated" type="button" class="subtab active" role="tab" aria-controls="curated-literature-panel" aria-selected="true" data-literature-tab="curated">Curated Literature</button>
+          <button id="literature-tab-uncurated" type="button" class="subtab" role="tab" aria-controls="uncurated-literature-panel" aria-selected="false" data-literature-tab="uncurated">New / Uncurated Literature</button>
+        </div>
+        <section id="curated-literature-panel" class="literature-tab-panel" role="tabpanel" aria-labelledby="literature-tab-curated" data-literature-panel="curated">
+          <div class="filter-row">
+            <label>Search curated literature<input id="curated-literature-search" placeholder="Title, DOI, source, tag..." /></label>
+            <label>Status filter
+              <select id="curated-literature-status-filter">
+                <option value="all">All curated</option>
+                <option value="curated">Curated</option>
+                <option value="accepted">Accepted</option>
+                <option value="promoted">Promoted</option>
+              </select>
+            </label>
+          </div>
+          <div id="curated-literature-entries" class="table-list"></div>
+        </section>
+        <section id="uncurated-literature-panel" class="literature-tab-panel hidden" role="tabpanel" aria-labelledby="literature-tab-uncurated" data-literature-panel="uncurated" hidden>
+          <div class="filter-row">
+            <label>Search new / uncurated literature<input id="uncurated-literature-search" placeholder="Title, DOI, source, tag..." /></label>
+            <label>Status filter
+              <select id="uncurated-literature-status-filter">
+                <option value="all">All uncurated</option>
+                <option value="new">New</option>
+                <option value="metadata_resolved">Metadata resolved</option>
+                <option value="structured_markdown_created">Structured Markdown created</option>
+                <option value="needs_manual_markdown">Needs manual Markdown</option>
+                <option value="needs_review">Needs review</option>
+                <option value="duplicate">Duplicate</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </label>
+          </div>
+          <div id="staged-literature-entries" class="table-list"></div>
+        </section>
       </section>
 
       <section class="panel wide page-section" data-page="ontology" id="ontology-section">
@@ -613,6 +656,6 @@
       </article>
     </template>
 
-    <script src="/static/app.js?v=20260624-identifiers"></script>
+    <script src="/static/app.js?v=20260625-provider-tags"></script>
   </body>
 </html>

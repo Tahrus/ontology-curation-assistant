@@ -59,8 +59,8 @@ def test_browser_subpages_serve_html(client):
     for path, marker in [
         ("/config", "Zotero Metadata Sync"),
         ("/projects", "Projects"),
-        ("/zotero", "Imported literature awaiting review"),
-        ("/literature", "Imported literature awaiting review"),
+        ("/zotero", "New / Uncurated Literature"),
+        ("/literature", "New / Uncurated Literature"),
         ("/ontology", "Ontology"),
         ("/curation-prompt", "Ontology Curation Prompt"),
         ("/curation", "Candidate Curation"),
@@ -491,6 +491,45 @@ def test_literature_project_tags_update_and_project_count(client, tmp_path):
     projects = client.get("/api/projects").json()["projects"]
     reloaded = next(item for item in projects if item["id"] == project["id"])
     assert reloaded["literature_project_tag_count"] == 1
+    assert reloaded["canonical_project_tag"] == "ppo"
+
+
+def test_project_tag_alias_is_normalized_to_single_canonical_tag(client, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Protein precipitation", "ontology_id": "ppo", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path)},
+    ).json()
+    assert client.post("/api/zotero/import-test", json={}).status_code == 200
+    source_id = client.get("/api/zotero/entries").json()[0]["id"]
+
+    tagged = client.post(f"/api/literature/{source_id}/tags", json={"project_tags": [project["slug"], "ppo", project["name"]]})
+
+    assert tagged.status_code == 200
+    assert tagged.json()["item"]["project_tags"] == ["ppo"]
+
+
+def test_extended_publisher_settings_are_masked_and_persist(client):
+    saved = client.post(
+        "/api/config/publisher",
+        json={
+            "springer_api_key": "springer-secret",
+            "wiley_tdm_token": "wiley-secret",
+            "crossref_contact_email": "curator@example.org",
+            "ncbi_contact_email": "ncbi@example.org",
+            "ncbi_api_key": "ncbi-secret",
+            "openalex_email": "openalex@example.org",
+        },
+    )
+
+    assert saved.status_code == 200
+    providers = client.get("/api/config/status").json()["publisher"]["providers"]
+    assert providers["springer"]["api_key"] == "configured"
+    assert providers["wiley"]["tdm_token"] == "configured"
+    assert providers["ncbi"]["api_key"] == "configured"
+    assert providers["crossref"]["contact_email"] == "curator@example.org"
+    diagnostic = client.post("/api/config/publisher/test", json={})
+    assert diagnostic.status_code == 200
+    assert "springer-secret" not in str(diagnostic.json())
 
 
 def test_extract_candidates_uses_repository_without_picker(client):
@@ -702,6 +741,39 @@ def test_zotero_sync_uses_saved_config_and_imports_entries(client, monkeypatch):
     assert synced.status_code == 200
     assert synced.json()["fetched"] == 1
     assert client.get("/api/zotero/entries").json()[0]["title"] == "Live Zotero test record"
+
+
+def test_zotero_sync_skips_repository_duplicate_and_imports_new_book(client, monkeypatch, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Book sync", "ontology_id": "book-sync", "project_type": "domain_ontology", "local_workspace_path": str(tmp_path), "activate": True},
+    ).json()
+    client.post("/api/config/zotero", json={"library_type": "group", "library_id": "999", "api_key": "secret"})
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "publisher_api_required"})
+    existing = client.post("/api/literature/import", json={"project": project["slug"], "doi": "10.1000/already-local", "title": "Already local"})
+    assert existing.status_code == 200
+
+    class FakeZoteroClient:
+        def __init__(self, config):
+            pass
+
+        def fetch_items(self, *, collection_key=None, limit=None):
+            return [
+                {"key": "DUPKEY", "data": {"itemType": "journalArticle", "title": "Already local", "date": "2026", "DOI": "10.1000/already-local"}},
+                {"key": "BOOKKEY", "data": {"itemType": "book", "title": "Bioprocess Book", "date": "2024", "ISBN": "978-1-2345-6789-0", "publisher": "Example Press", "creators": [{"creatorType": "editor", "lastName": "Curator"}] }},
+            ]
+
+    import backend.app.api.routes as routes
+
+    monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
+    synced = client.post("/api/zotero/sync", json={})
+
+    assert synced.status_code == 200
+    staged = client.get("/api/literature/canonical", params={"project": project["slug"]}).json()["staged_entries"]
+    assert sum(1 for entry in staged if entry.get("doi") == "10.1000/already-local") == 1
+    book = next(entry for entry in staged if entry["title"] == "Bioprocess Book")
+    assert book["literature_type"] == "book"
+    assert book["markdown_status"] == "manual_markdown_required"
 
 
 def test_zotero_sync_handles_incomplete_non_string_fields(client, monkeypatch):
@@ -1196,13 +1268,29 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "prefill-bpo-project" not in html
     assert "prefill-ppo-project" not in html
     assert "/api/projects/suggest-metadata" in script
-    assert "/api/zotero/entries/${encodeURIComponent(entry.id)}/project-tags" in script
+    assert "/api/literature/${encodeURIComponent(entry.id)}/tags" in script
+    assert "aria-pressed" in script
+    assert "project-tag" in styles
     assert 'document.querySelector("#zotero-entries");\n  if (!list) return;' in script
     assert 'document.querySelector("#zotero-filter")?.addEventListener("input", renderEntries)' in script
     assert "/api/literature/build-combined" in script
     assert "/api/literature/repository/retry-extraction" in script
     assert 'id="staged-literature-entries"' in html
     assert 'id="curated-literature-entries"' in html
+    assert 'data-literature-tab="curated"' in html
+    assert 'data-literature-tab="uncurated"' in html
+    assert "Curated Literature" in html
+    assert "New / Uncurated Literature" in html
+    assert 'id="curated-literature-search"' in html
+    assert 'id="uncurated-literature-search"' in html
+    assert 'id="curated-literature-status-filter"' in html
+    assert 'id="uncurated-literature-status-filter"' in html
+    assert "function literatureWorkflowStatus" in script
+    assert "function filteredTwoStageEntries" in script
+    assert "function setLiteratureTab" in script
+    assert 'state.activeLiteratureTab = "uncurated"' in script
+    assert "subtab-row" in styles
+    assert "literature-tab-panel" in styles
     assert "Promote to curated literature" in script
     assert "/api/literature/cleanup-staged" in script
     assert "Delete uncurated imported literature and generated files" in html
@@ -1611,6 +1699,10 @@ def test_api_zotero_sync_never_triggers_pdf_pipeline_in_strict_mode(client, monk
 
     synced = client.post("/api/zotero/sync", json={})
 
-    assert synced.status_code == 400
+    assert synced.status_code == 200
     assert calls == []
-    assert "No DOI, PII, or ScienceDirect URL" in synced.json()["detail"]["message"]
+    assert synced.json()["pdf_used"] is False
+    assert synced.json()["fallback_used"] is False
+    entries = client.get("/api/literature/canonical", params={"project": project.json()["slug"]}).json()["staged_entries"]
+    assert entries[0]["markdown_status"] == "manual_markdown_required"
+    assert entries[0]["pdf_used"] is False
