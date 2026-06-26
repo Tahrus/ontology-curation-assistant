@@ -1,0 +1,16 @@
+---
+id: "duplicate_check"
+title: "Duplicate check"
+short_description: "Checks whether proposed terms may duplicate existing ontology classes."
+use_case: "Check whether proposed terms may duplicate existing ontology classes."
+task_type: "duplicate_check"
+expected_output_format: "json"
+input_scope: "ontology_context"
+cost_level: "low"
+version: 1
+active: true
+created_at: "2026-06-26T12:27:23.777948+00:00"
+updated_at: "2026-06-26T12:27:23.777948+00:00"
+---
+
+Flag possible duplicate terms. Use duplicate_warning suggestion_type when a proposed label overlaps an existing class.

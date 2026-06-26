@@ -56,6 +56,8 @@ def browser_page(page_name: str) -> FileResponse:
         "ontology",
         "curation",
         "curation-prompt",
+        "curate-prompts",
+        "ontology-suggestions",
         "suggestions",
         "evaluation",
         "export",

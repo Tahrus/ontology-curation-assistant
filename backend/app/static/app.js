@@ -9,6 +9,8 @@ const state = {
   selectedProjectRef: null,
   curationRuns: [],
   suggestions: [],
+  ontologySuggestionStatus: null,
+  ontologySuggestionPrompts: [],
   ontologyFiles: [],
   ontologyTerms: [],
   ontologyTree: null,
@@ -38,8 +40,10 @@ const APP_ROUTES = {
   "/zotero": "zotero",
   "/literature": "zotero",
   "/ontology": "ontology",
-  "/curation-prompt": "curation-prompt",
+  "/curation-prompt": "curate-prompts",
   "/curation": "curation",
+  "/curate-prompts": "curate-prompts",
+  "/ontology-suggestions": "ontology-suggestions",
   "/suggestions": "suggestions",
   "/evaluation": "evaluation",
   "/export": "export",
@@ -196,11 +200,15 @@ async function refreshCurrentPageData() {
   } else if (page === "ontology") {
     await loadProjects();
     await loadOntologyStatus();
-  } else if (page === "curation-prompt") {
-    await Promise.all([loadStatus(), loadCurationPrompt()]);
   } else if (page === "curation") {
     await loadProjects();
     await Promise.all([loadEntries(), loadRelationTypes(), loadCandidates(), loadOntologyStatus()]);
+  } else if (page === "curate-prompts") {
+    await loadOntologySuggestionPrompts(true);
+    renderPromptTemplateList();
+  } else if (page === "ontology-suggestions") {
+    await Promise.all([loadProjects(), loadOntologySuggestionPrompts()]);
+    await loadOntologySuggestionStatus();
   } else if (page === "suggestions") {
     await Promise.all([loadProjects(), loadCurationRuns(), loadSuggestions()]);
   } else if (page === "evaluation") {
@@ -4069,3 +4077,194 @@ onDomReady(() => {
   showCurrentPage();
   initializeWorkspace();
 });
+
+
+async function loadOntologySuggestionPrompts(includeInactive = false) {
+  const result = await api(`/api/ontology-suggestions/prompts${includeInactive ? "?include_inactive=true" : ""}`);
+  state.ontologySuggestionPrompts = result.templates || [];
+  const select = document.querySelector("#ontology-suggestions-prompt");
+  if (select) {
+    select.innerHTML = state.ontologySuggestionPrompts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title || item.name)}</option>`).join("");
+    const template = state.ontologySuggestionPrompts[0];
+    if (template) { document.querySelector("#ontology-suggestions-prompt-text").value = template.prompt_text || ""; renderOntologySuggestionPromptMeta(template); }
+  }
+}
+
+async function loadOntologySuggestionStatus() {
+  const projectSelect = document.querySelector("#ontology-suggestions-project");
+  if (projectSelect) {
+    projectSelect.innerHTML = state.projects.map((project) => `<option value="${escapeHtml(project.slug)}">${escapeHtml(project.name)} (${escapeHtml(project.ontology_id)})</option>`).join("");
+    if (state.activeProject?.slug) projectSelect.value = state.activeProject.slug;
+  }
+  const projectId = projectSelect?.value || state.activeProject?.slug || state.projects[0]?.slug;
+  if (!projectId) return;
+  const status = await api(`/api/ontology-suggestions/status?project_id=${encodeURIComponent(projectId)}`);
+  state.ontologySuggestionStatus = status;
+  renderOntologySuggestionStatus();
+}
+
+function renderOntologySuggestionStatus() {
+  const status = state.ontologySuggestionStatus;
+  const target = document.querySelector("#ontology-suggestions-status");
+  const literature = document.querySelector("#ontology-suggestions-literature");
+  if (!status || !target) return;
+  target.innerHTML = `<div><strong>${escapeHtml(status.project.label)}</strong><span>Project ID: ${escapeHtml(status.project.id)}</span></div><div><strong>${status.connected_literature_count}</strong><span>connected literature items</span></div><div><strong>${escapeHtml(status.ontology_path || "No ontology file")}</strong><span>selected ontology path</span></div>`;
+  if (literature) {
+    const entries = [...(status.literature.curated || []), ...(status.literature.uncurated || [])];
+    literature.innerHTML = entries.map((entry) => `<option value="${escapeHtml(entry.id || entry.canonical_id)}">${escapeHtml(entry.title || entry.id || entry.canonical_id)}${entry.repository_stage === "curated" ? " [curated]" : " [uncurated]"}</option>`).join("");
+    if (entries[0]) literature.options[0].selected = true;
+  }
+}
+
+function ontologySuggestionPayload() {
+  const form = document.querySelector("#ontology-suggestions-form");
+  const selected = [...(document.querySelector("#ontology-suggestions-literature")?.selectedOptions || [])].map((option) => option.value);
+  const data = formPayload(form);
+  return { ...data, literature_ids: selected, prompt_text: document.querySelector("#ontology-suggestions-prompt-text")?.value || "" };
+}
+
+async function previewOntologySuggestions() {
+  const result = await api("/api/ontology-suggestions/preview", { method: "POST", body: JSON.stringify(ontologySuggestionPayload()) });
+  document.querySelector("#ontology-suggestions-preview").innerHTML = `<p><strong>Estimated input tokens:</strong> ${result.estimated_input_tokens}</p><p><strong>Max output tokens:</strong> ${result.max_output_tokens}</p><p><strong>Estimated cost:</strong> ${result.cost.estimated_cost ?? "not configured"}</p><p>${escapeHtml(result.cost.message)}</p><pre>${escapeHtml(result.prompt).slice(0, 8000)}</pre>`;
+  setSuccess("#ontology-suggestions-message", result.requires_confirmation ? "Preview ready. Multi-paper runs require confirmation." : "Preview ready.");
+}
+
+function bindOntologySuggestions() {
+  document.querySelector("#refresh-ontology-suggestions")?.addEventListener("click", () => loadOntologySuggestionStatus().catch((error) => setError("#ontology-suggestions-message", error.message)));
+  document.querySelector("#ontology-suggestions-project")?.addEventListener("change", () => loadOntologySuggestionStatus().catch((error) => setError("#ontology-suggestions-message", error.message)));
+  document.querySelector("#ontology-suggestions-prompt")?.addEventListener("change", (event) => {
+    const template = state.ontologySuggestionPrompts.find((item) => item.id === event.target.value);
+    if (template) { document.querySelector("#ontology-suggestions-prompt-text").value = template.prompt_text || ""; renderOntologySuggestionPromptMeta(template); }
+  });
+  document.querySelector("#preview-ontology-suggestions")?.addEventListener("click", () => previewOntologySuggestions().catch((error) => setError("#ontology-suggestions-message", error.message)));
+  document.querySelector("#cheap-ontology-suggestions-test")?.addEventListener("click", async () => {
+    try {
+      const result = await api("/api/ontology-suggestions/test", { method: "POST", body: JSON.stringify(ontologySuggestionPayload()) });
+      document.querySelector("#ontology-suggestions-preview").innerHTML = `<dl><dt>Status</dt><dd>${escapeHtml(result.status)}</dd><dt>Stage</dt><dd>${escapeHtml(result.stage)}</dd><dt>Provider</dt><dd>${escapeHtml(result.provider)}</dd><dt>Model</dt><dd>${escapeHtml(result.model)}</dd><dt>Base URL</dt><dd>${escapeHtml(result.base_url)}</dd><dt>API key present</dt><dd>${result.api_key_present ? "yes" : "no"}</dd><dt>HTTP status</dt><dd>${escapeHtml(result.http_status)}</dd><dt>Content type</dt><dd>${escapeHtml(result.content_type)}</dd><dt>Response length</dt><dd>${escapeHtml(result.response_body_length)}</dd><dt>Parsed JSON</dt><dd>${result.parsed_json ? "yes" : "no"}</dd><dt>JSON extraction</dt><dd>${escapeHtml(result.json_extraction_method)}</dd><dt>JSON recovered</dt><dd>${result.json_recovered ? "yes" : "no"}</dd><dt>Recovery warning</dt><dd>${escapeHtml(result.json_recovery_warning)}</dd><dt>Schema valid</dt><dd>${result.schema_valid ? "yes" : "no"}</dd><dt>Error type</dt><dd>${escapeHtml(result.error_type)}</dd><dt>Error message</dt><dd>${escapeHtml(result.error_message)}</dd><dt>Suggested fix</dt><dd>${escapeHtml(result.suggested_fix)}</dd></dl><pre>${escapeHtml(result.raw_response_preview || "")}</pre>`; setSuccess("#ontology-suggestions-message", result.status === "success" ? `Cheap test passed. Run ${result.run_id}; no real suggestions created.` : "Cheap test returned diagnostics.");
+    } catch (error) { setError("#ontology-suggestions-message", error.message); }
+  });
+  document.querySelector("#run-ontology-suggestions")?.addEventListener("click", async () => {
+    try {
+      const preview = await api("/api/ontology-suggestions/preview", { method: "POST", body: JSON.stringify(ontologySuggestionPayload()) });
+      const confirmed = !preview.requires_confirmation || window.confirm("Run ontology suggestions for multiple literature items?");
+      if (!confirmed) return;
+      const result = await api("/api/ontology-suggestions/run", { method: "POST", body: JSON.stringify({ ...ontologySuggestionPayload(), confirmed }) });
+      setSuccess("#ontology-suggestions-message", `Run ${result.run_id} created ${result.suggestion_count} suggestion(s). Review them on the Suggestions page.`);
+    } catch (error) { setError("#ontology-suggestions-message", error.message); }
+  });
+  document.querySelector("#save-ontology-suggestion-template")?.addEventListener("click", async () => {
+    const id = window.prompt("New prompt template ID");
+    if (!id) return;
+    const current = state.ontologySuggestionPrompts.find((item) => item.id === document.querySelector("#ontology-suggestions-prompt")?.value) || {};
+    try {
+      await api("/api/ontology-suggestions/prompts", { method: "POST", body: JSON.stringify({ ...current, id, name: id, prompt_text: document.querySelector("#ontology-suggestions-prompt-text")?.value || "" }) });
+      await loadOntologySuggestionPrompts();
+      setSuccess("#ontology-suggestions-message", "Template saved.");
+    } catch (error) { setError("#ontology-suggestions-message", error.message); }
+  });
+}
+
+bindOntologySuggestions();
+
+function renderOntologySuggestionPromptMeta(t){const e=document.querySelector("#ontology-suggestions-prompt-meta");if(e&&t)e.innerHTML=`<dl><dt>Description</dt><dd>${escapeHtml(t.short_description||t.description)}</dd><dt>Use case</dt><dd>${escapeHtml(t.use_case)}</dd><dt>Task type</dt><dd>${escapeHtml(t.task_type)}</dd><dt>Output</dt><dd>${escapeHtml(t.expected_output_format)}</dd><dt>Input scope</dt><dd>${escapeHtml(t.input_scope)}</dd><dt>Cost</dt><dd>${escapeHtml(t.cost_level)}</dd><dt>Version</dt><dd>${escapeHtml(t.version)}</dd></dl>`;}
+function promptTemplateFormPayload(form) {
+  const payload = formPayload(form);
+  payload.active = payload.active !== "false";
+  payload.update_existing = payload.update_existing === "true";
+  return payload;
+}
+
+function renderMarkdownPreview(markdown) {
+  return safeText(markdown)
+    .split(/\n{2,}/)
+    .map((block) => {
+      const escaped = escapeHtml(block.trim());
+      if (!escaped) return "";
+      if (escaped.startsWith("# ")) return `<h3>${escaped.slice(2)}</h3>`;
+      if (escaped.startsWith("## ")) return `<h4>${escaped.slice(3)}</h4>`;
+      return `<p>${escaped.replaceAll("\n", "<br>")}</p>`;
+    })
+    .join("");
+}
+
+function promptTemplateMetadataHtml(t) {
+  return `<dl><dt>Description</dt><dd>${escapeHtml(t.short_description || t.description)}</dd><dt>Use case</dt><dd>${escapeHtml(t.use_case)}</dd><dt>Task type</dt><dd>${escapeHtml(t.task_type)}</dd><dt>Input scope</dt><dd>${escapeHtml(t.input_scope)}</dd><dt>Output</dt><dd>${escapeHtml(t.expected_output_format)}</dd><dt>Cost</dt><dd>${escapeHtml(t.cost_level)}</dd><dt>Version</dt><dd>${escapeHtml(t.version)}</dd><dt>Status</dt><dd>${t.active === false ? "inactive" : "active"}</dd></dl>`;
+}
+
+function renderPromptTemplateList() {
+  const list = document.querySelector("#prompt-template-list");
+  if (!list) return;
+  const templates = state.ontologySuggestionPrompts || [];
+  list.innerHTML = templates.length
+    ? templates.map((t) => `<article class="record-card"><strong>${escapeHtml(t.title || t.name)}</strong><p>${escapeHtml(t.short_description || t.description)}</p><p class="helper">${escapeHtml(t.task_type)} | ${escapeHtml(t.input_scope)} | ${escapeHtml(t.expected_output_format)} | ${escapeHtml(t.cost_level)} | v${escapeHtml(t.version)} | ${t.active === false ? "inactive" : "active"}</p><button type="button" data-prompt-edit="${escapeHtml(t.id)}">Edit</button><button type="button" data-prompt-duplicate="${escapeHtml(t.id)}">Duplicate</button><button type="button" data-prompt-deactivate="${escapeHtml(t.id)}">Archive</button></article>`).join("")
+    : `<p class="empty-state">No active prompt templates found.</p>`;
+  list.querySelectorAll("[data-prompt-edit]").forEach((button) => button.addEventListener("click", () => fillPromptTemplateForm(templates.find((item) => item.id === button.dataset.promptEdit))));
+  list.querySelectorAll("[data-prompt-duplicate]").forEach((button) => button.addEventListener("click", async () => {
+    const newId = window.prompt("New prompt template ID");
+    if (!newId) return;
+    try {
+      await api(`/api/ontology-suggestions/prompts/${encodeURIComponent(button.dataset.promptDuplicate)}/duplicate`, { method: "POST", body: JSON.stringify({ new_id: newId }) });
+      await loadOntologySuggestionPrompts(true);
+      renderPromptTemplateList();
+      setSuccess("#curate-prompts-message", "Prompt duplicated.");
+    } catch (error) {
+      setError("#curate-prompts-message", error.message);
+    }
+  }));
+  list.querySelectorAll("[data-prompt-deactivate]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      await api(`/api/ontology-suggestions/prompts/${encodeURIComponent(button.dataset.promptDeactivate)}/deactivate`, { method: "POST", body: "{}" });
+      await loadOntologySuggestionPrompts(true);
+      renderPromptTemplateList();
+      setSuccess("#curate-prompts-message", "Prompt archived.");
+    } catch (error) {
+      setError("#curate-prompts-message", error.message);
+    }
+  }));
+}
+
+function fillPromptTemplateForm(template) {
+  const form = document.querySelector("#prompt-template-form");
+  if (!form || !template) return;
+  ["id", "title", "short_description", "use_case", "task_type", "expected_output_format", "input_scope", "cost_level", "prompt_text"].forEach((name) => {
+    if (form.elements[name]) form.elements[name].value = template[name] || "";
+  });
+  if (form.elements.active) form.elements.active.value = template.active === false ? "false" : "true";
+  form.elements.update_existing.value = "true";
+}
+
+function previewPromptTemplateFromForm() {
+  const form = document.querySelector("#prompt-template-form");
+  const target = document.querySelector("#prompt-template-preview");
+  if (!form || !target) return;
+  const payload = promptTemplateFormPayload(form);
+  target.innerHTML = `<section>${promptTemplateMetadataHtml(payload)}</section><section><h3>Rendered Markdown</h3>${renderMarkdownPreview(payload.prompt_text || "")}</section><section><h3>Raw Markdown</h3><pre>${escapeHtml(payload.prompt_text || "")}</pre></section>`;
+}
+
+function bindCuratePrompts() {
+  document.querySelector("#refresh-prompt-templates")?.addEventListener("click", async () => {
+    await loadOntologySuggestionPrompts(true);
+    renderPromptTemplateList();
+  });
+  document.querySelector("#clear-prompt-template")?.addEventListener("click", () => {
+    const form = document.querySelector("#prompt-template-form");
+    form?.reset();
+    if (form?.elements.update_existing) form.elements.update_existing.value = "false";
+    const preview = document.querySelector("#prompt-template-preview");
+    if (preview) preview.innerHTML = "";
+  });
+  document.querySelector("#preview-prompt-template")?.addEventListener("click", previewPromptTemplateFromForm);
+  document.querySelector("#save-prompt-template")?.addEventListener("click", async () => {
+    const form = document.querySelector("#prompt-template-form");
+    if (!form) return;
+    try {
+      await api("/api/ontology-suggestions/prompts", { method: "POST", body: JSON.stringify(promptTemplateFormPayload(form)) });
+      await loadOntologySuggestionPrompts(true);
+      renderPromptTemplateList();
+      setSuccess("#curate-prompts-message", "Prompt saved.");
+    } catch (error) {
+      setError("#curate-prompts-message", error.message);
+    }
+  });
+}
+bindCuratePrompts();

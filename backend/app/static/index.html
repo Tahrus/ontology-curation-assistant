@@ -21,7 +21,8 @@
         <a href="/zotero" data-nav="zotero">Literature</a>
         <a href="/ontology" data-nav="ontology">Ontology</a>
         <a href="/curation" data-nav="curation">Curation</a>
-        <a href="/curation-prompt" data-nav="curation-prompt">Curation Prompt</a>
+        <a href="/curate-prompts" data-nav="curate-prompts">Curate Prompts</a>
+        <a href="/ontology-suggestions" data-nav="ontology-suggestions">Ontology Suggestions</a>
         <a href="/suggestions" data-nav="suggestions">Suggestions</a>
         <a href="/evaluation" data-nav="evaluation">Evaluation</a>
         <a href="/config" data-nav="config">Settings</a>
@@ -55,7 +56,7 @@
           <a href="/config" data-route>Configure APIs and Sync Zotero</a>
           <a href="/zotero" data-route>Open Literature</a>
           <a href="/ontology" data-route>Open ontology browser for active project</a>
-          <a href="/curation-prompt" data-route>Review Curation Prompt</a>
+          <a href="/curate-prompts" data-route>Curate Prompts</a>
           <a href="/curation" data-route>Open Candidate Curation</a>
           <a href="/export" data-route>Export Approved Candidates</a>
         </div>
@@ -446,6 +447,69 @@
         </div>
         <p id="curation-prompt-message" class="message" role="status" aria-live="polite"></p>
         <pre id="curation-suggestion-preview" class="markdown-preview"></pre>
+      </section>
+
+      <section class="panel wide page-section" data-page="curate-prompts" id="curate-prompts-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Prompt library</p>
+            <h2>Curate Prompts</h2>
+          </div>
+          <button id="refresh-prompt-templates" type="button">Refresh</button>
+        </div>
+        <div id="prompt-template-list" class="stacked-list"></div>
+        <form id="prompt-template-form" class="stacked-form">
+          <div class="grid two">
+            <label>ID<input name="id" required /></label>
+            <label>Title<input name="title" required /></label>
+            <label>Task type<input name="task_type" required /></label>
+            <label>Cost level<input name="cost_level" value="low" /></label>
+            <label>Expected output format<input name="expected_output_format" value="json" /></label>
+            <label>Input scope<input name="input_scope" value="single_literature_item" /></label>
+            <label>Status<select name="active"><option value="true" selected>active</option><option value="false">inactive</option></select></label>
+          </div>
+          <label>Short description<textarea name="short_description" rows="2"></textarea></label>
+          <label>Use case<textarea name="use_case" rows="2"></textarea></label>
+          <label>Prompt text<textarea name="prompt_text" rows="10"></textarea></label>
+          <input type="hidden" name="update_existing" value="false" />
+          <div class="button-row">
+            <button id="save-prompt-template" type="button">Save prompt</button>
+            <button id="clear-prompt-template" type="button">New prompt</button>
+            <button id="preview-prompt-template" type="button">Preview prompt</button>
+          </div>
+        </form>
+        <div id="prompt-template-preview" class="markdown-preview"></div>
+        <p id="curate-prompts-message" class="message" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel wide page-section" data-page="ontology-suggestions" id="ontology-suggestions-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Read-only analysis</p>
+            <h2>Ontology Suggestions</h2>
+          </div>
+          <button id="refresh-ontology-suggestions" type="button">Refresh</button>
+        </div>
+        <div id="ontology-suggestions-status" class="status-grid"></div>
+        <form id="ontology-suggestions-form" class="stacked-form">
+          <div class="grid two">
+            <label>Project<select name="project_id" id="ontology-suggestions-project"></select></label>
+            <label>Prompt template<select name="prompt_template_id" id="ontology-suggestions-prompt"></select></label>
+            <label>Literature scope<select name="literature_scope" id="ontology-suggestions-scope"><option value="one">one selected paper</option><option value="selected">selected literature items</option><option value="all_curated">all curated literature for this project</option><option value="all_uncurated">all uncurated literature for this project</option></select></label>
+            <label>Ontology context<select name="ontology_context_mode" id="ontology-suggestions-context"><option value="labels_only">labels only</option><option value="labels_definitions">labels + definitions</option><option value="labels_definitions_relations" selected>labels + definitions + existing relations</option><option value="full">full ontology file</option></select></label>
+          </div>
+          <div id="ontology-suggestions-prompt-meta" class="detail-panel"></div>
+          <label>Literature items<select name="literature_ids" id="ontology-suggestions-literature" multiple size="6"></select></label>
+          <label>Temporary prompt copy<textarea name="prompt_text" id="ontology-suggestions-prompt-text" rows="8"></textarea></label>
+          <div class="button-row">
+            <button id="preview-ontology-suggestions" type="button">Preview prompt</button>
+            <button id="save-ontology-suggestion-template" type="button">Save as new template</button>
+            <button id="cheap-ontology-suggestions-test" type="button">Cheap function test</button>
+            <button id="run-ontology-suggestions" type="button">Run suggestion</button>
+          </div>
+        </form>
+        <div id="ontology-suggestions-preview" class="detail-panel"></div>
+        <p id="ontology-suggestions-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
       <section class="panel wide page-section" data-page="suggestions" id="suggestions-section">

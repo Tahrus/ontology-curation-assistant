@@ -1,0 +1,16 @@
+---
+id: "conservative_term_suggestions"
+title: "Conservative term suggestions"
+short_description: "Suggests only high-confidence ontology class candidates from selected literature. Best first test prompt."
+use_case: "Suggest only high-confidence ontology class candidates from one selected paper. Avoid speculative terms."
+task_type: "term_suggestion"
+expected_output_format: "json"
+input_scope: "single_literature_item"
+cost_level: "low"
+version: 1
+active: true
+created_at: "2026-06-26T12:27:23.762176+00:00"
+updated_at: "2026-06-26T12:27:23.762176+00:00"
+---
+
+Identify conservative ontology class suggestions grounded in direct evidence. Prefer no suggestion over a weak suggestion.

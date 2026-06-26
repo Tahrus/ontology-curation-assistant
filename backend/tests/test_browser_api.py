@@ -1159,8 +1159,9 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     script = (static_dir / "app.js").read_text(encoding="utf-8")
     styles = (static_dir / "styles.css").read_text(encoding="utf-8")
 
-    for route in ["/config", "/zotero", "/ontology", "/curation-prompt", "/curation", "/export"]:
+    for route in ["/config", "/zotero", "/ontology", "/curation", "/curate-prompts", "/export"]:
         assert f'href="{route}"' in html
+    assert 'href="/curation-prompt"' not in html
     assert 'class="logo"' in html
     assert "/static/app.js?v=" in html
     assert "/static/styles.css?v=" in html

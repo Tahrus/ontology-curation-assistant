@@ -76,6 +76,7 @@ from backend.app.literature.repository import (
 )
 from backend.app.literature.quality import extractor_availability, should_include_for_automatic_llm
 from backend.app.models.core import ReviewStatus
+from backend.app import ontology_suggestions as ontology_suggestion_service
 from backend.app.models.db import (
     AppSetting,
     CandidateTermRecord,
@@ -467,6 +468,57 @@ class CurationRunCreatePayload(BaseModel):
 
 class SuggestionImportPayload(BaseModel):
     raw_output: str = Field(min_length=1)
+
+
+class OntologySuggestionPromptPayload(BaseModel):
+    id: str
+    title: str
+    short_description: str = ""
+    use_case: str = ""
+    task_type: str
+    expected_output_format: str = "json"
+    input_scope: str = "single_literature_item"
+    cost_level: str = "low"
+    prompt_text: str
+    update_existing: bool = False
+    active: bool = True
+
+
+class OntologySuggestionPromptDuplicatePayload(BaseModel):
+    new_id: str
+    title: str | None = None
+
+
+
+
+class OntologySuggestionPreviewPayload(BaseModel):
+    project_id: str
+    prompt_template_id: str
+    literature_scope: str = "one"
+    literature_ids: list[str] = Field(default_factory=list)
+    ontology_context_mode: str = "labels_definitions_relations"
+    prompt_text: str | None = None
+
+
+class OntologySuggestionRunPayload(OntologySuggestionPreviewPayload):
+    confirmed: bool = False
+
+
+class OntologySuggestionReviewPayload(BaseModel):
+    status: Literal["accepted", "edited", "rejected", "duplicate", "needs_discussion"]
+    reviewer: str | None = None
+    comment: str | None = None
+    edited: dict[str, Any] = Field(default_factory=dict)
+
+
+class OntologySuggestionPricingPayload(BaseModel):
+    project_id: str | None = None
+    input_cost_per_1m_tokens: float | None = None
+    output_cost_per_1m_tokens: float | None = None
+    cached_input_cost_per_1m_tokens: float | None = None
+    monthly_budget: float | None = None
+    estimated_spend_this_month: float = 0.0
+    warning_threshold: float = 0.8
 
 
 class ReviewDecisionPayload(BaseModel):
@@ -904,6 +956,149 @@ def import_run_suggestions(
     return {"run_id": run.id, "parsed_suggestions": count, "warning": warning, "status": run.status}
 
 
+
+@router.get("/ontology-suggestions/status")
+def ontology_suggestions_status(project_id: str | None = None, session: Session = Depends(get_session)) -> dict[str, Any]:
+    try:
+        return ontology_suggestion_service.workflow_status(session, project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/ontology-suggestions/prompts")
+def ontology_suggestion_prompts(include_inactive: bool = False) -> dict[str, Any]:
+    return {"templates": [ontology_suggestion_service.prompt_template_payload(item) for item in ontology_suggestion_service.list_prompt_templates(include_inactive=include_inactive)]}
+
+
+@router.post("/ontology-suggestions/prompts")
+def save_ontology_suggestion_prompt(payload: OntologySuggestionPromptPayload) -> dict[str, Any]:
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        template = ontology_suggestion_service.PromptTemplate(
+            id=payload.id,
+            title=payload.title,
+            short_description=payload.short_description,
+            use_case=payload.use_case,
+            task_type=payload.task_type,
+            expected_output_format=payload.expected_output_format,
+            input_scope=payload.input_scope,
+            cost_level=payload.cost_level,
+            prompt_text=payload.prompt_text,
+            created_at=now,
+            updated_at=now,
+            active=payload.active,
+        )
+        saved = ontology_suggestion_service.save_prompt_template(template, update_existing=payload.update_existing)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ontology_suggestion_service.prompt_template_payload(saved)
+
+
+@router.post("/ontology-suggestions/prompts/{template_id}/duplicate")
+def duplicate_ontology_suggestion_prompt(template_id: str, payload: OntologySuggestionPromptDuplicatePayload) -> dict[str, Any]:
+    try:
+        template = ontology_suggestion_service.duplicate_prompt_template(template_id, payload.new_id, payload.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ontology_suggestion_service.prompt_template_payload(template)
+
+
+@router.post("/ontology-suggestions/prompts/{template_id}/deactivate")
+def deactivate_ontology_suggestion_prompt(template_id: str) -> dict[str, Any]:
+    try:
+        template = ontology_suggestion_service.deactivate_prompt_template(template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ontology_suggestion_service.prompt_template_payload(template)
+
+
+@router.post("/ontology-suggestions/preview")
+def preview_ontology_suggestion_run(payload: OntologySuggestionPreviewPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    try:
+        return ontology_suggestion_service.preview_run(
+            session,
+            project_ref=payload.project_id,
+            prompt_template_id=payload.prompt_template_id,
+            literature_scope=payload.literature_scope,
+            literature_ids=payload.literature_ids,
+            ontology_context_mode=payload.ontology_context_mode,
+            prompt_text=payload.prompt_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ontology-suggestions/test")
+def cheap_ontology_suggestion_test(payload: OntologySuggestionPreviewPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    try:
+        return ontology_suggestion_service.cheap_function_test(
+            session,
+            project_ref=payload.project_id,
+            prompt_template_id=payload.prompt_template_id,
+            prompt_text=payload.prompt_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ontology-suggestions/test-api")
+def ontology_suggestion_test_api(payload: OntologySuggestionPreviewPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    return cheap_ontology_suggestion_test(payload, session)
+
+
+@router.post("/ontology-suggestions/run")
+def run_ontology_suggestions(payload: OntologySuggestionRunPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    try:
+        return ontology_suggestion_service.run_suggestions(
+            session,
+            project_ref=payload.project_id,
+            prompt_template_id=payload.prompt_template_id,
+            literature_scope=payload.literature_scope,
+            literature_ids=payload.literature_ids,
+            ontology_context_mode=payload.ontology_context_mode,
+            prompt_text=payload.prompt_text,
+            confirmed=payload.confirmed,
+        )
+    except (ValueError, LlmUnavailableError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/ontology-suggestions/runs")
+def list_ontology_suggestion_runs() -> dict[str, Any]:
+    return {"runs": ontology_suggestion_service.list_runs()}
+
+
+@router.get("/ontology-suggestions/runs/{run_id}")
+def show_ontology_suggestion_run(run_id: str) -> dict[str, Any]:
+    try:
+        return ontology_suggestion_service.show_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/ontology-suggestions/pricing")
+def save_ontology_suggestion_pricing(payload: OntologySuggestionPricingPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    project = get_project(session, payload.project_id) if payload.project_id else None
+    pricing = ontology_suggestion_service.save_pricing(session, payload.model_dump(), project)
+    return ontology_suggestion_service.asdict(pricing)
+
+
+@router.post("/ontology-suggestions/{suggestion_id}/review")
+def review_ontology_suggestion(suggestion_id: int, payload: OntologySuggestionReviewPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    status = "further_review" if payload.status == "needs_discussion" else payload.status
+    try:
+        return ontology_suggestion_service.review_suggestion_to_candidate(
+            session,
+            suggestion_id=suggestion_id,
+            status=status,
+            reviewer=payload.reviewer,
+            comment=payload.comment,
+            edited=payload.edited,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/suggestions")
 def list_suggestions(
     project_id: str | int | None = None,
@@ -946,6 +1141,24 @@ def review_suggestion(
     if suggestion is None:
         raise HTTPException(status_code=404, detail="Suggestion not found")
     try:
+        run = session.get(CurationRun, suggestion.curation_run_id)
+        if run and run.prompt_strategy == "ontology_suggestions" and payload.status in {"accepted", "edited"}:
+            ontology_suggestion_service.review_suggestion_to_candidate(
+                session,
+                suggestion_id=suggestion.id,
+                status=payload.status,
+                reviewer=payload.reviewer,
+                comment=payload.comment,
+                edited={
+                    "label": payload.edited_label,
+                    "definition": payload.edited_definition,
+                    "proposed_parent": payload.edited_parent_class,
+                    "relation": payload.edited_relation,
+                    "target": payload.edited_target,
+                },
+            )
+            latest = latest_reviews_by_suggestion(session, [suggestion.id]).get(suggestion.id)
+            return review_payload(latest) or {}
         review = add_review(session, suggestion, **payload.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

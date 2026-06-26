@@ -1,0 +1,16 @@
+---
+id: "relation_suggestions"
+title: "Relation suggestions"
+short_description: "Suggests evidence-backed relations between existing or newly proposed ontology terms."
+use_case: "Suggest relations between existing or newly proposed ontology terms, with evidence."
+task_type: "relation_suggestion"
+expected_output_format: "json"
+input_scope: "selected_literature_items"
+cost_level: "medium"
+version: 1
+active: true
+created_at: "2026-06-26T12:27:23.774408+00:00"
+updated_at: "2026-06-26T12:27:23.774408+00:00"
+---
+
+Suggest ontology relations only when the evidence clearly states the relation and target.

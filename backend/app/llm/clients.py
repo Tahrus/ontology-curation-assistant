@@ -25,6 +25,7 @@ class LlmTextResult:
     model: str
     latency_ms: int
     input_chars: int
+    usage: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -275,6 +276,7 @@ def _call_openai_chat(
         response.raise_for_status()
         payload = response.json()
         text = str(payload["choices"][0]["message"]["content"])
+        usage = payload.get("usage") if isinstance(payload, dict) else None
     except (httpx.TimeoutException, httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise LlmClientError(_friendly_provider_error(exc)) from exc
     if not text:
@@ -285,6 +287,7 @@ def _call_openai_chat(
         model=model,
         latency_ms=_elapsed_ms(started),
         input_chars=len(prompt) + len(system_prompt or ""),
+        usage=usage if isinstance(usage, dict) else None,
     )
 
 

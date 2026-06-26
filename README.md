@@ -110,7 +110,8 @@ The browser UI is split into small pages:
 - Settings: Zotero metadata sync settings, LLM provider/model settings, LLM connection testing, Docker/ODK diagnostics, Zotero connection testing, Zotero metadata sync, and the local Zotero literature source path used for PDF import.
 - Literature: two clear, mutually exclusive sub-tabs for `Curated Literature` and `New / Uncurated Literature`, each with search/status filtering, canonical project-tag filtering, metadata/Markdown/source provenance display, and open/review/edit actions for staged or curated entries.
 - Ontology: local PPO ontology path, detected ontology files, indexing, term search, and a collapsible parent-child ontology tree.
-- Curation Prompt: editable ontology-curation LLM prompt and run controls.
+- Curate Prompts: create, edit, version, duplicate/archive, and preview ontology suggestion prompt templates stored as Markdown files with YAML front matter.
+- Ontology Suggestions: read-only project-scoped LLM analysis over selected literature and selected ontology context, with prompt template selection, rich cheap function-test diagnostics, token/cost estimates, run logs, and human review before candidates enter the curation queue.
 - Curation: document ingestion, candidate extraction, candidate editing, local PPO matching, and external OLS matching.
 - Suggestions: project-scoped curation runs, structured suggestion import, and rich expert review decisions.
 - Evaluation: project-scoped metrics and curation-run comparison.
@@ -129,7 +130,6 @@ The workflow supports:
 - view synced/imported Zotero records, open them in Zotero when an item key is available, inspect raw/clean/LLM-context Markdown, and review metadata title matches, document state, extraction quality, document role, warnings, and automatic-extraction inclusion
 - inspect ontology source status from the active project, preferring its built/released ontology file and then its editable ontology file without silently falling back to global/demo ontology paths
 - inspect ontology classes in a searchable collapsible tree and inspect the curation meta-model graph
-- review, edit, save, reset, and run the ontology curation prompt before sending ontology/literature context to an LLM
 - create project curation runs with `literature_only`, `ontology_only`, `literature_plus_ontology`, or `structured_relation_extraction` prompt strategies
 - parse structured JSON suggestions into persistent project/run records while preserving malformed raw output diagnostics
 - review each suggestion as accepted, edited, rejected, duplicate, unsupported, or further_review with comments and review time
@@ -138,6 +138,7 @@ The workflow supports:
 - ingest a server-side literature file path or paste extracted text/notes into the Literature panel
 - extract candidates from all valid LLM-ready literature Markdown files in the repository without selecting an individual paper
 - run deterministic mock extraction, or use a configured Gemini, OpenAI, Anthropic, or custom OpenAI-compatible LLM
+- run read-only ontology suggestion tests and single/multi-paper suggestion analyses without modifying literature, ontology files, ODK templates, GitHub state, or project tags
 - create candidates manually or generate a draft candidate from a curator nudge
 - edit labels, definitions, rationales, source evidence, synonyms, parents, and mappings
 - compare candidates against local PPO terms and external EMBL-EBI OLS terms
@@ -303,7 +304,7 @@ If no LLM key is configured, Candidate Extraction still works through a determin
 
 Add optional guidance, then click `Extract Candidates`. The backend combines all valid LLM-ready Markdown files in the configured literature repository automatically. Draft, in-review, deferred, and needs-more-evidence candidates appear in Candidate Curation, where you can edit all curator-facing fields, add a manual candidate, approve/reject candidates, and run OLS checks. The Candidate Curation page also includes a graph-assisted ontology context panel. Select a candidate and an ontology node to set the proposed parent class, relation source, relation target, duplicate target, or comparison note. Proposed semantic relations are stored in the candidate's graph-review proposal data and previewed as dashed graph edges; this does not mutate the ontology directly. Approved and rejected candidates leave the active curation queue. Use `Run OLS For Draft Candidates` to batch-check draft candidates.
 
-Open <http://127.0.0.1:8000/curation-prompt> to review the ontology curation prompt before running the LLM suggestion workflow. The saved prompt is stored in local application settings and is assembled deterministically with the selected existing ontology `.obo` file and the current `literature/combined_literature.md` file. Missing or empty literature, missing LLM credentials, or a missing/non-OBO selected ontology file stops the request before any LLM call. Request traces and parsed responses are written under `literature/curation_runs/`; invalid JSON responses are preserved as raw text for debugging. The selected OBO file is read-only during suggestion generation.
+Use Curate Prompts at <http://127.0.0.1:8000/curate-prompts> for ontology-suggestion prompt template management. The legacy curation-suggestion API still assembles its saved prompt deterministically with the selected existing ontology `.obo` file and the current `literature/combined_literature.md` file; missing or empty literature, missing LLM credentials, or a missing/non-OBO selected ontology file stops the request before any LLM call. Request traces and parsed responses are written under `literature/curation_runs/`; invalid JSON responses are preserved as raw text for debugging. The selected OBO file is read-only during suggestion generation.
 
 ### Existing PPO Ontology
 
@@ -429,6 +430,19 @@ oca project show
 Project creation writes a clear local layout under `projects/<project_slug>/` with `literature/`, `ontology/`, `curation/`, `evaluation/`, and `logs/` subfolders plus `project.json`. Existing non-project literature, candidate, and export workflows remain available.
 
 The browser Projects page now uses a wizard-style project-management scaffold for root, child/domain, module, application, and existing-ontology projects. Project records can store project type, parent project, namespace/prefix, base IRI, short description, minimal scope notes, optional ODK/editable/built/literature/local-Git paths, and GitHub metadata. Optional missing paths are shown as warnings/statuses and do not block conceptual project creation. Dependency/import placeholders and external-reference placeholders are intentionally not part of this UI; actual ontology import/dependency handling will be solved later during curation and ontology review. See [docs/project-structure.md](docs/project-structure.md).
+
+Run read-only ontology suggestions from the browser at <http://127.0.0.1:8000/ontology-suggestions>, or from the CLI:
+
+```powershell
+oca suggestions prompts
+oca suggestions test --project protein-precipitation --prompt conservative_term_suggestions
+oca suggestions test-api --project protein-precipitation --prompt conservative_term_suggestions
+oca suggestions run --project protein-precipitation --literature-item <canonical-id> --prompt conservative_term_suggestions
+oca suggestions list-runs
+oca suggestions show-run <run-id>
+```
+
+Suggestion workflow files are stored separately from the literature pipeline under `data/ontology_suggestions/{prompts,runs,logs}`. Prompt templates live as one Markdown file with YAML front matter per template under `data/ontology_suggestions/prompts/`. The cheap API function test sends only a minimal strict-JSON request, can recover whole-response Markdown-fenced JSON with explicit diagnostics, and records diagnostics under `data/ontology_suggestions/logs/api_function_tests/`. Real runs require explicit literature selection, default to one selected paper, default ontology context to labels plus definitions plus existing relations, validate strict JSON before storage, record prompt template ID/title/version, and keep malformed raw responses in the run directory. Accepting or editing an ontology suggestion creates a normal candidate for human curation; it never writes ontology files directly.
 
 Create a curation run and import structured LLM suggestion JSON:
 

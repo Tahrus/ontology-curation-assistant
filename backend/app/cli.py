@@ -15,6 +15,7 @@ project_app = typer.Typer(help="Project management commands.")
 curation_app = typer.Typer(help="Project-scoped curation run commands.")
 evaluation_app = typer.Typer(help="Evaluation metric commands.")
 ontology_app = typer.Typer(help="Project-scoped ontology/ODK commands.")
+suggestions_app = typer.Typer(help="Read-only ontology suggestion workflow commands.")
 app.add_typer(literature_app, name="literature")
 literature_app.add_typer(literature_staged_app, name="staged")
 literature_app.add_typer(literature_curated_app, name="curated")
@@ -22,6 +23,7 @@ app.add_typer(project_app, name="project")
 app.add_typer(curation_app, name="curation")
 app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(ontology_app, name="ontology")
+app.add_typer(suggestions_app, name="suggestions")
 console = Console()
 
 
@@ -45,6 +47,69 @@ def _literature_project_paths(project_ref: str | None):
         session.close()
         raise
 
+
+@suggestions_app.command("prompts")
+def suggestions_prompts() -> None:
+    from backend.app.ontology_suggestions import list_prompt_templates
+
+    for template in list_prompt_templates():
+        console.print("{} - {} ({})".format(template.id, template.title, template.cost_level))
+
+
+@suggestions_app.command("test")
+def suggestions_test(project: str = typer.Option(..., help="Project slug or ID."), prompt: str = typer.Option(..., help="Prompt template ID.")) -> None:
+    from backend.app.ontology_suggestions import cheap_function_test
+
+    with _session() as session:
+        result = cheap_function_test(session, project_ref=project, prompt_template_id=prompt)
+    console.print("{} provider={} model={} stage={} error={}".format(result["status"], result.get("provider"), result.get("model"), result.get("stage"), result.get("error_type")))
+    if result.get("error_message"):
+        console.print(result["error_message"])
+    if result.get("suggested_fix"):
+        console.print(result["suggested_fix"])
+
+
+@suggestions_app.command("test-api")
+def suggestions_test_api(
+    project: str = typer.Option(..., help="Project slug or ID."),
+    prompt: str = typer.Option("conservative_term_suggestions", help="Prompt template ID."),
+    show_response_preview: bool = typer.Option(False, help="Show the raw response preview."),
+    debug: bool = typer.Option(False, help="Keep full diagnostic preview fields allowed by the local debug path."),
+) -> None:
+    from backend.app.ontology_suggestions import cheap_function_test
+
+    with _session() as session:
+        result = cheap_function_test(session, project_ref=project, prompt_template_id=prompt, show_response_preview=show_response_preview, debug=debug)
+    for key in ["status", "provider", "model", "base_url", "api_key_present", "http_status", "stage", "error_type", "error_message", "suggested_fix"]:
+        console.print("{}: {}".format(key, result.get(key)))
+    if show_response_preview and result.get("raw_response_preview"):
+        console.print("raw_response_preview: {}".format(result["raw_response_preview"]))
+
+
+@suggestions_app.command("run")
+def suggestions_run(project: str = typer.Option(..., help="Project slug or ID."), literature_item: str = typer.Option(..., help="Single literature item ID."), prompt: str = typer.Option(..., help="Prompt template ID."), ontology_context_mode: str = typer.Option("labels_definitions_relations", help="Ontology context mode.")) -> None:
+    from backend.app.ontology_suggestions import run_suggestions
+
+    with _session() as session:
+        result = run_suggestions(session, project_ref=project, prompt_template_id=prompt, literature_scope="one", literature_ids=[literature_item], ontology_context_mode=ontology_context_mode)
+    console.print("[green]Suggestion run ok[/green] run_id={} parsed={}".format(result["run_id"], result["suggestion_count"]))
+
+
+@suggestions_app.command("list-runs")
+def suggestions_list_runs() -> None:
+    from backend.app.ontology_suggestions import list_runs
+
+    for run in list_runs():
+        console.print("{} {} {} project={} prompt={}".format(run.get("run_id"), run.get("run_type"), run.get("status"), run.get("project_id"), run.get("prompt_template_id")))
+
+
+@suggestions_app.command("show-run")
+def suggestions_show_run(run_id: str) -> None:
+    from backend.app.ontology_suggestions import show_run
+
+    payload = show_run(run_id)
+    payload.pop("raw_response", None)
+    console.print_json(data=payload)
 
 @project_app.command("create")
 def project_create(
