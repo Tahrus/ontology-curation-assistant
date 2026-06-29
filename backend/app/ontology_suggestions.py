@@ -36,6 +36,7 @@ PROMPT_DIR = DATA_ROOT / "prompts"
 RUN_DIR = DATA_ROOT / "runs"
 LOG_DIR = DATA_ROOT / "logs"
 FUNCTION_TEST_LOG_DIR = LOG_DIR / "api_function_tests"
+LLM_PIPELINE_TEST_LOG_DIR = LOG_DIR / "llm_pipeline_tests"
 TEMPLATE_FILE = PROMPT_DIR / "templates.json"
 SYSTEM_PROMPT = "Return strict JSON only. Do not create ontology IDs or ontology files."
 PROMPT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -185,8 +186,18 @@ class Pricing:
     warning_threshold: float = 0.8
 
 
+@dataclass(frozen=True)
+class SuggestionInputLimits:
+    literature_char_limit: int | None = None
+    ontology_context_char_limit: int | None = None
+
+
+PIPELINE_TEST_LIMITS = SuggestionInputLimits(literature_char_limit=5000, ontology_context_char_limit=6000)
+FULL_RUN_LIMITS = SuggestionInputLimits()
+
+
 def ensure_storage() -> None:
-    for path in [PROMPT_DIR, RUN_DIR, LOG_DIR, FUNCTION_TEST_LOG_DIR]:
+    for path in [PROMPT_DIR, RUN_DIR, LOG_DIR, FUNCTION_TEST_LOG_DIR, LLM_PIPELINE_TEST_LOG_DIR]:
         path.mkdir(parents=True, exist_ok=True)
     if TEMPLATE_FILE.exists():
         legacy = json.loads(TEMPLATE_FILE.read_text(encoding="utf-8"))
@@ -484,14 +495,52 @@ def build_ontology_context(project: Project, mode: str) -> str:
     return "\n".join(lines)
 
 
-def build_literature_context(entries: list[dict[str, Any]]) -> str:
+def _entry_markdown_file(entry: dict[str, Any]) -> Path | None:
+    value = entry.get("markdown_file") or entry.get("markdown_path") or entry.get("path")
+    return Path(value) if value else None
+
+
+def _entry_markdown(entry: dict[str, Any]) -> tuple[str, Path | None]:
+    text = entry.get("literature_markdown") or entry.get("markdown") or entry.get("content") or ""
+    path = _entry_markdown_file(entry)
+    if not text and path:
+        if not path.exists():
+            raise ValueError(f"Selected literature Markdown file does not exist: {path}")
+        text = path.read_text(encoding="utf-8", errors="replace")
+    if not str(text).strip():
+        raise ValueError(f"Selected literature item {_entry_id(entry) or '(unknown)'} has no Markdown text to send to the LLM.")
+    return str(text), path
+
+
+def _truncate_text(value: str, limit: int | None) -> str:
+    if limit is None or len(value) <= limit:
+        return value
+    return value[:limit].rstrip() + "\n\n[truncated]"
+
+
+def build_literature_context(entries: list[dict[str, Any]], *, limit: int | None = None) -> tuple[str, dict[str, Any]]:
     blocks = []
+    before = 0
+    sent = 0
+    markdown_paths = []
+    titles = []
     for entry in entries:
-        text = entry.get("literature_markdown") or entry.get("markdown") or entry.get("content") or ""
-        if not text and entry.get("markdown_file"):
-            text = Path(entry["markdown_file"]).read_text(encoding="utf-8", errors="replace")
-        blocks.append(f"## Literature item {_entry_id(entry)}\nTitle: {entry.get('title') or 'Untitled'}\n\n{text}")
-    return "\n\n".join(blocks)
+        text, path = _entry_markdown(entry)
+        before += len(text)
+        truncated = _truncate_text(text, limit)
+        sent += len(truncated)
+        if path:
+            markdown_paths.append(str(path))
+        titles.append(entry.get("title") or "Untitled")
+        blocks.append(f"## Literature item {_entry_id(entry)}\nTitle: {entry.get('title') or 'Untitled'}\n\n{truncated}")
+    return "\n\n".join(blocks), {
+        "markdown_loaded": bool(blocks),
+        "markdown_file_path": markdown_paths[0] if len(markdown_paths) == 1 else None,
+        "markdown_file_paths": markdown_paths,
+        "markdown_character_count_before_truncation": before,
+        "markdown_character_count_sent": sent,
+        "selected_literature_title": titles[0] if len(titles) == 1 else None,
+    }
 
 
 def target_schema() -> dict[str, Any]:
@@ -518,6 +567,76 @@ def target_schema() -> dict[str, Any]:
     }
 
 
+def llm_pipeline_test_schema() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "task": "llm_pipeline_test",
+        "received_inputs": {
+            "literature_markdown": True,
+            "ontology_context": True,
+            "prompt_template": True,
+        },
+        "detected_context": {
+            "literature_title_or_topic": "string or null",
+            "ontology_terms_seen": ["string"],
+            "prompt_task_type": "string or null",
+        },
+        "test_suggestion": {
+            "suggestion_type": "class | relation | definition | synonym | annotation | none",
+            "label": "string or null",
+            "evidence_quote": "string or null",
+            "confidence": "low | medium | high | none",
+        },
+        "warnings": [],
+    }
+
+
+def assemble_llm_pipeline_test_payload(
+    *,
+    project: Project,
+    literature_markdown: str,
+    ontology_context: str,
+    prompt_template: PromptTemplate,
+    prompt_text: str,
+    ontology_context_mode: str,
+    output_schema: dict[str, Any],
+) -> str:
+    return "\n".join(
+        [
+            "# System / Role",
+            "You are assisting with ontology curation.",
+            "",
+            "# Task",
+            "Run an LLM pipeline test and return only JSON.",
+            "",
+            "# Selected prompt template",
+            f"ID: {prompt_template.id}",
+            f"Title: {prompt_template.title}",
+            f"Task type: {prompt_template.task_type}",
+            f"Version: {prompt_template.version}",
+            "",
+            prompt_text,
+            "",
+            "# Literature Markdown",
+            literature_markdown,
+            "",
+            "# Ontology context",
+            f"Mode: {ontology_context_mode}",
+            ontology_context,
+            "",
+            "# Required JSON output schema",
+            json.dumps(output_schema, indent=2),
+            "",
+            "# Constraints",
+            "Return only JSON.",
+            "Do not invent information.",
+            "Use only the provided literature and ontology context.",
+            f"Project id: {project.slug}",
+            f"Ontology id: {project.ontology_id}",
+        ]
+    )
+
+
 def build_prompt(
     *,
     project: Project,
@@ -526,42 +645,158 @@ def build_prompt(
     literature_entries: list[dict[str, Any]],
     ontology_context: str,
     ontology_context_mode: str,
-    cheap_test: bool = False,
-) -> str:
-    if cheap_test:
-        literature_context = "Dummy literature: Protein precipitation can occur after adding ammonium sulfate."
-        ontology_context = "PPO:0000001 | protein precipitation | definition: a precipitation process involving protein"
-        schema = {"status": "ok", "task": "ontology_suggestion_test", "suggestions": []}
-    else:
-        literature_context = build_literature_context(literature_entries)
-        schema = target_schema()
-    return "\n".join(
-        [
-            f"Prompt template id: {template.id}",
-            f"Task type: {template.task_type}",
-            f"Project id: {project.slug}",
-            f"Ontology id: {project.ontology_id}",
-            f"Ontology context mode: {ontology_context_mode}",
-            "",
-            "Template instructions:",
-            prompt_text,
-            "",
-            "Return strict JSON matching this target schema:",
-            json.dumps(schema, indent=2),
-            "",
-            "Ontology context:",
-            ontology_context,
-            "",
-            "Literature context:",
-            literature_context,
-        ]
+    output_schema: dict[str, Any] | None = None,
+    limits: SuggestionInputLimits = FULL_RUN_LIMITS,
+) -> tuple[str, dict[str, Any]]:
+    literature_context, literature_diag = build_literature_context(literature_entries, limit=limits.literature_char_limit)
+    ontology_before = len(ontology_context)
+    ontology_sent = _truncate_text(ontology_context, limits.ontology_context_char_limit)
+    schema = output_schema or target_schema()
+    prompt = assemble_llm_pipeline_test_payload(
+        project=project,
+        literature_markdown=literature_context,
+        ontology_context=ontology_sent,
+        prompt_template=template,
+        prompt_text=prompt_text,
+        ontology_context_mode=ontology_context_mode,
+        output_schema=schema,
     )
+    diagnostics = {
+        **literature_diag,
+        "ontology_loaded": bool(ontology_context.strip()),
+        "ontology_context_character_count_before_truncation": ontology_before,
+        "ontology_context_character_count_sent": len(ontology_sent),
+        "prompt_loaded": bool(prompt_text.strip()),
+        "prompt_character_count": len(prompt_text),
+        "final_assembled_request_character_count": len(prompt),
+    }
+    return prompt, diagnostics
+
+
+def prepare_suggestion_request(
+    session: Session,
+    *,
+    project_ref: str,
+    prompt_template_id: str,
+    literature_scope: str = "one",
+    literature_ids: list[str] | None = None,
+    ontology_context_mode: str = "labels_definitions_relations",
+    prompt_text: str | None = None,
+    limits: SuggestionInputLimits = FULL_RUN_LIMITS,
+    output_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    project = get_project(session, project_ref)
+    template = get_prompt_template(prompt_template_id)
+    entries = select_literature(project, literature_scope, literature_ids)
+    if not entries:
+        raise ValueError("No literature entries match the selected scope.")
+    ontology_path = project_ontology_path(project)
+    if not ontology_path:
+        raise ValueError("The selected project has no readable ontology file.")
+    ontology_context = build_ontology_context(project, ontology_context_mode)
+    prompt, assembly = build_prompt(
+        project=project,
+        template=template,
+        prompt_text=prompt_text or template.prompt_text,
+        literature_entries=entries,
+        ontology_context=ontology_context,
+        ontology_context_mode=ontology_context_mode,
+        output_schema=output_schema,
+        limits=limits,
+    )
+    config = llm_config(session)
+    tokens = estimate_input_size(prompt, system_prompt=SYSTEM_PROMPT)["approx_tokens"]
+    return {
+        "project": project,
+        "template": template,
+        "entries": entries,
+        "ontology_path": ontology_path,
+        "ontology_context_mode": ontology_context_mode,
+        "prompt": prompt,
+        "assembly": assembly,
+        "estimated_input_tokens": tokens,
+        "config": config,
+    }
+
+
+def parse_json_response(text: str) -> tuple[Any, str, bool, str | None]:
+    body = text or ""
+    stripped = body.strip()
+    try:
+        return json.loads(stripped), "direct_json", False, None
+    except json.JSONDecodeError:
+        pass
+    match = re.fullmatch(r"```json\s*(.*?)\s*```", stripped, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return json.loads(match.group(1).strip()), "fenced_json", True, "Recovered JSON from a Markdown ```json fenced block."
+    match = re.fullmatch(r"```\s*(.*?)\s*```", stripped, flags=re.DOTALL)
+    if match:
+        return json.loads(match.group(1).strip()), "extracted_json", True, "Recovered JSON from a Markdown fenced code block."
+    return json.loads(stripped), "failed", False, None
 
 
 def validate_test_payload(payload: Any) -> dict[str, Any]:
     if payload != {"status": "ok", "task": "ontology_suggestion_test", "suggestions": []}:
         raise ValueError("Cheap function test response did not match the required minimal JSON.")
     return payload
+
+
+def validate_llm_pipeline_test_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("LLM pipeline test response must be a JSON object.")
+    if payload.get("status") != "ok":
+        raise ValueError("LLM pipeline test response field status must be 'ok'.")
+    if payload.get("task") != "llm_pipeline_test":
+        raise ValueError("LLM pipeline test response field task must be 'llm_pipeline_test'.")
+    received = payload.get("received_inputs")
+    if not isinstance(received, dict) or not all(received.get(key) is True for key in ["literature_markdown", "ontology_context", "prompt_template"]):
+        raise ValueError("LLM pipeline test did not confirm all required input channels.")
+    detected = payload.get("detected_context")
+    if not isinstance(detected, dict) or not isinstance(detected.get("ontology_terms_seen"), list):
+        raise ValueError("LLM pipeline test response detected_context is invalid.")
+    suggestion = payload.get("test_suggestion")
+    if not isinstance(suggestion, dict):
+        raise ValueError("LLM pipeline test response test_suggestion is invalid.")
+    if suggestion.get("suggestion_type") not in {"class", "relation", "definition", "synonym", "annotation", "none"}:
+        raise ValueError("LLM pipeline test response has unsupported test_suggestion.suggestion_type.")
+    if suggestion.get("confidence") not in {"low", "medium", "high", "none"}:
+        raise ValueError("LLM pipeline test response has unsupported test_suggestion.confidence.")
+    if not isinstance(payload.get("warnings", []), list):
+        raise ValueError("LLM pipeline test response warnings must be a list.")
+    return payload
+
+
+def _diagnostic_base_from_request(request: dict[str, Any]) -> dict[str, Any]:
+    project = request["project"]
+    template = request["template"]
+    entries = request["entries"]
+    config = request["config"]
+    return {
+        "provider": normalize_provider_id(config.provider),
+        "model": config.model,
+        "api_key_present": bool(config.resolved_api_key),
+        "project_id": project.slug,
+        "project_title": project.name,
+        "selected_literature_id": _entry_id(entries[0]) if entries else None,
+        "selected_literature_title": request["assembly"].get("selected_literature_title"),
+        "selected_ontology_path": str(request["ontology_path"]),
+        "ontology_context_mode": request["ontology_context_mode"],
+        "selected_prompt_id": template.id,
+        "selected_prompt_title": template.title,
+        "selected_prompt_version": template.version,
+        "estimated_input_tokens": request["estimated_input_tokens"],
+        "max_output_tokens": config.max_output_tokens,
+        **request["assembly"],
+    }
+
+
+def _write_pipeline_test_log(payload: dict[str, Any]) -> dict[str, Any]:
+    ensure_storage()
+    run_id = payload.get("run_id") or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    path = LLM_PIPELINE_TEST_LOG_DIR / f"{run_id}.json"
+    stored = {**payload, "run_id": run_id, "output_path": str(path)}
+    path.write_text(json.dumps(stored, indent=2), encoding="utf-8")
+    return stored
 
 
 def validate_suggestion_payload(payload: Any, *, project: Project, template_id: str) -> dict[str, Any]:
@@ -605,37 +840,127 @@ def preview_run(
     ontology_context_mode: str = "labels_definitions_relations",
     prompt_text: str | None = None,
 ) -> dict[str, Any]:
-    project = get_project(session, project_ref)
-    template = get_prompt_template(prompt_template_id)
-    entries = select_literature(project, literature_scope, literature_ids)
-    if not entries:
-        raise ValueError("No literature entries match the selected scope.")
-    ontology_context = build_ontology_context(project, ontology_context_mode)
-    prompt = build_prompt(
-        project=project,
-        template=template,
-        prompt_text=prompt_text or template.prompt_text,
-        literature_entries=entries,
-        ontology_context=ontology_context,
+    request = prepare_suggestion_request(
+        session,
+        project_ref=project_ref,
+        prompt_template_id=prompt_template_id,
+        literature_scope=literature_scope,
+        literature_ids=literature_ids,
         ontology_context_mode=ontology_context_mode,
+        prompt_text=prompt_text,
+        limits=FULL_RUN_LIMITS,
     )
-    config = llm_config(session)
-    tokens = estimate_input_size(prompt, system_prompt=SYSTEM_PROMPT)["approx_tokens"]
+    project = request["project"]
+    template = request["template"]
     pricing = load_pricing(session, project)
     return {
         "project": {"id": project.slug, "label": project.name},
-        "literature_ids": [_entry_id(entry) for entry in entries],
-        "literature_count": len(entries),
+        "literature_ids": [_entry_id(entry) for entry in request["entries"]],
+        "literature_count": len(request["entries"]),
         "ontology_context_mode": ontology_context_mode,
         "prompt_template_id": template.id,
         "prompt_template_title": template.title,
         "prompt_template_version": template.version,
-        "estimated_input_tokens": tokens,
-        "max_output_tokens": config.max_output_tokens,
-        "cost": estimate_cost(tokens, config.max_output_tokens, pricing),
-        "requires_confirmation": len(entries) > 1,
-        "prompt": prompt,
+        "estimated_input_tokens": request["estimated_input_tokens"],
+        "max_output_tokens": request["config"].max_output_tokens,
+        "cost": estimate_cost(request["estimated_input_tokens"], request["config"].max_output_tokens, pricing),
+        "requires_confirmation": len(request["entries"]) > 1,
+        "prompt": request["prompt"],
+        "input_assembly": request["assembly"],
     }
+
+
+def llm_pipeline_test(
+    session: Session,
+    *,
+    project_ref: str,
+    prompt_template_id: str,
+    literature_ids: list[str],
+    ontology_context_mode: str = "labels_definitions_relations",
+    prompt_text: str | None = None,
+    caller: SuggestionCaller | None = None,
+) -> dict[str, Any]:
+    request = prepare_suggestion_request(
+        session,
+        project_ref=project_ref,
+        prompt_template_id=prompt_template_id,
+        literature_scope="one",
+        literature_ids=literature_ids,
+        ontology_context_mode=ontology_context_mode,
+        prompt_text=prompt_text,
+        limits=PIPELINE_TEST_LIMITS,
+        output_schema=llm_pipeline_test_schema(),
+    )
+    config = request["config"]
+    base = _diagnostic_base_from_request(request)
+    base.update({
+        "literature_character_limit": PIPELINE_TEST_LIMITS.literature_char_limit,
+        "ontology_context_character_limit": PIPELINE_TEST_LIMITS.ontology_context_char_limit,
+        "assembled_prompt_preview": request["prompt"][:1000],
+    })
+    if not config.provider or not config.resolved_api_key:
+        result = {
+            **base,
+            "ok": False,
+            "status": "error",
+            "stage": "configuration",
+            "parsed_json": False,
+            "schema_valid": False,
+            "json_extraction_method": "failed",
+            "json_recovered": False,
+            "warnings": [],
+            "error_type": "missing_api_key",
+            "error_message": "No API key was found. Configure an LLM provider before running the pipeline test.",
+            "suggested_fix": "Save an LLM provider and API key in Settings, or configure the expected environment variable.",
+            "raw_response_preview": None,
+        }
+        return _write_pipeline_test_log(result)
+    raw = ""
+    payload = None
+    method = "failed"
+    recovered = False
+    recovery_warning = None
+    warnings: list[str] = []
+    status = "success"
+    error_type = None
+    error_message = None
+    suggested_fix = None
+    try:
+        raw, _usage = _result_text(caller(request["prompt"], config) if caller else generate_text(request["prompt"], system_prompt=SYSTEM_PROMPT, config=config, json_mode=True))
+        payload, method, recovered, recovery_warning = parse_json_response(raw)
+        validate_llm_pipeline_test_payload(payload)
+        if recovered:
+            status = "warning"
+            warnings.append(recovery_warning or "Recovered JSON from a fenced response.")
+    except json.JSONDecodeError as exc:
+        status = "error"
+        error_type = "invalid_json_response"
+        error_message = f"JSON parser error: {exc}"
+        suggested_fix = "Ask the provider for JSON-only output or enable provider-native JSON mode where available."
+    except (ValueError, LlmClientError) as exc:
+        status = "error"
+        error_type = "schema_validation_error" if payload is not None else "llm_request_error"
+        error_message = str(exc)
+        suggested_fix = "Check selected literature, ontology context, prompt template, model, and provider diagnostics."
+    result = {
+        **base,
+        "ok": status in {"success", "warning"},
+        "status": status,
+        "stage": "schema_validation" if payload is not None else "json_parse",
+        "parsed_json": payload is not None,
+        "schema_valid": payload is not None and status in {"success", "warning"},
+        "json_extraction_method": method,
+        "json_recovered": recovered,
+        "json_recovery_warning": recovery_warning,
+        "warnings": warnings + ([str(item) for item in payload.get("warnings", [])] if isinstance(payload, dict) else []),
+        "error_type": error_type,
+        "error_message": error_message,
+        "suggested_fix": suggested_fix,
+        "response_body_length": len(raw),
+        "raw_response_preview": raw[:1000],
+        "payload": payload,
+    }
+    return _write_pipeline_test_log(result)
 
 
 def cheap_function_test(
@@ -690,9 +1015,19 @@ def run_suggestions(
     )
     if preview["requires_confirmation"] and not confirmed:
         raise ValueError("Multi-paper ontology suggestion runs require explicit confirmation.")
-    project = get_project(session, project_ref)
-    template = get_prompt_template(prompt_template_id)
-    config = llm_config(session)
+    request = prepare_suggestion_request(
+        session,
+        project_ref=project_ref,
+        prompt_template_id=prompt_template_id,
+        literature_scope=literature_scope,
+        literature_ids=literature_ids,
+        ontology_context_mode=ontology_context_mode,
+        prompt_text=prompt_text,
+        limits=FULL_RUN_LIMITS,
+    )
+    project = request["project"]
+    template = request["template"]
+    config = request["config"]
     if not config.provider or not config.resolved_api_key:
         raise LlmUnavailableError("No API key was found. Configure an LLM provider before running suggestions.")
     raw = ""
@@ -700,9 +1035,13 @@ def run_suggestions(
     payload = None
     error = None
     status = "ok"
+    json_extraction_method = "failed"
+    json_recovered = False
+    json_recovery_warning = None
     try:
-        raw, usage = _result_text(caller(preview["prompt"], config) if caller else generate_text(preview["prompt"], system_prompt=SYSTEM_PROMPT, config=config))
-        payload = validate_suggestion_payload(json.loads(raw), project=project, template_id=prompt_template_id)
+        raw, usage = _result_text(caller(request["prompt"], config) if caller else generate_text(request["prompt"], system_prompt=SYSTEM_PROMPT, config=config, json_mode=True))
+        parsed, json_extraction_method, json_recovered, json_recovery_warning = parse_json_response(raw)
+        payload = validate_suggestion_payload(parsed, project=project, template_id=template.id)
     except (json.JSONDecodeError, ValueError, LlmClientError) as exc:
         status = "failed"
         error = str(exc)
@@ -719,9 +1058,13 @@ def run_suggestions(
             "prompt_template_id": template.id,
             "prompt_template_title": template.title,
             "prompt_template_version": template.version,
-            "estimated_tokens": preview["estimated_input_tokens"],
+            "estimated_tokens": request["estimated_input_tokens"],
             "reported_token_usage": usage,
             "estimated_cost": preview["cost"],
+            "input_assembly": request["assembly"],
+            "json_extraction_method": json_extraction_method,
+            "json_recovered": json_recovered,
+            "json_recovery_warning": json_recovery_warning,
             "error": error,
             "raw_response": raw,
             "payload": payload,
@@ -743,6 +1086,7 @@ def run_suggestions(
                 "prompt_template_id": template.id,
                 "prompt_template_title": template.title,
                 "prompt_template_version": template.version,
+                "input_assembly": request["assembly"],
             }
         ),
         prompt_text=prompt_text or template.prompt_text,
@@ -780,6 +1124,8 @@ def run_suggestions(
         "curation_run_id": curation_run.id,
         "suggestion_count": len(payload["suggestions"]),
         "output_path": run_file["path"],
+        "json_extraction_method": json_extraction_method,
+        "json_recovered": json_recovered,
         "preview": {key: value for key, value in preview.items() if key != "prompt"},
     }
 

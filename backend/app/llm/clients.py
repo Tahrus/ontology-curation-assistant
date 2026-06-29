@@ -45,7 +45,7 @@ class LlmConnectionTestResult:
 class LlmClient(Protocol):
     provider: str
 
-    def generate_text(self, prompt: str, *, system_prompt: str | None = None) -> LlmTextResult:
+    def generate_text(self, prompt: str, *, system_prompt: str | None = None, json_mode: bool = False) -> LlmTextResult:
         ...
 
 
@@ -63,8 +63,9 @@ def generate_text(
     *,
     system_prompt: str | None = None,
     config: LlmRuntimeConfig,
+    json_mode: bool = False,
 ) -> LlmTextResult:
-    return create_llm_client(config).generate_text(prompt, system_prompt=system_prompt)
+    return create_llm_client(config).generate_text(prompt, system_prompt=system_prompt, json_mode=json_mode)
 
 
 def test_llm_connection(config: LlmRuntimeConfig) -> LlmConnectionTestResult:
@@ -148,8 +149,8 @@ class OpenAILLMClient:
         self.model = config.model or (preset.default_model if preset else "gpt-4.1-mini")
         self.base_url = (config.base_url or (preset.default_base_url if preset else None) or "https://api.openai.com/v1").rstrip("/")
 
-    def generate_text(self, prompt: str, *, system_prompt: str | None = None) -> LlmTextResult:
-        return _call_openai_chat(self.config, self.api_key, self.model, self.base_url, prompt, system_prompt, self.provider)
+    def generate_text(self, prompt: str, *, system_prompt: str | None = None, json_mode: bool = False) -> LlmTextResult:
+        return _call_openai_chat(self.config, self.api_key, self.model, self.base_url, prompt, system_prompt, self.provider, json_mode=json_mode)
 
 
 class CustomOpenAICompatibleClient(OpenAILLMClient):
@@ -172,7 +173,7 @@ class GeminiLLMClient:
         preset = provider_preset("gemini")
         self.model = config.model or (preset.default_model if preset else "gemini-2.5-flash")
 
-    def generate_text(self, prompt: str, *, system_prompt: str | None = None) -> LlmTextResult:
+    def generate_text(self, prompt: str, *, system_prompt: str | None = None, json_mode: bool = False) -> LlmTextResult:
         started = time.perf_counter()
         try:
             from google import genai
@@ -190,6 +191,7 @@ class GeminiLLMClient:
                     system_instruction=system_prompt,
                     temperature=self.config.temperature,
                     max_output_tokens=self.config.max_output_tokens,
+                    response_mime_type="application/json" if json_mode else None,
                 ),
             )
         except Exception as exc:
@@ -216,7 +218,7 @@ class AnthropicLLMClient:
         self.model = config.model or (preset.default_model if preset else "claude-3-5-sonnet-latest")
         self.base_url = (config.base_url or (preset.default_base_url if preset else None) or "https://api.anthropic.com/v1").rstrip("/")
 
-    def generate_text(self, prompt: str, *, system_prompt: str | None = None) -> LlmTextResult:
+    def generate_text(self, prompt: str, *, system_prompt: str | None = None, json_mode: bool = False) -> LlmTextResult:
         started = time.perf_counter()
         payload: dict[str, Any] = {
             "model": self.model,
@@ -255,6 +257,8 @@ def _call_openai_chat(
     prompt: str,
     system_prompt: str | None,
     provider: str,
+    *,
+    json_mode: bool = False,
 ) -> LlmTextResult:
     started = time.perf_counter()
     try:
@@ -270,6 +274,7 @@ def _call_openai_chat(
                 "temperature": config.temperature,
                 "max_tokens": config.max_output_tokens,
                 "stream": False,
+                **({"response_format": {"type": "json_object"}} if json_mode else {}),
             },
             timeout=config.timeout_seconds,
         )

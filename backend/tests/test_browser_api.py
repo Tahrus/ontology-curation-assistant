@@ -63,9 +63,12 @@ def test_browser_subpages_serve_html(client):
         ("/zotero", "New / Uncurated Literature"),
         ("/literature", "New / Uncurated Literature"),
         ("/ontology", "Ontology"),
-        ("/curation-prompt", "Ontology Curation Prompt"),
+        ("/curation-prompt", "Prompts"),
+        ("/prompts", "Prompts"),
+        ("/curate-prompts", "Prompts"),
         ("/curation", "Candidate Curation"),
-        ("/suggestions", "Project Suggestions Review"),
+        ("/suggestions", "Test LLM pipeline"),
+        ("/ontology-suggestions", "Test LLM pipeline"),
         ("/evaluation", "Evaluation"),
         ("/export", "Export / Visualization"),
     ]:
@@ -1159,18 +1162,35 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     script = (static_dir / "app.js").read_text(encoding="utf-8")
     styles = (static_dir / "styles.css").read_text(encoding="utf-8")
 
-    for route in ["/config", "/zotero", "/ontology", "/curation", "/curate-prompts", "/export"]:
+    for route in ["/config", "/zotero", "/ontology", "/curation", "/prompts", "/suggestions", "/export"]:
         assert f'href="{route}"' in html
+    assert 'href="/curate-prompts"' not in html
+    assert 'href="/ontology-suggestions"' not in html
+    assert 'href="/evaluation"' not in html
     assert 'href="/curation-prompt"' not in html
     assert 'class="logo"' in html
     assert "/static/app.js?v=" in html
     assert "/static/styles.css?v=" in html
     assert "object-fit: contain" in styles
+    assert "padding-top: var(--topbar-height, 0px)" in styles
+    assert "position: fixed" in styles
+    assert "z-index: 100" in styles
+    assert "syncTopbarOffset" in script
+    assert "Check whether Docker, ROBOT, Java, Git, and ODK paths" in html
+    assert "Create, edit, and manage reusable LLM prompt templates" in html
+    assert "Select project inputs and start LLM pipeline tests" in html
+    assert "Literature entries that were reviewed and accepted" in html
+    assert "Newly imported literature that still needs review" in html
     assert "width: 224px" in styles
     assert "height: 68px" in styles
     assert "APP_ROUTES" in script
     assert "curation-prompt" in script
-    assert "Ontology Curation Prompt" in html
+    assert "Test LLM pipeline" in html
+    assert 'data-page="prompts"' in html
+    assert html.count('data-nav="prompts"') == 1
+    assert 'data-page="suggestions"' in html
+    assert "Review" in html
+    assert "Evaluation" in html
     assert "/api/curation/prompt" in script
     assert "/api/curation/suggestions/run" in script
     assert "combined_literature.md" in html
@@ -1366,7 +1386,7 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "Extraction warnings" in script
     assert "project_tags" in script
     assert "Promise.all([loadStatus(), loadEntries(), loadCandidates(), loadOntologyStatus(), loadSavedConfigs()])" not in script
-    assert "20260602-md" in html
+    assert "20260602-navfix" in html
 
 
 def test_parse_ols_response_scores_and_flags_match():

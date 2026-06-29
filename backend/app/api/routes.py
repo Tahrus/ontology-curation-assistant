@@ -1046,6 +1046,21 @@ def ontology_suggestion_test_api(payload: OntologySuggestionPreviewPayload, sess
     return cheap_ontology_suggestion_test(payload, session)
 
 
+@router.post("/ontology-suggestions/test-pipeline")
+def llm_pipeline_ontology_suggestion_test(payload: OntologySuggestionPreviewPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
+    try:
+        return ontology_suggestion_service.llm_pipeline_test(
+            session,
+            project_ref=payload.project_id,
+            prompt_template_id=payload.prompt_template_id,
+            literature_ids=payload.literature_ids,
+            ontology_context_mode=payload.ontology_context_mode,
+            prompt_text=payload.prompt_text,
+        )
+    except (ValueError, LlmUnavailableError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/ontology-suggestions/run")
 def run_ontology_suggestions(payload: OntologySuggestionRunPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
     try:
