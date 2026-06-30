@@ -1129,3 +1129,29 @@ a.is-disabled {
     padding-left: 12px;
   }
 }
+
+.import-results {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.import-results h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.import-results ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.import-results li {
+  overflow-wrap: anywhere;
+}
+
+.import-results .status-label {
+  font-weight: 700;
+}

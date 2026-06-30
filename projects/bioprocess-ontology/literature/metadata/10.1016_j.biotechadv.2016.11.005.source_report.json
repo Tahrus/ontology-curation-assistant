@@ -1,0 +1,55 @@
+{
+  "metadata_source": "zotero+crossref",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "skipped",
+      "attempts": [
+        {
+          "kind": "pii",
+          "value": "S0734975016301513",
+          "status": "full_text_unavailable",
+          "reason": "response did not contain a structured full-text body"
+        },
+        {
+          "kind": "doi",
+          "value": "10.1016/j.biotechadv.2016.11.005",
+          "status": "full_text_unavailable",
+          "reason": "response did not contain a structured full-text body"
+        },
+        {
+          "kind": "url",
+          "value": "https://www.sciencedirect.com/science/article/pii/S0734975016301513",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        }
+      ]
+    }
+  ],
+  "selected_provider": null,
+  "fulltext_source": null,
+  "fulltext_format": null,
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "provider_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "crossref_status": "success",
+  "crossref_links": [
+    {
+      "URL": "https://api.elsevier.com/content/article/PII:S0734975016301513?httpAccept=text/plain",
+      "content-type": "text/plain",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "https://api.elsevier.com/content/article/PII:S0734975016301513?httpAccept=text/xml",
+      "content-type": "text/xml",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    }
+  ]
+}

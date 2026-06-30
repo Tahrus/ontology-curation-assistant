@@ -833,6 +833,194 @@ def test_zotero_sync_skips_repository_duplicate_and_imports_new_book(client, mon
     assert book["markdown_status"] == "manual_markdown_required"
 
 
+def test_zotero_sync_reports_yang_springer_manual_markdown_required(client, monkeypatch, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "Yang import",
+            "ontology_id": "yang-import",
+            "project_type": "domain_ontology",
+            "local_workspace_path": str(tmp_path / "workspace"),
+            "activate": True,
+        },
+    ).json()
+    storage = tmp_path / "zotero-storage"
+    attachment_dir = storage / "YANGPDF"
+    attachment_dir.mkdir(parents=True)
+    (attachment_dir / "yang-antibody-production-review.pdf").write_text("readable pdf placeholder", encoding="utf-8")
+
+    class FakeZoteroClient:
+        def __init__(self, config):
+            pass
+
+        def fetch_items(self, *, collection_key=None, limit=None):
+            return [
+                {
+                    "key": "YANG2019",
+                    "data": {
+                        "itemType": "journalArticle",
+                        "title": "Economic Analysis of Batch and Continuous Biopharmaceutical Manufacturing",
+                        "date": "2019",
+                        "DOI": "10.1007/s12247-018-09370-4",
+                        "creators": [{"creatorType": "author", "lastName": "Yang"}],
+                        "publicationTitle": "Journal of Pharmaceutical Innovation",
+                    },
+                }
+            ]
+
+        def fetch_child_items(self, item_key):
+            assert item_key == "YANG2019"
+            return [
+                {
+                    "key": "YANGPDF",
+                    "data": {
+                        "itemType": "attachment",
+                        "contentType": "application/pdf",
+                        "title": "Economic Analysis of Batch and Continuous Biopharmaceutical Antibody Production: A Review",
+                        "path": "storage:yang-antibody-production-review.pdf",
+                    },
+                }
+            ]
+
+    import backend.app.api.routes as routes
+    import backend.app.literature.canonical as canonical
+    from backend.app.literature.providers.base import MetadataResult
+
+    class FakeCrossrefProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def resolve_metadata(self, item):
+            return MetadataResult("request_failed", "crossref")
+
+    monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
+    monkeypatch.setattr(canonical, "CrossrefProvider", FakeCrossrefProvider)
+    client.post("/api/config/zotero", json={"library_type": "user", "library_id": "1"})
+    client.post("/api/config/literature", json={"zotero_literature_storage_path": str(storage)})
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "publisher_api_required", "publisher_api_enrichment_enabled": True})
+
+    synced = client.post("/api/zotero/sync", json={})
+
+    assert synced.status_code == 200
+    body = synced.json()
+    assert body["fetched"] == 1
+    assert body["result_counts"]["unsupported_publisher"] == 1
+    result = body["failed_results"][0]
+    assert result["status"] == "unsupported_publisher"
+    assert result["title"] == "Economic Analysis of Batch and Continuous Biopharmaceutical Manufacturing"
+    assert result["zotero_key"] == "YANG2019"
+    assert result["doi"] == "10.1007/s12247-018-09370-4"
+    assert "Springer DOI detected" in result["reason"]
+    assert result["attachment"]["pdf_attachment_count"] == 1
+    assert len(result["attachment"]["pdf_paths"]) == 1
+
+    staged = client.get("/api/literature/canonical", params={"project": project["slug"]}).json()["staged_entries"]
+    yang = next(entry for entry in staged if entry["doi"] == "10.1007/s12247-018-09370-4")
+    assert yang["title"] == "Economic Analysis of Batch and Continuous Biopharmaceutical Manufacturing"
+    assert yang["markdown_status"] == "manual_markdown_required"
+    assert yang["fulltext_status"] == "unsupported_publisher"
+
+def test_zotero_import_preview_reports_yang_without_doi_or_pdf(client, monkeypatch, tmp_path):
+    client.post(
+        "/api/projects",
+        json={
+            "name": "Yang preview",
+            "ontology_id": "yang-preview",
+            "project_type": "domain_ontology",
+            "local_workspace_path": str(tmp_path / "workspace"),
+            "activate": True,
+        },
+    )
+
+    class FakeZoteroClient:
+        def __init__(self, config):
+            pass
+
+        def fetch_items(self, *, collection_key=None, limit=None):
+            return [
+                {
+                    "key": "YANGNODOI",
+                    "data": {
+                        "itemType": "journalArticle",
+                        "title": "Economic Analysis of Batch and Continuous Biopharmaceutical Antibody Production: A Review",
+                        "date": "2019",
+                        "creators": [{"creatorType": "author", "lastName": "Yang"}],
+                    },
+                }
+            ]
+
+        def fetch_child_items(self, item_key):
+            assert item_key == "YANGNODOI"
+            return []
+
+    import backend.app.api.routes as routes
+
+    monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
+    client.post("/api/config/zotero", json={"library_type": "user", "library_id": "1"})
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "publisher_api_required"})
+
+    response = client.post("/api/zotero/sync", json={"preview_only": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview_only"] is True
+    assert body["fetched"] == 1
+    assert body["preview_items"][0]["zotero_key"] == "YANGNODOI"
+    assert body["preview_items"][0]["status"] == "skipped_no_identifier"
+    assert body["preview_items"][0]["pdf_attachment_found"] is False
+    assert body["preview_items"][0]["title"].startswith("Economic Analysis of Batch")
+
+
+def test_zotero_sync_reports_wrong_project_tag_when_required(client, monkeypatch, tmp_path):
+    client.post(
+        "/api/projects",
+        json={
+            "name": "Project tag required",
+            "ontology_id": "required-tag",
+            "project_type": "domain_ontology",
+            "local_workspace_path": str(tmp_path / "workspace"),
+            "activate": True,
+        },
+    )
+
+    class FakeZoteroClient:
+        def __init__(self, config):
+            pass
+
+        def fetch_items(self, *, collection_key=None, limit=None):
+            return [
+                {
+                    "key": "YANGTAG",
+                    "data": {
+                        "itemType": "journalArticle",
+                        "title": "Economic Analysis of Batch and Continuous Biopharmaceutical Antibody Production: A Review",
+                        "date": "2019",
+                        "DOI": "10.1007/s12247-018-09370-4",
+                        "tags": [{"tag": "different-project"}],
+                    },
+                }
+            ]
+
+        def fetch_child_items(self, item_key):
+            return []
+
+    import backend.app.api.routes as routes
+
+    monkeypatch.setattr(routes, "ZoteroApiClient", FakeZoteroClient)
+    client.post("/api/config/zotero", json={"library_type": "user", "library_id": "1"})
+    client.post("/api/config/publisher", json={"literature_extraction_mode": "publisher_api_required"})
+
+    response = client.post("/api/zotero/sync", json={"require_project_tag": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result_counts"]["skipped_wrong_project_tag"] == 1
+    result = body["failed_results"][0]
+    assert result["zotero_key"] == "YANGTAG"
+    assert result["status"] == "skipped_wrong_project_tag"
+    assert result["tags"] == ["different-project"]
+
+
 def test_zotero_sync_handles_incomplete_non_string_fields(client, monkeypatch):
     class FakeZoteroClient:
         def __init__(self, config):
@@ -1226,6 +1414,12 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "button.disabled = true" in script
     assert "aria-busy" in script
     assert "action-toast" in html
+    assert "zotero-import-results" in html
+    assert "literature-import-results" in html
+    assert "renderImportResults" in script
+    assert "Preview Zotero Import" in html
+    assert "preview_only" in script
+    assert "unsupported_publisher" in script
     assert "showActionToast" in script
     assert "acknowledgeAction" in script
     assert "is-clicked" in styles

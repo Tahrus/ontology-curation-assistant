@@ -248,10 +248,12 @@
         </p>
         <div class="button-row">
           <button id="sync-zotero" type="button">Sync all Zotero records</button>
+          <button id="preview-zotero-import" type="button" class="secondary">Preview Zotero Import</button>
           <button id="import-test-zotero" type="button" class="secondary">Load Test Entries</button>
         </div>
         <label class="inline"><input id="zotero-use-limit" type="checkbox" /> Advanced: limit records for testing</label>
         <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
+        <div id="zotero-import-results" class="import-results" aria-live="polite"></div>
       </section>
 
       <section class="panel page-section" data-page="config" id="literature-pipeline-config-section">
@@ -336,6 +338,7 @@
           <div id="literature-tag-filters" class="project-tag-row" aria-label="Filter literature by project tags"></div>
         </div>
         <p id="literature-import-message" class="message" role="status" aria-live="polite"></p>
+        <div id="literature-import-results" class="import-results" aria-live="polite"></div>
         <p id="literature-repository-message" class="message" role="status" aria-live="polite"></p>
         <div class="subtab-row" role="tablist" aria-label="Literature status">
           <button id="literature-tab-curated" type="button" class="subtab active" role="tab" aria-controls="curated-literature-panel" aria-selected="true" data-literature-tab="curated">Curated Literature</button>

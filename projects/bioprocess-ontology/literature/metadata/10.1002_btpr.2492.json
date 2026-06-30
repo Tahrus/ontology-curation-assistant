@@ -1,0 +1,109 @@
+{
+  "title": "Integrated continuous bioprocessing: Economic, operational, and environmental feasibility for clinical and commercial antibody manufacture",
+  "authors": [
+    "James Pollock",
+    "Jon Coffman",
+    "Sa V. Ho",
+    "Suzanne S. Farid"
+  ],
+  "year": "2017",
+  "literature_type": "journal_article",
+  "item_type": "journalArticle",
+  "doi": "10.1002/btpr.2492",
+  "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5575510/",
+  "zotero_key": "LB7QZ7Y8",
+  "pmid": "28480535",
+  "pmcid": "PMC5575510",
+  "issn": "8756-7938",
+  "volume": "33",
+  "pages": "854-866",
+  "journal": "Biotechnology Progress",
+  "publisher": "Wiley",
+  "canonical_id": "10.1002_btpr.2492",
+  "source_type": "metadata_only",
+  "import_status": "staged",
+  "curation_status": "needs_manual_markdown",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-provider-v1",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+crossref",
+  "content_source": null,
+  "used_api_provider": "provider_registry",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "source_report_path": "metadata/10.1002_btpr.2492.source_report.json",
+  "markdown_file": null,
+  "markdown_available": false,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "api_identifier_attempts": [
+    {
+      "kind": "doi",
+      "value": "10.1002/btpr.2492",
+      "status": "http_404",
+      "reason": null
+    },
+    {
+      "kind": "pmid",
+      "value": "28480535",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
+      "kind": "pmcid",
+      "value": "PMC5575510",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
+      "kind": "issn",
+      "value": "8756-7938",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
+      "kind": "url",
+      "value": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5575510/",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    }
+  ],
+  "created_at": "2026-06-30T14:24:13.652579+00:00",
+  "imported_at": "2026-06-30T14:24:13.652579+00:00",
+  "updated_at": "2026-06-30T14:24:13.652579+00:00",
+  "artifacts": [
+    {
+      "path": "metadata/10.1002_btpr.2492.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1002_btpr.2492.source_report.json",
+      "artifact_type": "source_report_json",
+      "ownership": "staged"
+    }
+  ],
+  "generated_artifacts": [
+    "metadata/10.1002_btpr.2492.json",
+    "metadata/10.1002_btpr.2492.source_report.json"
+  ]
+}

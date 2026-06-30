@@ -1,0 +1,61 @@
+{
+  "metadata_source": "zotero+crossref",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "skipped",
+      "attempts": [
+        {
+          "kind": "pii",
+          "value": "S4053702300747",
+          "status": "http_404",
+          "reason": null
+        },
+        {
+          "kind": "doi",
+          "value": "10.1186/s40537-023-00747-y",
+          "status": "http_404",
+          "reason": null
+        },
+        {
+          "kind": "url",
+          "value": "https://doi.org/10.1186/s40537-023-00747-y",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        }
+      ]
+    }
+  ],
+  "selected_provider": null,
+  "fulltext_source": null,
+  "fulltext_format": null,
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "provider_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "crossref_status": "success",
+  "crossref_links": [
+    {
+      "URL": "https://link.springer.com/content/pdf/10.1186/s40537-023-00747-y.pdf",
+      "content-type": "application/pdf",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "https://link.springer.com/article/10.1186/s40537-023-00747-y/fulltext.html",
+      "content-type": "text/html",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "https://link.springer.com/content/pdf/10.1186/s40537-023-00747-y.pdf",
+      "content-type": "application/pdf",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+    }
+  ]
+}

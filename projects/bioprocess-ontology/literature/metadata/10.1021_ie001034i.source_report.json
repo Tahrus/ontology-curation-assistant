@@ -1,0 +1,43 @@
+{
+  "metadata_source": "zotero+crossref",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "skipped",
+      "attempts": [
+        {
+          "kind": "doi",
+          "value": "10.1021/ie001034i",
+          "status": "http_404",
+          "reason": null
+        },
+        {
+          "kind": "url",
+          "value": "https://doi.org/10.1021/ie001034i",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        }
+      ]
+    }
+  ],
+  "selected_provider": null,
+  "fulltext_source": null,
+  "fulltext_format": null,
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "blocked_reason": "No structured ACS full text was found. A literature entry was created from metadata. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "provider_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "crossref_status": "success",
+  "crossref_links": [
+    {
+      "URL": "https://pubs.acs.org/doi/pdf/10.1021/ie001034i",
+      "content-type": "unspecified",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+    }
+  ]
+}

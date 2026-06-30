@@ -1,0 +1,73 @@
+{
+  "metadata_source": "zotero+crossref",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "skipped",
+      "attempts": [
+        {
+          "kind": "doi",
+          "value": "10.1002/bit.70139",
+          "status": "http_404",
+          "reason": null
+        },
+        {
+          "kind": "pmid",
+          "value": "41451961",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "pmcid",
+          "value": "PMC12883902",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "issn",
+          "value": "0006-3592",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "url",
+          "value": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12883902/",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        }
+      ]
+    }
+  ],
+  "selected_provider": null,
+  "fulltext_source": null,
+  "fulltext_format": null,
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "provider_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "crossref_status": "success",
+  "crossref_links": [
+    {
+      "URL": "https://analyticalsciencejournals.onlinelibrary.wiley.com/doi/pdf/10.1002/bit.70139",
+      "content-type": "application/pdf",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "https://analyticalsciencejournals.onlinelibrary.wiley.com/doi/full-xml/10.1002/bit.70139",
+      "content-type": "application/xml",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "https://analyticalsciencejournals.onlinelibrary.wiley.com/doi/pdf/10.1002/bit.70139",
+      "content-type": "unspecified",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+    }
+  ]
+}

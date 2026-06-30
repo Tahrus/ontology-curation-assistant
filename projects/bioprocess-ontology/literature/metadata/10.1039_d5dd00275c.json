@@ -1,0 +1,92 @@
+{
+  "title": "Scientific knowledge graph and ontology generation using open large language models",
+  "authors": [
+    "Alexandru Oarga",
+    "Matthew Hart",
+    "Andres M. Bran",
+    "Magdalena Lederbauer",
+    "Philippe Schwaller"
+  ],
+  "year": "2026",
+  "literature_type": "journal_article",
+  "item_type": "journalArticle",
+  "doi": "10.1039/d5dd00275c",
+  "url": "https://pubs.rsc.org/en/content/articlelanding/2026/dd/d5dd00275c",
+  "zotero_key": "Y8MNSMRJ",
+  "journal": "Digital Discovery",
+  "publisher": "Royal Society of Chemistry (RSC)",
+  "issn": [
+    "2635-098X"
+  ],
+  "canonical_id": "10.1039_d5dd00275c",
+  "source_type": "metadata_only",
+  "import_status": "staged",
+  "curation_status": "needs_manual_markdown",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-provider-v1",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+crossref",
+  "content_source": null,
+  "used_api_provider": "provider_registry",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "source_report_path": "metadata/10.1039_d5dd00275c.source_report.json",
+  "markdown_file": null,
+  "markdown_available": false,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "api_identifier_attempts": [
+    {
+      "kind": "doi",
+      "value": "10.1039/d5dd00275c",
+      "status": "http_404",
+      "reason": null
+    },
+    {
+      "kind": "url",
+      "value": "https://pubs.rsc.org/en/content/articlelanding/2026/dd/d5dd00275c",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    }
+  ],
+  "created_at": "2026-06-30T11:27:31.414762+00:00",
+  "imported_at": "2026-06-30T11:27:31.414762+00:00",
+  "updated_at": "2026-06-30T14:21:35.667386+00:00",
+  "artifacts": [
+    {
+      "path": "metadata/10.1039_d5dd00275c.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1039_d5dd00275c.source_report.json",
+      "artifact_type": "source_report_json",
+      "ownership": "staged"
+    }
+  ],
+  "generated_artifacts": [
+    "metadata/10.1039_d5dd00275c.json",
+    "metadata/10.1039_d5dd00275c.source_report.json"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1039_d5dd00275c.json",
+  "repository_stage": "staged"
+}

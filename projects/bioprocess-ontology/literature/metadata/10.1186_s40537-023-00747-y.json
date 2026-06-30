@@ -1,0 +1,97 @@
+{
+  "title": "Unified platform for storing, retrieving, and analysing biomechanical applications data using graph database",
+  "authors": [
+    "Matevž Hribernik",
+    "Sašo Tomažič",
+    "Anton Umek",
+    "Anton Kos"
+  ],
+  "year": "2023",
+  "literature_type": "journal_article",
+  "item_type": "journalArticle",
+  "doi": "10.1186/s40537-023-00747-y",
+  "url": "https://doi.org/10.1186/s40537-023-00747-y",
+  "zotero_key": "LG2V9SDV",
+  "journal": "Journal of Big Data",
+  "publisher": "Springer Science and Business Media LLC",
+  "issn": [
+    "2196-1115"
+  ],
+  "canonical_id": "10.1186_s40537-023-00747-y",
+  "source_type": "metadata_only",
+  "import_status": "staged",
+  "curation_status": "needs_manual_markdown",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-provider-v1",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+crossref",
+  "content_source": null,
+  "used_api_provider": "provider_registry",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "source_report_path": "metadata/10.1186_s40537-023-00747-y.source_report.json",
+  "markdown_file": null,
+  "markdown_available": false,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "api_identifier_attempts": [
+    {
+      "kind": "pii",
+      "value": "S4053702300747",
+      "status": "http_404",
+      "reason": null
+    },
+    {
+      "kind": "doi",
+      "value": "10.1186/s40537-023-00747-y",
+      "status": "http_404",
+      "reason": null
+    },
+    {
+      "kind": "url",
+      "value": "https://doi.org/10.1186/s40537-023-00747-y",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    }
+  ],
+  "created_at": "2026-06-30T11:28:10.357724+00:00",
+  "imported_at": "2026-06-30T11:28:10.357724+00:00",
+  "updated_at": "2026-06-30T14:22:12.647428+00:00",
+  "artifacts": [
+    {
+      "path": "metadata/10.1186_s40537-023-00747-y.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1186_s40537-023-00747-y.source_report.json",
+      "artifact_type": "source_report_json",
+      "ownership": "staged"
+    }
+  ],
+  "generated_artifacts": [
+    "metadata/10.1186_s40537-023-00747-y.json",
+    "metadata/10.1186_s40537-023-00747-y.source_report.json"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1186_s40537-023-00747-y.json",
+  "repository_stage": "staged"
+}

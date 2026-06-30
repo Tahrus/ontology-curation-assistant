@@ -61,6 +61,22 @@ def _failure_message(status: str, *, has_sciencedirect_url: bool = False) -> str
     return messages.get(status, f"Elsevier API request failed ({status}).")
 
 
+def _publisher_hint_for_identifier(doi: str, pii: str, sciencedirect_url: str | None) -> str | None:
+    if pii or (sciencedirect_url and "sciencedirect.com" in sciencedirect_url.casefold()):
+        return "elsevier"
+    if doi.startswith("10.1016/"):
+        return "elsevier"
+    if doi.startswith("10.1007/"):
+        return "springer"
+    return None
+
+
+def _unsupported_publisher_message(provider: str, *, api_configured: bool = False) -> str:
+    if provider == "springer":
+        configured = " is configured, but structured Springer full-text import is not implemented yet" if api_configured else " is not configured and structured Springer full-text import is not implemented yet"
+        return f"Springer DOI detected. Springer API support{configured}. A metadata-only entry was created; upload structured Markdown manually, or explicitly approve PDF fallback."
+    return f"{provider.title()} DOI detected, but no structured full-text provider is available. A metadata-only entry was created; upload structured Markdown manually, or explicitly approve PDF fallback."
+
 def _failure_diagnostics(mode: str, status: str, message: str, *, doi: str = "", pii: str = "", attempts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "extraction_mode": mode,
@@ -891,6 +907,20 @@ def import_identified_item(paths: RepositoryPaths, identification: LiteratureIde
     }
     available_identifiers = collect_article_identifiers(identifier_metadata)
     has_identifier = bool(available_identifiers)
+    publisher_hint = _publisher_hint_for_identifier(lookup_doi, lookup_pii, identification.sciencedirect_url)
+    if extraction_mode == "publisher_api_required" and publisher_hint and publisher_hint != "elsevier":
+        message = _unsupported_publisher_message(publisher_hint, api_configured=bool(identifier_metadata.get(f"{publisher_hint}_api_configured")))
+        return create_metadata_only_entry(
+            paths,
+            identification,
+            extraction_mode=extraction_mode,
+            fulltext_status="unsupported_publisher",
+            message=message,
+            attempted_providers=[{"provider": publisher_hint, "status": "unsupported_publisher", "attempts": []}],
+            provider_errors=[message],
+            http_client=http_client,
+            overwrite=overwrite,
+        )
     if extraction_mode != "pdf_only" and not has_identifier:
         message = _failure_message("not_eligible", has_sciencedirect_url=bool(identification.sciencedirect_url))
         if extraction_mode == "publisher_api_required":

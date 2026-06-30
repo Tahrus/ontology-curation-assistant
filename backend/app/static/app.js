@@ -2316,6 +2316,58 @@ function renderOlsMatches(node, candidate) {
   });
 }
 
+const IMPORT_RESULT_LABELS = {
+  imported: "imported",
+  already_exists: "already exists",
+  skipped_wrong_project_tag: "wrong project tag",
+  skipped_wrong_collection: "wrong collection",
+  skipped_no_pdf: "no PDF",
+  skipped_no_identifier: "no identifier",
+  missing_attachment: "missing attachment",
+  missing_identifier: "missing identifier",
+  unsupported_publisher: "unsupported publisher",
+  api_failed: "API failed",
+  manual_markdown_required: "manual Markdown required",
+  failed: "failed",
+};
+
+function importResultLine(item) {
+  const parts = [
+    item.title || "Untitled item",
+    item.zotero_key ? `Zotero ${item.zotero_key}` : "Zotero key unavailable",
+    item.doi ? `DOI ${item.doi}` : "DOI unavailable",
+    item.item_type ? `type ${item.item_type}` : "type unavailable",
+  ];
+  const attachment = item.attachment;
+  const attachmentText = attachment?.checked
+    ? `; PDF attachments ${attachment.pdf_attachment_count || 0}; local PDFs ${(attachment.pdf_paths || []).length}`
+    : attachment?.error ? `; attachment lookup: ${attachment.error}` : "";
+  return `<span class="status-label">${escapeHtml(IMPORT_RESULT_LABELS[item.status] || item.status || "failed")}</span>: ${escapeHtml(parts.join(" | "))}. ${escapeHtml(item.reason || item.blocked_reason || "No reason reported.")}${escapeHtml(attachmentText)}`;
+}
+
+function renderImportResults(selector, result) {
+  const target = document.querySelector(selector);
+  if (!target) return;
+  const successes = result.successful_results || [];
+  const failed = result.failed_results || result.failures || [];
+  if (!successes.length && !failed.length) {
+    target.innerHTML = "";
+    return;
+  }
+  const block = (title, items) => items.length
+    ? `<section><h3>${escapeHtml(title)}</h3><ul>${items.map((item) => `<li>${importResultLine(item)}</li>`).join("")}</ul></section>`
+    : "";
+  const preview = result.preview_items || [];
+  const previewBlock = preview.length
+    ? `<section><h3>Zotero import preview</h3><ul>${preview.map((item) => {
+        const tags = (item.tags || []).length ? `; tags ${(item.tags || []).join(", ")}` : "; no tags";
+        const collections = (item.collections || []).length ? `; collections ${(item.collections || []).join(", ")}` : "; no collections";
+        const attachmentText = `; attachments ${item.attachment_count || 0}; PDF ${item.pdf_attachment_found ? "yes" : "no"}`;
+        return `<li>${importResultLine(item)}${escapeHtml(tags + collections + attachmentText)}</li>`;
+      }).join("")}</ul></section>`
+    : "";
+  target.innerHTML = `${previewBlock}${block("Imported / already present", successes)}${block("Needs attention", failed)}`;
+}
 function bindZoteroMetadataSync() {
   const configForm = requiredZoteroElement("#zotero-config-form");
   if (configForm) {
@@ -2365,6 +2417,27 @@ function bindZoteroMetadataSync() {
     });
   }
 
+  const previewButton = document.querySelector("#preview-zotero-import");
+  if (previewButton) {
+    previewButton.addEventListener("click", async (event) => {
+      try {
+        await withButtonFeedback(event.currentTarget, "Previewing", async () => {
+          const limitToggle = document.querySelector("#zotero-use-limit");
+          const limitInput = document.querySelector("#zotero-limit");
+          const limit = limitToggle?.checked ? Number(limitInput?.value || 0) || null : null;
+          const result = await api("/api/zotero/sync", {
+            method: "POST",
+            body: JSON.stringify({ limit, preview_only: true }),
+          });
+          setSuccess("#zotero-message", `Previewed ${result.fetched} Zotero item(s); no records imported.`);
+          renderImportResults("#zotero-import-results", result);
+        });
+      } catch (error) {
+        setError("#zotero-message", error.message);
+      }
+    });
+  }
+
   const syncButton = requiredZoteroElement("#sync-zotero");
   if (syncButton) {
     syncButton.addEventListener("click", async (event) => {
@@ -2381,7 +2454,8 @@ function bindZoteroMetadataSync() {
             method: "POST",
             body: JSON.stringify({ limit }),
           });
-          setSuccess("#zotero-message", `Fetched ${result.fetched}; inserted ${result.inserted}; updated ${result.updated}; skipped ${result.skipped}.`);
+          setSuccess("#zotero-message", `Fetched ${result.fetched}; inserted ${result.inserted}; updated ${result.updated}; skipped ${result.skipped}. Attention needed: ${(result.failed_results || []).length}.`);
+          renderImportResults("#zotero-import-results", result);
           await loadEntries();
         });
       } catch (error) {
@@ -2579,8 +2653,9 @@ document.querySelector("#run-literature-pipeline").addEventListener("click", asy
       const result = await api("/api/literature/import", { method: "POST", body: JSON.stringify(body) });
       setSuccess(
         "#literature-import-message",
-        `Import complete. Mode: ${result.extraction_mode || state.status?.publisher?.literature_extraction_mode || "publisher_api_required"}; XML imported: ${result.xml_imported ?? result.imported}; PDF used: ${result.pdf_used ? "Yes" : "No"}; fallback used: ${result.fallback_used ? "Yes" : "No"}; failed: ${result.failed}.`
+        `Import complete. Mode: ${result.extraction_mode || state.status?.publisher?.literature_extraction_mode || "publisher_api_required"}; XML imported: ${result.xml_imported ?? result.imported}; PDF used: ${result.pdf_used ? "Yes" : "No"}; fallback used: ${result.fallback_used ? "Yes" : "No"}; attention needed: ${(result.failed_results || []).length}.`
       );
+      renderImportResults("#literature-import-results", result);
       state.activeLiteratureTab = "uncurated";
       await loadStatus();
       await loadEntries();

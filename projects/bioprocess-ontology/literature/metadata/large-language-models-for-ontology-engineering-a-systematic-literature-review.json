@@ -1,0 +1,76 @@
+{
+  "title": "Large Language Models for Ontology Engineering: A Systematic Literature Review",
+  "year": "2025",
+  "literature_type": "journal_article",
+  "item_type": "journalArticle",
+  "url": "https://www.semantic-web-journal.net/content/large-language-models-ontology-engineering-systematic-literature-review-1",
+  "zotero_key": "Y59FLW5I",
+  "canonical_id": "large-language-models-for-ontology-engineering-a-systematic-literature-review",
+  "source_type": "metadata_only",
+  "import_status": "staged",
+  "curation_status": "needs_manual_markdown",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-provider-v1",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero",
+  "content_source": null,
+  "used_api_provider": "provider_registry",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": [
+      "authors are missing",
+      "journal/source is missing"
+    ]
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "source_report_path": "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.source_report.json",
+  "markdown_file": null,
+  "markdown_available": false,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "api_identifier_attempts": [
+    {
+      "kind": "url",
+      "value": "https://www.semantic-web-journal.net/content/large-language-models-ontology-engineering-systematic-literature-review-1",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    }
+  ],
+  "created_at": "2026-06-30T11:27:28.600645+00:00",
+  "imported_at": "2026-06-30T11:27:28.600645+00:00",
+  "updated_at": "2026-06-30T14:21:32.877727+00:00",
+  "artifacts": [
+    {
+      "path": "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.source_report.json",
+      "artifact_type": "source_report_json",
+      "ownership": "staged"
+    }
+  ],
+  "generated_artifacts": [
+    "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.json",
+    "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.source_report.json"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\large-language-models-for-ontology-engineering-a-systematic-literature-review.json",
+  "repository_stage": "staged"
+}

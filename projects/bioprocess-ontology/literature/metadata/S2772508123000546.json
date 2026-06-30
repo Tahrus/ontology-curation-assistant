@@ -9,8 +9,8 @@
   "curation_status": "needs_review",
   "duplicate_status": "canonical_reused",
   "pipeline_version": "oca-canonical-v2",
-  "imported_at": "2026-06-24T13:58:30.087283+00:00",
-  "updated_at": "2026-06-24T13:58:30.087283+00:00",
+  "imported_at": "2026-06-30T14:21:48.674974+00:00",
+  "updated_at": "2026-06-30T14:21:48.674974+00:00",
   "authors": [
     "Artur M. Schweidtmann",
     "Dongda Zhang",
@@ -86,5 +86,42 @@
   "repository_stage": "staged",
   "project_tags": [],
   "promoted_literature_id": "S2772508123000546",
-  "promoted_at": "2026-06-24T13:57:47.329488+00:00"
+  "promoted_at": "2026-06-24T13:57:47.329488+00:00",
+  "item_type": "journalArticle",
+  "literature_type": "journal_article",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "success",
+      "attempts": [
+        {
+          "kind": "pii",
+          "value": "S2772508123000546",
+          "status": "success",
+          "reason": null
+        }
+      ]
+    }
+  ],
+  "selected_provider": "elsevier",
+  "fulltext_source": "elsevier_article_retrieval_api",
+  "fulltext_format": "elsevier_xml",
+  "fulltext_status": "structured_fulltext_available",
+  "markdown_status": "markdown_validated",
+  "source_quality": "structured_xml",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "markdown_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": [
+      "Repeated lines may indicate headers or footers; review before curation.",
+      "references are not separated"
+    ]
+  },
+  "auto_markdown_path": "markdown/S2772508123000546.md",
+  "canonical_markdown_path": "markdown/S2772508123000546.md"
 }

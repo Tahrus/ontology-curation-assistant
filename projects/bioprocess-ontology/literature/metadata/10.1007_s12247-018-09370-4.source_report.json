@@ -1,0 +1,42 @@
+{
+  "metadata_source": "zotero+crossref",
+  "attempted_providers": [
+    {
+      "provider": "springer",
+      "status": "unsupported_publisher",
+      "attempts": []
+    }
+  ],
+  "selected_provider": null,
+  "fulltext_source": null,
+  "fulltext_format": null,
+  "fulltext_status": "unsupported_publisher",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "blocked_reason": "Springer DOI detected. Springer API support is not configured and structured Springer full-text import is not implemented yet. A metadata-only entry was created; upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "provider_errors": [
+    "Springer DOI detected. Springer API support is not configured and structured Springer full-text import is not implemented yet. A metadata-only entry was created; upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "crossref_status": "success",
+  "crossref_links": [
+    {
+      "URL": "http://link.springer.com/article/10.1007/s12247-018-09370-4/fulltext.html",
+      "content-type": "text/html",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "http://link.springer.com/content/pdf/10.1007/s12247-018-09370-4.pdf",
+      "content-type": "application/pdf",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "http://link.springer.com/content/pdf/10.1007/s12247-018-09370-4.pdf",
+      "content-type": "application/pdf",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+    }
+  ]
+}

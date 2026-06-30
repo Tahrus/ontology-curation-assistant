@@ -9,8 +9,8 @@
   "curation_status": "needs_review",
   "duplicate_status": "canonical_reused",
   "pipeline_version": "oca-canonical-v2",
-  "imported_at": "2026-06-24T13:58:40.743033+00:00",
-  "updated_at": "2026-06-24T13:58:40.743033+00:00",
+  "imported_at": "2026-06-30T14:22:05.510526+00:00",
+  "updated_at": "2026-06-30T14:22:05.510526+00:00",
   "authors": [
     "Mattia Miotto",
     "Nina Warner",
@@ -91,5 +91,47 @@
   "repository_stage": "staged",
   "project_tags": [],
   "promoted_literature_id": "S2001037024003337",
-  "promoted_at": "2026-06-24T13:57:45.318474+00:00"
+  "promoted_at": "2026-06-24T13:57:45.318474+00:00",
+  "item_type": "journalArticle",
+  "literature_type": "journal_article",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "success",
+      "attempts": [
+        {
+          "kind": "pii",
+          "value": "S2001037024003337",
+          "status": "success",
+          "reason": null
+        }
+      ]
+    }
+  ],
+  "selected_provider": "elsevier",
+  "fulltext_source": "elsevier_article_retrieval_api",
+  "fulltext_format": "elsevier_xml",
+  "fulltext_status": "structured_fulltext_available",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "structured_xml",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "markdown_quality": {
+    "ok": false,
+    "errors": [
+      "Body text appears to be mostly broken line fragments."
+    ],
+    "warnings": [
+      "Repeated lines may indicate headers or footers; review before curation.",
+      "Tables are mentioned; ensure they are preserved or explicitly marked as omitted.",
+      "references are not separated"
+    ]
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "Structured Markdown quality checks failed. Please upload reviewed structured Markdown manually.",
+  "auto_markdown_path": "markdown/S2001037024003337.md",
+  "canonical_markdown_path": "markdown/S2001037024003337.md"
 }

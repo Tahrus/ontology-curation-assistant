@@ -1,0 +1,114 @@
+{
+  "title": "Ontology Development Kit: a toolkit for building, maintaining and standardizing biomedical ontologies",
+  "authors": [
+    "Nicolas Matentzoglu",
+    "Damien Goutte-Gattat",
+    "Shawn Zheng Kai Tan",
+    "James P Balhoff",
+    "Seth Carbon",
+    "Anita R Caron",
+    "William D Duncan",
+    "Joe E Flack",
+    "Melissa Haendel",
+    "Nomi L Harris",
+    "William R Hogan",
+    "Charles Tapley Hoyt",
+    "Rebecca C Jackson",
+    "HyeongSik Kim",
+    "Huseyin Kir",
+    "Martin Larralde",
+    "Julie A McMurry",
+    "James A Overton",
+    "Bjoern Peters",
+    "Clare Pilgrim",
+    "Ray Stefancsik",
+    "Sofia MC Robb",
+    "Sabrina Toro",
+    "Nicole A Vasilevsky",
+    "Ramona Walls",
+    "Christopher J Mungall",
+    "David Osumi-Sutherland"
+  ],
+  "year": "2022",
+  "literature_type": "journal_article",
+  "item_type": "journalArticle",
+  "doi": "10.1093/database/baac087",
+  "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9547537/",
+  "zotero_key": "BE56VXIJ",
+  "journal": "Database",
+  "publisher": "Oxford University Press (OUP)",
+  "issn": [
+    "1758-0463"
+  ],
+  "canonical_id": "10.1093_database_baac087",
+  "source_type": "metadata_only",
+  "import_status": "staged",
+  "curation_status": "needs_manual_markdown",
+  "duplicate_status": "canonical_reused",
+  "pipeline_version": "oca-provider-v1",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+crossref",
+  "content_source": null,
+  "used_api_provider": "provider_registry",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "source_report_path": "metadata/10.1093_database_baac087.source_report.json",
+  "markdown_file": null,
+  "markdown_available": false,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "api_identifier_attempts": [
+    {
+      "kind": "doi",
+      "value": "10.1093/database/baac087",
+      "status": "http_404",
+      "reason": null
+    },
+    {
+      "kind": "url",
+      "value": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9547537/",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    }
+  ],
+  "created_at": "2026-06-30T11:28:05.278509+00:00",
+  "imported_at": "2026-06-30T11:28:05.278509+00:00",
+  "updated_at": "2026-06-30T14:22:07.755264+00:00",
+  "artifacts": [
+    {
+      "path": "metadata/10.1093_database_baac087.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1093_database_baac087.source_report.json",
+      "artifact_type": "source_report_json",
+      "ownership": "staged"
+    }
+  ],
+  "generated_artifacts": [
+    "metadata/10.1093_database_baac087.json",
+    "metadata/10.1093_database_baac087.source_report.json"
+  ],
+  "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1093_database_baac087.json",
+  "repository_stage": "staged"
+}

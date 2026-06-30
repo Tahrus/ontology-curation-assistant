@@ -128,11 +128,13 @@ from backend.app.services.runtime_config import (
     literature_config,
     llm_config,
     publisher_config,
+    publisher_provider_status,
     set_runtime_values,
     zotero_config,
 )
 from backend.app.zotero.client import ZoteroApiClient, ZoteroApiConfig, ZoteroApiError
-from backend.app.zotero.importer import ParsedSource, import_parsed_sources, parse_source_item
+from backend.app.zotero.importer import ParsedSource, import_parsed_sources, normalize_doi, parse_source_item
+from zotero_lit_md.zotero_client import find_pdfs_for_attachment_key, is_pdf_attachment
 
 
 router = APIRouter(prefix="/api")
@@ -193,6 +195,8 @@ class RejectionPayload(BaseModel):
 class ZoteroSyncPayload(BaseModel):
     collection_key: str | None = None
     limit: int | None = Field(default=None, ge=1, le=10000)
+    preview_only: bool = False
+    require_project_tag: bool = False
 
 
 class OntologyPathPayload(BaseModel):
@@ -692,6 +696,204 @@ def _repository_identity_key_set(paths: RepositoryPaths) -> set[str]:
 def _source_exists_in_repository(source: ParsedSource, repository_keys: set[str]) -> bool:
     return bool(set(literature_identity_keys(_source_identity_metadata_from_parsed(source))) & repository_keys)
 
+
+ZOTERO_IMPORT_SUCCESS_STATUSES = {"imported", "already_exists"}
+ZOTERO_TOP_LEVEL_LITERATURE_TYPES = {
+    "artwork",
+    "audioRecording",
+    "bill",
+    "blogPost",
+    "book",
+    "bookSection",
+    "case",
+    "computerProgram",
+    "conferencePaper",
+    "dataset",
+    "dictionaryEntry",
+    "document",
+    "email",
+    "encyclopediaArticle",
+    "film",
+    "forumPost",
+    "hearing",
+    "instantMessage",
+    "interview",
+    "journalArticle",
+    "letter",
+    "magazineArticle",
+    "manuscript",
+    "map",
+    "newspaperArticle",
+    "patent",
+    "podcast",
+    "presentation",
+    "radioBroadcast",
+    "report",
+    "statute",
+    "thesis",
+    "tvBroadcast",
+    "videoRecording",
+    "webpage",
+}
+
+
+def _source_stable_identifiers(source: ParsedSource) -> dict[str, Any]:
+    metadata = dict(source.identifier_metadata or {})
+    return {
+        "doi": source.doi or metadata.get("doi") or metadata.get("DOI"),
+        "pii": metadata.get("pii") or metadata.get("PII"),
+        "pmid": metadata.get("pmid") or metadata.get("PMID"),
+        "pmcid": metadata.get("pmcid") or metadata.get("PMCID"),
+        "isbn": metadata.get("isbn") or metadata.get("ISBN"),
+        "arxiv": metadata.get("arxiv") or metadata.get("arXiv") or metadata.get("arxiv_id"),
+    }
+
+
+def _source_has_stable_identifier(source: ParsedSource) -> bool:
+    return any(bool(value) for value in _source_stable_identifiers(source).values())
+
+
+def _source_has_project_tag(source: ParsedSource, project: Project | None, session: Session) -> bool:
+    if project is None:
+        return True
+    mapping = _canonical_project_tag_map(session)
+    wanted = _canonicalize_project_tag(project.ontology_id, mapping).casefold()
+    tags = {_canonicalize_project_tag(tag, mapping).casefold() for tag in source.tags if tag.strip()}
+    return wanted in tags
+
+
+def _source_provider_hint(source: ParsedSource) -> str | None:
+    doi = (source.doi or "").casefold()
+    url = (source.url or "").casefold()
+    metadata = source.identifier_metadata or {}
+    pii = str(metadata.get("pii") or metadata.get("PII") or "")
+    if pii or "sciencedirect.com" in url or doi.startswith("10.1016/"):
+        return "elsevier"
+    if doi.startswith("10.1007/"):
+        return "springer"
+    return None
+
+
+def _zotero_import_result(source: ParsedSource, status: str, reason: str, *, entry: dict[str, Any] | None = None, attachment_trace: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = {
+        "status": status,
+        "ok": status in ZOTERO_IMPORT_SUCCESS_STATUSES,
+        "title": source.title,
+        "zotero_key": source.provider_item_key,
+        "doi": source.doi,
+        "item_type": source.item_type,
+        "tags": source.tags,
+        "collections": source.collections,
+        "reason": reason,
+    }
+    if entry:
+        payload.update({
+            "entry_id": entry.get("canonical_id"),
+            "markdown_status": entry.get("markdown_status"),
+            "fulltext_status": entry.get("fulltext_status"),
+            "api_retrieval_status": entry.get("api_retrieval_status"),
+            "blocked_reason": entry.get("blocked_reason"),
+        })
+    if attachment_trace is not None:
+        payload["attachment"] = attachment_trace
+    return payload
+
+
+def _classify_zotero_entry_result(source: ParsedSource, entry: dict[str, Any], duplicate: bool) -> tuple[str, str]:
+    if duplicate:
+        return "already_exists", "This Zotero item already exists in the project literature repository."
+    if entry.get("xml_retrieved") or entry.get("markdown_status") == "markdown_validated" or entry.get("markdown_available"):
+        return "imported", "Structured Markdown was generated for this Zotero item."
+    if not _source_has_stable_identifier(source):
+        return "skipped_no_identifier", "No DOI, PII, PMID, PMCID, ISBN, or arXiv identifier was available for publisher routing."
+    if entry.get("markdown_status") == "manual_markdown_required":
+        if entry.get("fulltext_status") == "unsupported_publisher":
+            return "unsupported_publisher", entry.get("blocked_reason") or "No supported structured full-text provider is available for this publisher."
+        return "manual_markdown_required", entry.get("blocked_reason") or "Structured full text was unavailable; manual Markdown is required."
+    return "failed", entry.get("blocked_reason") or "The Zotero item did not produce Markdown or a manual-review entry."
+
+
+def _raw_zotero_item_preview(item: dict[str, Any]) -> dict[str, Any]:
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    raw_tags = item.get("tags") or data.get("tags") or []
+    tags = [
+        str(tag.get("tag") if isinstance(tag, dict) else tag).strip()
+        for tag in raw_tags
+        if str(tag.get("tag") if isinstance(tag, dict) else tag).strip()
+    ]
+    collections = [
+        str(collection).strip()
+        for collection in (item.get("collections") or data.get("collections") or [])
+        if str(collection).strip()
+    ]
+    item_type = str(data.get("itemType") or item.get("itemType") or "")
+    return {
+        "zotero_key": item.get("key") or data.get("key"),
+        "title": data.get("title") or item.get("title") or "",
+        "item_type": item_type,
+        "doi": normalize_doi(str(data.get("DOI") or data.get("doi") or "")),
+        "tags": tags,
+        "collections": collections,
+        "attachment_count": 0,
+        "pdf_attachment_found": False,
+        "status": "failed",
+        "reason": "Zotero item was seen before filtering.",
+    }
+
+
+def _zotero_preview_from_source(
+    source: ParsedSource,
+    *,
+    status: str,
+    reason: str,
+    attachment_trace: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "zotero_key": source.provider_item_key,
+        "title": source.title,
+        "item_type": source.item_type,
+        "doi": source.doi,
+        "tags": source.tags,
+        "collections": source.collections,
+        "attachment_count": attachment_trace.get("attachment_count", 0) if attachment_trace else 0,
+        "pdf_attachment_found": bool(attachment_trace and attachment_trace.get("pdf_attachment_count")),
+        "status": status,
+        "reason": reason,
+    }
+
+
+def _zotero_attachment_trace(client: ZoteroApiClient | None, source: ParsedSource, storage_path: Path | None) -> dict[str, Any]:
+    trace: dict[str, Any] = {"checked": False, "attachment_count": 0, "pdf_attachment_count": 0, "pdf_paths": [], "error": None}
+    if not source.provider_item_key or client is None:
+        trace["error"] = "No Zotero item key was available for attachment lookup."
+        return trace
+    try:
+        children = client.fetch_child_items(source.provider_item_key)
+        trace["checked"] = True
+    except Exception as exc:  # attachment probing must not fail metadata import
+        trace["error"] = str(exc)
+        logger.info("Zotero attachment lookup failed for %s: %s", source.provider_item_key, exc)
+        return trace
+    pdf_items = [item for item in children if is_pdf_attachment(item)]
+    trace["attachment_count"] = len(children)
+    trace["pdf_attachment_count"] = len(pdf_items)
+    pdf_paths: list[str] = []
+    for attachment in pdf_items:
+        key = str(attachment.get("key") or (attachment.get("data") or {}).get("key") or "")
+        for pdf_path in find_pdfs_for_attachment_key(storage_path, key, attachment):
+            pdf_paths.append(str(pdf_path))
+    trace["pdf_paths"] = sorted(dict.fromkeys(pdf_paths))
+    return trace
+
+
+def _zotero_result_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    successful = [item for item in results if item.get("status") in ZOTERO_IMPORT_SUCCESS_STATUSES]
+    failed = [item for item in results if item.get("status") not in ZOTERO_IMPORT_SUCCESS_STATUSES]
+    counts: dict[str, int] = {}
+    for item in results:
+        status = str(item.get("status") or "failed")
+        counts[status] = counts.get(status, 0) + 1
+    return {"results": results, "successful_results": successful, "failed_results": failed, "result_counts": counts}
 
 def _project_or_404(session: Session, project_ref: str | int | None = None) -> Project:
     try:
@@ -2183,8 +2385,8 @@ def list_canonical_literature(project: str | None = None, tags: str | None = Non
     selected, paths = _canonical_project_paths(session, project)
     mapping = _canonical_project_tag_map(session)
     wanted = _parse_canonical_tag_filter(tags, mapping)
-    staged = [_canonical_entry_payload({**item, "project_tags": _canonicalize_project_tags(item.get("project_tags") or [], mapping)}) for item in list_canonical_entries(paths) if _is_uncurated_literature_entry(item) and _entry_matches_project_tags(item, wanted, mapping)]
-    curated = [_canonical_entry_payload({**item, "project_tags": _canonicalize_project_tags(item.get("project_tags") or [], mapping)}) for item in list_curated_entries(paths) if _is_curated_literature_entry({**item, "repository_stage": "curated"}) and _entry_matches_project_tags(item, wanted, mapping)]
+    staged = [_canonical_entry_payload(item) for item in list_canonical_entries(paths) if _is_uncurated_literature_entry(item) and _entry_matches_project_tags(item, wanted, mapping)]
+    curated = [_canonical_entry_payload(item) for item in list_curated_entries(paths) if _is_curated_literature_entry({**item, "repository_stage": "curated"}) and _entry_matches_project_tags(item, wanted, mapping)]
     return {"project": selected.slug, "repository": str(paths.root), "entries": curated, "staged_entries": staged, "curated_entries": curated, "combined_output_file": str(paths.combined)}
 
 
@@ -2295,6 +2497,8 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
     publisher = publisher_config(session)
     extraction_mode = "pdf_fallback_allowed" if payload.allow_pdf_fallback else (payload.extraction_mode or publisher.extraction_mode or DEFAULT_EXTRACTION_MODE)
     api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled)
+    provider_status = publisher_provider_status(session)
+    springer_configured = provider_status.get("springer", {}).get("status") == "configured"
     if payload.local_pdf_path or payload.doi or payload.pii or payload.sciencedirect_url:
         try:
             entry, duplicate = import_identified_item(
@@ -2311,6 +2515,7 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
                     item_type=None,
                     pdf_path=payload.local_pdf_path,
                     metadata_source="zotero" if payload.zotero_key else "manual",
+                    identifier_metadata={"springer_api_configured": springer_configured},
                 ),
                 publisher=api_config,
                 extraction_mode=extraction_mode,
@@ -2340,6 +2545,7 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
     source_type = "zotero_storage" if payload.zotero_storage else "local_pdf_folder"
     xml_imported = 0
     failures: list[dict[str, Any]] = []
+    item_results: list[dict[str, Any]] = []
     source_records = []
     if source_type == "zotero_storage" and extraction_mode != "pdf_only":
         source_records = session.scalars(select(LiteratureSource).where((LiteratureSource.project_id.is_(None)) | (LiteratureSource.project_id == project.id))).all()
@@ -2349,8 +2555,21 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
             except json.JSONDecodeError:
                 creators_data = []
             creators = [" ".join(str(creator.get(key) or "").strip() for key in ("given", "family")).strip() for creator in creators_data if isinstance(creator, dict)]
+            source_payload = ParsedSource(
+                provider_item_key=source.provider_item_key,
+                citation_key=source.citation_key,
+                title=source.title,
+                item_type=source.item_type,
+                creators=creators_data if isinstance(creators_data, list) else [],
+                year=source.year,
+                doi=source.doi,
+                url=source.url,
+                identifier_metadata=_json_loads(source.identifiers_json, {}),
+            )
             try:
-                entry, _ = import_identified_item(
+                identifier_metadata = {**_json_loads(source.identifiers_json, {}), "springer_api_configured": springer_configured}
+                logger.info("Zotero import step publisher routing: key=%s provider_hint=%s", source.provider_item_key, _source_provider_hint(source_payload) or "provider_registry")
+                entry, duplicate = import_identified_item(
                     paths,
                     LiteratureIdentification(
                         zotero_key=source.provider_item_key,
@@ -2362,16 +2581,23 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
                         item_type=source.item_type,
                         pdf_path=None,
                         metadata_source="zotero",
-                        identifier_metadata=_json_loads(source.identifiers_json, {}),
+                        identifier_metadata=identifier_metadata,
                     ),
                     publisher=api_config,
                     extraction_mode="publisher_api_required",
                     keep_sources=payload.keep_sources,
                     overwrite=payload.overwrite,
                 )
-                xml_imported += int(entry.get("xml_retrieved", False))
+                xml_imported += int(not duplicate and entry.get("xml_retrieved", False))
+                status, reason = _classify_zotero_entry_result(source_payload, entry, duplicate)
+                item_results.append(_zotero_import_result(source_payload, status, reason, entry=entry))
+                logger.info("Zotero import step result: key=%s status=%s entry=%s", source.provider_item_key, status, entry.get("canonical_id"))
             except LiteratureExtractionError as exc:
-                failures.append({"zotero_key": source.provider_item_key, "title": source.title, "message": str(exc), "diagnostics": exc.diagnostics})
+                status = "missing_identifier" if not _source_has_stable_identifier(source_payload) else "api_failed"
+                item = _zotero_import_result(source_payload, status, str(exc))
+                item["diagnostics"] = exc.diagnostics
+                item_results.append(item)
+                failures.append({"zotero_key": source.provider_item_key, "title": source.title, "doi": source.doi, "status": status, "message": str(exc), "diagnostics": exc.diagnostics})
 
     if source_type == "zotero_storage" and extraction_mode == "publisher_api_required":
         if not source_records:
@@ -2379,10 +2605,9 @@ def import_canonical_literature(payload: CanonicalLiteratureImportPayload, sessi
             failures.append({"message": message, "diagnostics": {"extraction_mode": extraction_mode, "pdf_used": False, "fallback_used": False}})
         report = {"extraction_mode": extraction_mode, "last_import_status": "failed" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": 0, "pdf_used": False, "fallback_used": False, "extraction_errors": [failure["message"] for failure in failures]}
         _save_import_diagnostics(session, report)
-        if failures:
-            raise HTTPException(status_code=400, detail={"message": failures[0]["message"], "diagnostics": report, "failures": failures})
         write_project_settings(paths, zotero_storage_path=payload.zotero_storage, literature_source_directory=source_value, keep_temporary_pdfs=False, overwrite_existing_markdown=payload.overwrite, preserve_curated_metadata=True)
-        return {"ok": True, "project": project.slug, "extraction_mode": extraction_mode, "files_scanned": len(source_records), "imported": xml_imported, "duplicates": len(source_records) - xml_imported, "failed": 0, "xml_imported": xml_imported, "pdf_used": False, "fallback_used": False, "combined_count": build_canonical_combined(paths), "combined_output_file": str(paths.combined), "failures": []}
+        summary = _zotero_result_summary(item_results)
+        return {"ok": True, "project": project.slug, "extraction_mode": extraction_mode, "files_scanned": len(source_records), "imported": xml_imported, "duplicates": summary["result_counts"].get("already_exists", 0), "failed": len(summary["failed_results"]), "xml_imported": xml_imported, "pdf_used": False, "fallback_used": False, "combined_count": build_canonical_combined(paths), "combined_output_file": str(paths.combined), "failures": failures, **summary}
     try:
         result = import_canonical_directory(paths, Path(source_value), source_type=source_type, extraction_mode=extraction_mode, keep_sources=payload.keep_sources, overwrite=payload.overwrite)
         write_project_settings(paths, zotero_storage_path=payload.zotero_storage, literature_source_directory=source_value, keep_temporary_pdfs=payload.keep_sources, overwrite_existing_markdown=payload.overwrite, preserve_curated_metadata=True)
@@ -2997,36 +3222,121 @@ def sync_zotero(
     except ZoteroApiError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    sources = []
+    publisher = publisher_config(session)
+    provider_status = publisher_provider_status(session)
+    springer_configured = provider_status.get("springer", {}).get("status") == "configured"
+    extraction_mode = publisher.extraction_mode
+    api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled)
+    storage_path = literature_config(session).zotero_literature_storage_path
+    try:
+        active_project, canonical_paths = _canonical_project_paths(session)
+    except LookupError:
+        active_project = None
+        canonical_paths = None
+
+    repository_keys = _repository_identity_key_set(canonical_paths) if canonical_paths else set()
+    sources: list[ParsedSource] = []
     skipped = 0
+    preview_items: list[dict[str, Any]] = []
+    raw_item_results: list[dict[str, Any]] = []
+    prechecked_attachments: dict[str, dict[str, Any]] = {}
+
     for item in items:
+        raw_preview = _raw_zotero_item_preview(item)
         source = parse_source_item(item)
         if source is None:
             skipped += 1
+            item_type = raw_preview.get("item_type") or "unknown"
+            if item_type in {"attachment", "note", "annotation"}:
+                raw_preview["reason"] = f"Zotero {item_type} items are not top-level literature records."
+            else:
+                raw_preview["reason"] = "Zotero item could not be parsed as a top-level literature record."
+            preview_items.append(raw_preview)
+            raw_item_results.append(raw_preview)
             continue
+
+        attachment_trace = _zotero_attachment_trace(client, source, storage_path)
+        if source.provider_item_key:
+            prechecked_attachments[source.provider_item_key] = attachment_trace
         sources.append(source)
+
+        status = "imported"
+        reason = "This Zotero item will be sent through the configured literature import workflow."
+        requested_collection = payload.collection_key or config.collection_key
+        if requested_collection and source.collections and requested_collection not in source.collections:
+            status = "skipped_wrong_collection"
+            reason = "The Zotero item is outside the requested collection."
+        elif payload.require_project_tag and not _source_has_project_tag(source, active_project, session):
+            status = "skipped_wrong_project_tag"
+            reason = f"The Zotero item does not have the required project tag '{active_project.ontology_id if active_project else ''}'."
+        elif extraction_mode in {"pdf_only", "pdf_fallback_allowed"} and not attachment_trace.get("pdf_attachment_count"):
+            status = "skipped_no_pdf"
+            reason = "No Zotero PDF attachment was found for the configured PDF-capable import mode."
+        elif _source_exists_in_repository(source, repository_keys):
+            status = "already_exists"
+            reason = "This Zotero item already exists in the project literature repository."
+        elif extraction_mode == "publisher_api_required" and not _source_has_stable_identifier(source):
+            status = "skipped_no_identifier"
+            reason = "No DOI, PII, PMID, PMCID, ISBN, or arXiv identifier was available for publisher routing."
+        elif extraction_mode == "publisher_api_required" and _source_provider_hint(source) not in {None, "elsevier"}:
+            status = "unsupported_publisher"
+            reason = "This item has a non-Elsevier publisher hint and will require manual Markdown unless a structured provider is configured."
+        preview_items.append(_zotero_preview_from_source(source, status=status, reason=reason, attachment_trace=attachment_trace))
+
+    if payload.preview_only:
+        summary = _zotero_result_summary([
+            *raw_item_results,
+            *[
+                _zotero_import_result(source, item["status"], item["reason"], attachment_trace=prechecked_attachments.get(source.provider_item_key or ""))
+                for source in sources
+                for item in preview_items
+                if item.get("zotero_key") == source.provider_item_key
+            ],
+        ])
+        return {
+            "preview_only": True,
+            "fetched": len(items),
+            "inserted": 0,
+            "updated": 0,
+            "skipped": skipped,
+            "xml_imported": 0,
+            "pdf_used": False,
+            "fallback_used": False,
+            "extraction_mode": extraction_mode,
+            "failures": [],
+            "preview_items": preview_items,
+            **summary,
+        }
 
     try:
         result = import_parsed_sources(session, sources, skipped=skipped, synced=True)
     except Exception as exc:
         session.rollback()
         raise HTTPException(status_code=400, detail=f"Zotero sync import failed: {exc}") from exc
-    publisher = publisher_config(session)
-    extraction_mode = publisher.extraction_mode
-    api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled)
+
     xml_imported = 0
     failures: list[dict[str, Any]] = []
-    try:
-        _, canonical_paths = _canonical_project_paths(session)
-    except LookupError:
-        canonical_paths = None
+    item_results: list[dict[str, Any]] = list(raw_item_results)
+
     if canonical_paths and extraction_mode != "pdf_only":
-        repository_keys = _repository_identity_key_set(canonical_paths)
         for source in sources:
+            logger.info("Zotero import step metadata: key=%s title=%s doi=%s", source.provider_item_key, source.title, source.doi)
+            attachment_trace = prechecked_attachments.get(source.provider_item_key or "") or _zotero_attachment_trace(client, source, storage_path)
+            logger.info("Zotero import step attachment: key=%s trace=%s", source.provider_item_key, attachment_trace)
+            requested_collection = payload.collection_key or config.collection_key
+            if requested_collection and source.collections and requested_collection not in source.collections:
+                item_results.append(_zotero_import_result(source, "skipped_wrong_collection", "The Zotero item is outside the requested collection.", attachment_trace=attachment_trace))
+                continue
+            if payload.require_project_tag and not _source_has_project_tag(source, active_project, session):
+                item_results.append(_zotero_import_result(source, "skipped_wrong_project_tag", f"The Zotero item does not have the required project tag '{active_project.ontology_id if active_project else ''}'.", attachment_trace=attachment_trace))
+                continue
             if _source_exists_in_repository(source, repository_keys):
+                item_results.append(_zotero_import_result(source, "already_exists", "This Zotero item already exists in the project literature repository.", attachment_trace=attachment_trace))
                 continue
             creators = [" ".join(part for part in (creator.get("given"), creator.get("family")) if part).strip() for creator in source.creators]
+            identifier_metadata = {**source.identifier_metadata, "springer_api_configured": springer_configured}
             try:
+                logger.info("Zotero import step publisher routing: key=%s provider_hint=%s", source.provider_item_key, _source_provider_hint(source) or "provider_registry")
                 entry, duplicate = import_identified_item(
                     canonical_paths,
                     LiteratureIdentification(
@@ -3039,23 +3349,40 @@ def sync_zotero(
                         item_type=source.item_type,
                         pdf_path=None,
                         metadata_source="zotero",
-                        identifier_metadata=source.identifier_metadata,
+                        identifier_metadata=identifier_metadata,
                     ),
                     publisher=api_config,
                     extraction_mode="publisher_api_required",
                 )
                 xml_imported += int(not duplicate and entry.get("xml_retrieved", False))
+                status, reason = _classify_zotero_entry_result(source, entry, duplicate)
+                item_results.append(_zotero_import_result(source, status, reason, entry=entry, attachment_trace=attachment_trace))
+                logger.info("Zotero import step result: key=%s status=%s entry=%s", source.provider_item_key, status, entry.get("canonical_id"))
             except LiteratureExtractionError as exc:
-                failures.append({"zotero_key": source.provider_item_key, "title": source.title, "message": str(exc), "diagnostics": exc.diagnostics})
+                status = "skipped_no_identifier" if not _source_has_stable_identifier(source) else "failed"
+                result_item = _zotero_import_result(source, status, str(exc), attachment_trace=attachment_trace)
+                result_item["diagnostics"] = exc.diagnostics
+                item_results.append(result_item)
+                failures.append({"zotero_key": source.provider_item_key, "title": source.title, "doi": source.doi, "status": status, "message": str(exc), "diagnostics": exc.diagnostics})
+                logger.info("Zotero import step failed: key=%s status=%s error=%s", source.provider_item_key, status, exc)
+    elif canonical_paths is None:
+        for source in sources:
+            item_results.append(_zotero_import_result(source, "failed", "Create or select an active project before importing Zotero literature."))
+        failures.append({"status": "failed", "message": "Create or select an active project before importing Zotero literature."})
+    else:
+        for source in sources:
+            attachment_trace = prechecked_attachments.get(source.provider_item_key or "")
+            if payload.require_project_tag and not _source_has_project_tag(source, active_project, session):
+                item_results.append(_zotero_import_result(source, "skipped_wrong_project_tag", f"The Zotero item does not have the required project tag '{active_project.ontology_id if active_project else ''}'.", attachment_trace=attachment_trace))
+            elif not attachment_trace or not attachment_trace.get("pdf_attachment_count"):
+                item_results.append(_zotero_import_result(source, "skipped_no_pdf", "No Zotero PDF attachment was found for the configured PDF-only pipeline.", attachment_trace=attachment_trace))
+            else:
+                item_results.append(_zotero_import_result(source, "imported", "Zotero metadata was synced. Markdown generation is handled by the configured PDF-only pipeline.", attachment_trace=attachment_trace))
 
     if extraction_mode == "publisher_api_required":
-        if canonical_paths is None:
-            failures.append({"message": "Create or select an active project before importing Zotero literature."})
-        report = {"extraction_mode": extraction_mode, "last_import_status": "failed" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": 0, "pdf_used": False, "fallback_used": False, "extraction_errors": [failure["message"] for failure in failures]}
+        report = {"extraction_mode": extraction_mode, "last_import_status": "partial_failure" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": 0, "pdf_used": False, "fallback_used": False, "extraction_errors": [failure["message"] for failure in failures]}
         _save_import_diagnostics(session, report)
-        if failures:
-            raise HTTPException(status_code=400, detail={"message": failures[0]["message"], "diagnostics": report, "failures": failures})
-        return {"fetched": len(items), "inserted": result.inserted, "updated": result.updated, "skipped": result.skipped, "xml_imported": xml_imported, "pdf_used": False, "fallback_used": False, "extraction_mode": extraction_mode}
+        return {"preview_only": False, "fetched": len(items), "inserted": result.inserted, "updated": result.updated, "skipped": result.skipped, "xml_imported": xml_imported, "pdf_used": False, "fallback_used": False, "extraction_mode": extraction_mode, "failures": failures, "preview_items": preview_items, **_zotero_result_summary(item_results)}
 
     pdf_fallbacks = 0
     if canonical_paths is not None:
@@ -3064,10 +3391,14 @@ def sync_zotero(
             pipeline_result = run_literature_pipeline(pipeline_config)
             pdf_fallbacks = pipeline_result.converted_markdown_count
         except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
-            failures.append({"message": str(exc)})
+            failures.append({"status": "failed", "message": str(exc)})
+            for source in sources:
+                if not any(item.get("zotero_key") == source.provider_item_key and item.get("status") not in ZOTERO_IMPORT_SUCCESS_STATUSES for item in item_results):
+                    item_results.append(_zotero_import_result(source, "failed", str(exc), attachment_trace=prechecked_attachments.get(source.provider_item_key or "")))
     report = {"extraction_mode": extraction_mode, "last_import_status": "partial_failure" if failures else "success", "items_imported_through_xml": xml_imported, "api_failures": len(failures), "pdf_fallbacks": pdf_fallbacks, "pdf_used": pdf_fallbacks > 0, "fallback_used": extraction_mode == "pdf_fallback_allowed" and pdf_fallbacks > 0, "extraction_errors": [failure["message"] for failure in failures]}
     _save_import_diagnostics(session, report)
     return {
+        "preview_only": False,
         "fetched": len(items),
         "inserted": result.inserted,
         "updated": result.updated,
@@ -3077,8 +3408,9 @@ def sync_zotero(
         "fallback_used": extraction_mode == "pdf_fallback_allowed" and pdf_fallbacks > 0,
         "extraction_mode": extraction_mode,
         "failures": failures,
+        "preview_items": preview_items,
+        **_zotero_result_summary(item_results),
     }
-
 
 @router.post("/zotero/import-test")
 def import_test_zotero_entries(session: Session = Depends(get_session)) -> dict[str, int]:

@@ -9,8 +9,8 @@
   "curation_status": "needs_review",
   "duplicate_status": "canonical_reused",
   "pipeline_version": "oca-canonical-v2",
-  "imported_at": "2026-06-24T13:58:47.346949+00:00",
-  "updated_at": "2026-06-24T13:58:47.346949+00:00",
+  "imported_at": "2026-06-30T14:22:18.655821+00:00",
+  "updated_at": "2026-06-30T14:22:18.655821+00:00",
   "authors": [
     "Zhen-Zhi Wang",
     "Du-Wen Zeng",
@@ -90,5 +90,42 @@
   "repository_stage": "staged",
   "project_tags": [],
   "promoted_literature_id": "S2693125725000032",
-  "promoted_at": "2026-06-24T13:57:46.399882+00:00"
+  "promoted_at": "2026-06-24T13:57:46.399882+00:00",
+  "item_type": "journalArticle",
+  "literature_type": "journal_article",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "success",
+      "attempts": [
+        {
+          "kind": "pii",
+          "value": "S2693125725000032",
+          "status": "success",
+          "reason": null
+        }
+      ]
+    }
+  ],
+  "selected_provider": "elsevier",
+  "fulltext_source": "elsevier_article_retrieval_api",
+  "fulltext_format": "elsevier_xml",
+  "fulltext_status": "structured_fulltext_available",
+  "markdown_status": "markdown_validated",
+  "source_quality": "structured_xml",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "markdown_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": [
+      "Tables are mentioned; ensure they are preserved or explicitly marked as omitted.",
+      "references are not separated"
+    ]
+  },
+  "auto_markdown_path": "markdown/S2693125725000032.md",
+  "canonical_markdown_path": "markdown/S2693125725000032.md"
 }

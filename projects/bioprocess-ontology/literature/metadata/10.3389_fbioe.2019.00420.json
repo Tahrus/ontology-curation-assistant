@@ -1,0 +1,107 @@
+{
+  "title": "Recent Developments in Bioprocessing of Recombinant Proteins: Expression Hosts and Process Development",
+  "authors": [
+    "Nagesh K. Tripathi",
+    "Ambuj Shrivastava"
+  ],
+  "year": "2019",
+  "literature_type": "journal_article",
+  "item_type": "journalArticle",
+  "doi": "10.3389/fbioe.2019.00420",
+  "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6932962/",
+  "zotero_key": "CW748GUA",
+  "pmid": "31921823",
+  "pmcid": "PMC6932962",
+  "issn": "2296-4185",
+  "volume": "7",
+  "pages": "420",
+  "journal": "Frontiers in Bioengineering and Biotechnology",
+  "publisher": "Frontiers Media SA",
+  "canonical_id": "10.3389_fbioe.2019.00420",
+  "source_type": "metadata_only",
+  "import_status": "staged",
+  "curation_status": "needs_manual_markdown",
+  "duplicate_status": "unique",
+  "pipeline_version": "oca-provider-v1",
+  "extraction_mode": "publisher_api_required",
+  "metadata_source": "zotero+crossref",
+  "content_source": null,
+  "used_api_provider": "provider_registry",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "metadata_quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "state": "curation_blocked",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "source_report_path": "metadata/10.3389_fbioe.2019.00420.source_report.json",
+  "markdown_file": null,
+  "markdown_available": false,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "api_identifier_attempts": [
+    {
+      "kind": "doi",
+      "value": "10.3389/fbioe.2019.00420",
+      "status": "http_404",
+      "reason": null
+    },
+    {
+      "kind": "pmid",
+      "value": "31921823",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
+      "kind": "pmcid",
+      "value": "PMC6932962",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
+      "kind": "issn",
+      "value": "2296-4185",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
+      "kind": "url",
+      "value": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6932962/",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    }
+  ],
+  "created_at": "2026-06-30T14:24:26.820160+00:00",
+  "imported_at": "2026-06-30T14:24:26.820160+00:00",
+  "updated_at": "2026-06-30T14:24:26.820160+00:00",
+  "artifacts": [
+    {
+      "path": "metadata/10.3389_fbioe.2019.00420.json",
+      "artifact_type": "metadata_json",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.3389_fbioe.2019.00420.source_report.json",
+      "artifact_type": "source_report_json",
+      "ownership": "staged"
+    }
+  ],
+  "generated_artifacts": [
+    "metadata/10.3389_fbioe.2019.00420.json",
+    "metadata/10.3389_fbioe.2019.00420.source_report.json"
+  ]
+}

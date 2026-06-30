@@ -1,0 +1,67 @@
+{
+  "metadata_source": "zotero+crossref",
+  "attempted_providers": [
+    {
+      "provider": "elsevier",
+      "status": "skipped",
+      "attempts": [
+        {
+          "kind": "doi",
+          "value": "10.1002/btpr.2492",
+          "status": "http_404",
+          "reason": null
+        },
+        {
+          "kind": "pmid",
+          "value": "28480535",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "pmcid",
+          "value": "PMC5575510",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "issn",
+          "value": "8756-7938",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "url",
+          "value": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5575510/",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        }
+      ]
+    }
+  ],
+  "selected_provider": null,
+  "fulltext_source": null,
+  "fulltext_format": null,
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_required",
+  "source_quality": "metadata_only",
+  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
+  "provider_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "crossref_status": "success",
+  "crossref_links": [
+    {
+      "URL": "https://api.wiley.com/onlinelibrary/tdm/v1/articles/10.1002%2Fbtpr.2492",
+      "content-type": "application/pdf",
+      "content-version": "vor",
+      "intended-application": "text-mining"
+    },
+    {
+      "URL": "https://aiche.onlinelibrary.wiley.com/doi/pdf/10.1002/btpr.2492",
+      "content-type": "unspecified",
+      "content-version": "vor",
+      "intended-application": "similarity-checking"
+    }
+  ]
+}
