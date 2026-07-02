@@ -1,0 +1,69 @@
+{
+  "canonical_id": "10.69997_sct.174465",
+  "title": "Hybrid machine-learning for dynamic plant-wide biomanufacturing",
+  "authors": [
+    "Shabnam Shahhoseyni",
+    "Arijit Chakraborty",
+    "Mohammad Reza Boskabadi",
+    "Venkat Venkatasubramanian",
+    "Seyed Soheil Mansouri"
+  ],
+  "year": "2025",
+  "journal": "Systems and Control Transactions",
+  "doi": "10.69997/sct.174465",
+  "pii": "",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "10.69997_sct.174465",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.69997_sct.174465.json",
+  "source_type": "metadata_only",
+  "source_path": null,
+  "zotero_key": "V85YR859",
+  "pipeline_version": "oca-provider-v1",
+  "metadata_source": "zotero+crossref",
+  "content_source": "manual_markdown",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "provider_registry",
+  "doi_used": null,
+  "pii_used": null,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "generated_artifacts": [
+    "metadata/10.69997_sct.174465.json",
+    "metadata/10.69997_sct.174465.source_report.json",
+    "markdown/10.69997_sct.174465.manual.md",
+    "markdown/10.69997_sct.174465.canonical.md",
+    "metadata/10.69997_sct.174465.validation_report.json"
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "crossref_retrieval_status": null,
+  "lookup_doi": null,
+  "lookup_pii": null,
+  "xml_artifact_path": null,
+  "xml_markdown_artifact_path": null,
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-07-01T08:48:12.025507+00:00",
+  "curated_at": "2026-07-02T12:09:02.437766+00:00",
+  "updated_at": "2026-07-02T12:09:02.437766+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/10.69997_sct.174465.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/10.69997_sct.174465.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

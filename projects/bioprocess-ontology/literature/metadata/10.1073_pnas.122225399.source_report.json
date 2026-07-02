@@ -3,13 +3,31 @@
   "attempted_providers": [
     {
       "provider": "elsevier",
-      "status": "http_404",
+      "status": "skipped",
       "attempts": [
         {
           "kind": "doi",
           "value": "10.1073/pnas.122225399",
           "status": "http_404",
           "reason": null
+        },
+        {
+          "kind": "pmid",
+          "value": "12097640",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "pmcid",
+          "value": "PMC124992",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
+          "kind": "issn",
+          "value": "0027-8424",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
         }
       ]
     }

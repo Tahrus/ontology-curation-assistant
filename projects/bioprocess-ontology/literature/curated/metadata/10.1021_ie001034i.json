@@ -1,0 +1,65 @@
+{
+  "canonical_id": "10.1021_ie001034i",
+  "title": "Distribution Kinetics Modeling of Nucleation, Growth, and Aggregation Processes",
+  "authors": [
+    "Benjamin J. McCoy"
+  ],
+  "year": "2001",
+  "journal": "Industrial &amp; Engineering Chemistry Research",
+  "doi": "10.1021/ie001034i",
+  "pii": "",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "10.1021_ie001034i",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1021_ie001034i.json",
+  "source_type": "metadata_only",
+  "source_path": null,
+  "zotero_key": "548GWNHN",
+  "pipeline_version": "oca-provider-v1",
+  "metadata_source": "zotero+crossref",
+  "content_source": "manual_markdown",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "acs",
+  "doi_used": null,
+  "pii_used": null,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "generated_artifacts": [
+    "metadata/10.1021_ie001034i.json",
+    "metadata/10.1021_ie001034i.source_report.json",
+    "markdown/10.1021_ie001034i.manual.md",
+    "markdown/10.1021_ie001034i.canonical.md",
+    "metadata/10.1021_ie001034i.validation_report.json"
+  ],
+  "extraction_warnings": [
+    "No structured ACS full text was found. A literature entry was created from metadata. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "crossref_retrieval_status": null,
+  "lookup_doi": null,
+  "lookup_pii": null,
+  "xml_artifact_path": null,
+  "xml_markdown_artifact_path": null,
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-07-01T08:48:09.091569+00:00",
+  "curated_at": "2026-07-02T11:20:38.872082+00:00",
+  "updated_at": "2026-07-02T11:20:38.872082+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/10.1021_ie001034i.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/10.1021_ie001034i.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

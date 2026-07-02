@@ -5,12 +5,12 @@
   "doi": "10.1016/j.dche.2023.100136",
   "source_type": "elsevier_article_retrieval_api",
   "source_path": null,
-  "import_status": "staged",
+  "import_status": "promoted",
   "curation_status": "needs_review",
   "duplicate_status": "canonical_reused",
   "pipeline_version": "oca-canonical-v2",
   "imported_at": "2026-06-30T14:21:48.674974+00:00",
-  "updated_at": "2026-06-30T14:21:48.674974+00:00",
+  "updated_at": "2026-07-02T08:52:35.412777+00:00",
   "authors": [
     "Artur M. Schweidtmann",
     "Dongda Zhang",
@@ -86,7 +86,7 @@
   "repository_stage": "staged",
   "project_tags": [],
   "promoted_literature_id": "S2772508123000546",
-  "promoted_at": "2026-06-24T13:57:47.329488+00:00",
+  "promoted_at": "2026-07-02T08:52:35.417604+00:00",
   "item_type": "journalArticle",
   "literature_type": "journal_article",
   "attempted_providers": [

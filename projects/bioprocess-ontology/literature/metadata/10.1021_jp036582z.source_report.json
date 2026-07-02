@@ -12,6 +12,12 @@
           "reason": null
         },
         {
+          "kind": "issn",
+          "value": "1520-6106",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
           "kind": "url",
           "value": "https://doi.org/10.1021/jp036582z",
           "status": "skipped",

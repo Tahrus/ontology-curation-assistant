@@ -505,7 +505,7 @@ def llm_ontology_suggestions(
 
 @app.command("llm-test")
 def llm_test() -> None:
-    """Test the configured LLM provider with a tiny prompt."""
+    """Test the configured LLM provider with a Markdown-to-JSON workflow."""
     from backend.app.db.session import SessionLocal, ensure_runtime_schema
     from backend.app.llm.clients import test_llm_connection
     from backend.app.services.runtime_config import llm_config
@@ -521,8 +521,16 @@ def llm_test() -> None:
     console.print(f"[bold]Status:[/bold] {result.status}")
     if result.latency_ms is not None:
         console.print(f"[bold]Latency:[/bold] {result.latency_ms} ms")
-    if result.response_preview:
-        console.print(f"[bold]Response:[/bold] {result.response_preview}")
+    console.print(f"[bold]Content check passed:[/bold] {'yes' if result.content_check_passed else 'no'}")
+    console.print(f"[bold]Ontology mapping check passed:[/bold] {'yes' if result.ontology_mapping_check_passed else 'no'}")
+    if result.raw_response_preview:
+        console.print(f"[bold]Raw response preview:[/bold] {result.raw_response_preview}")
+    if result.parsed_json is not None:
+        console.print_json(data=result.parsed_json)
+    if result.validation_errors:
+        console.print(f"[bold]Validation errors:[/bold] {'; '.join(result.validation_errors)}")
+    if result.json_parse_error:
+        console.print(f"[bold]JSON parse error:[/bold] {result.json_parse_error}")
     if not result.ok:
         console.print(f"[red]{result.error or 'LLM test failed.'}[/red]")
         raise typer.Exit(code=1)
@@ -1522,3 +1530,6 @@ def zotero_sync(
     console.print(f"[bold]Updated:[/bold] {result.updated}")
     console.print(f"[bold]Skipped:[/bold] {result.skipped}")
     console.print(f"[bold]Markdown files refreshed:[/bold] {len(markdown_paths)}")
+
+
+

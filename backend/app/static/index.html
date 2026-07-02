@@ -241,21 +241,6 @@
         <p id="zotero-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
-      <section class="panel page-section" data-page="config" id="zotero-sync-section">
-        <h2>Zotero Synchronization</h2>
-        <p class="description">
-          Import metadata from Zotero into the local database. By default sync follows pagination until all configured records are retrieved.
-        </p>
-        <div class="button-row">
-          <button id="sync-zotero" type="button">Sync all Zotero records</button>
-          <button id="preview-zotero-import" type="button" class="secondary">Preview Zotero Import</button>
-          <button id="import-test-zotero" type="button" class="secondary">Load Test Entries</button>
-        </div>
-        <label class="inline"><input id="zotero-use-limit" type="checkbox" /> Advanced: limit records for testing</label>
-        <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
-        <div id="zotero-import-results" class="import-results" aria-live="polite"></div>
-      </section>
-
       <section class="panel page-section" data-page="config" id="literature-pipeline-config-section">
         <h2>Literature Import Settings</h2>
         <p class="description">
@@ -330,9 +315,13 @@
         </p>
         <div id="literature-project-blocker" class="project-blocker warning"></div>
         <div class="button-row">
-          <button id="run-literature-pipeline" type="button">Import literature</button>
+          <button id="run-literature-pipeline" type="button">Import from Zotero</button>
+          <button id="preview-zotero-import" type="button" class="secondary">Preview Zotero Import</button>
+          <button id="import-test-zotero" type="button" class="secondary">Load Test Entries</button>
           <button id="cleanup-staged-literature" type="button" class="danger">Delete uncurated imported literature and generated files</button>
         </div>
+        <label class="inline"><input id="zotero-use-limit" type="checkbox" /> Advanced: limit records for testing</label>
+        <label id="zotero-limit-label">Optional test limit<input id="zotero-limit" type="number" min="1" max="10000" /></label>
         <div>
           <span class="helper">Project-tag filter</span>
           <div id="literature-tag-filters" class="project-tag-row" aria-label="Filter literature by project tags"></div>
@@ -492,7 +481,7 @@
           <div>
             <p class="eyebrow">Suggestions</p>
             <h2>Run</h2>
-            <p class="description">Select project inputs and start LLM pipeline tests or suggestion runs.</p>
+            <p class="description">Select project inputs and start LLM pipeline tests or ontology draft runs.</p>
           </div>
           <button id="refresh-ontology-suggestions" type="button">Refresh</button>
         </div>
@@ -501,7 +490,7 @@
           <div class="grid two">
             <label>Project<select name="project_id" id="ontology-suggestions-project"></select></label>
             <label>Prompt template<select name="prompt_template_id" id="ontology-suggestions-prompt"></select></label>
-            <label>Literature scope<select name="literature_scope" id="ontology-suggestions-scope"><option value="one">one selected paper</option><option value="selected">selected literature items</option><option value="all_curated">all curated literature for this project</option><option value="all_uncurated">all uncurated literature for this project</option></select></label>
+            <label>Literature scope<select name="literature_scope" id="ontology-suggestions-scope"><option value="one">up to one selected paper</option><option value="selected">selected literature items</option><option value="all_curated">all curated literature for this project</option><option value="all_uncurated">all uncurated literature for this project</option></select></label>
             <label>Ontology context<select name="ontology_context_mode" id="ontology-suggestions-context"><option value="labels_only">labels only</option><option value="labels_definitions">labels + definitions</option><option value="labels_definitions_relations" selected>labels + definitions + existing relations</option><option value="full">full ontology file</option></select></label>
           </div>
           <div id="ontology-suggestions-prompt-meta" class="detail-panel"></div>
@@ -512,7 +501,7 @@
             <button id="save-ontology-suggestion-template" type="button">Save as new template</button>
             <button id="pipeline-ontology-suggestions-test" type="button">Test LLM pipeline</button>
             <button id="cheap-ontology-suggestions-test" type="button" class="secondary">Provider connectivity test</button>
-            <button id="run-ontology-suggestions" type="button">Run suggestions</button>
+            <button id="run-ontology-suggestions" type="button">Run ontology draft</button>
           </div>
         </form>
         <div id="ontology-suggestions-preview" class="detail-panel"></div>
@@ -730,3 +719,6 @@
     <script src="/static/app.js?v=20260602-navfix"></script>
   </body>
 </html>
+
+
+

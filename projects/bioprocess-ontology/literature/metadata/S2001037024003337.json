@@ -5,12 +5,12 @@
   "doi": "10.1016/j.csbj.2024.10.014",
   "source_type": "elsevier_article_retrieval_api",
   "source_path": null,
-  "import_status": "staged",
+  "import_status": "promoted",
   "curation_status": "needs_review",
   "duplicate_status": "canonical_reused",
   "pipeline_version": "oca-canonical-v2",
   "imported_at": "2026-06-30T14:22:05.510526+00:00",
-  "updated_at": "2026-06-30T14:22:05.510526+00:00",
+  "updated_at": "2026-07-02T11:21:31.976840+00:00",
   "authors": [
     "Mattia Miotto",
     "Nina Warner",
@@ -27,7 +27,7 @@
   "publication_date": "2024-12-31",
   "extraction_mode": "publisher_api_required",
   "metadata_source": "zotero+elsevier_xml",
-  "content_source": "elsevier_xml",
+  "content_source": "manual_markdown",
   "used_api_provider": "elsevier",
   "extraction_warnings": [
     "Appendix-like XML content was detected but could not be parsed cleanly."
@@ -75,6 +75,21 @@
       "path": "sources/S2001037024003337.elsevier.xml",
       "artifact_type": "elsevier_xml",
       "ownership": "staged"
+    },
+    {
+      "path": "markdown/S2001037024003337.manual.md",
+      "artifact_type": "manual_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/S2001037024003337.canonical.md",
+      "artifact_type": "canonical_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/S2001037024003337.validation_report.json",
+      "artifact_type": "validation_report_json",
+      "ownership": "staged"
     }
   ],
   "xml_artifact_path": "sources/S2001037024003337.elsevier.xml",
@@ -83,7 +98,10 @@
     "markdown/S2001037024003337.md",
     "markdown/S2001037024003337.md",
     "metadata/S2001037024003337.json",
-    "sources/S2001037024003337.elsevier.xml"
+    "sources/S2001037024003337.elsevier.xml",
+    "markdown/S2001037024003337.manual.md",
+    "markdown/S2001037024003337.canonical.md",
+    "metadata/S2001037024003337.validation_report.json"
   ],
   "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\S2001037024003337.json",
   "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\S2001037024003337.md",
@@ -91,7 +109,7 @@
   "repository_stage": "staged",
   "project_tags": [],
   "promoted_literature_id": "S2001037024003337",
-  "promoted_at": "2026-06-24T13:57:45.318474+00:00",
+  "promoted_at": "2026-07-02T11:21:31.981100+00:00",
   "item_type": "journalArticle",
   "literature_type": "journal_article",
   "attempted_providers": [
@@ -111,9 +129,9 @@
   "selected_provider": "elsevier",
   "fulltext_source": "elsevier_article_retrieval_api",
   "fulltext_format": "elsevier_xml",
-  "fulltext_status": "structured_fulltext_available",
-  "markdown_status": "manual_markdown_required",
-  "source_quality": "structured_xml",
+  "fulltext_status": "structured_fulltext_unavailable",
+  "markdown_status": "manual_markdown_needs_review",
+  "source_quality": "manual_markdown",
   "metadata_quality": {
     "ok": true,
     "errors": [],
@@ -130,8 +148,16 @@
       "references are not separated"
     ]
   },
-  "state": "curation_blocked",
-  "blocked_reason": "Structured Markdown quality checks failed. Please upload reviewed structured Markdown manually.",
+  "state": "manual_review_required",
+  "blocked_reason": null,
   "auto_markdown_path": "markdown/S2001037024003337.md",
-  "canonical_markdown_path": "markdown/S2001037024003337.md"
+  "canonical_markdown_path": "markdown/S2001037024003337.canonical.md",
+  "manual_markdown_path": "markdown/S2001037024003337.manual.md",
+  "validation_report_path": "metadata/S2001037024003337.validation_report.json",
+  "validation_errors": [],
+  "validation_warnings": [
+    "Body text appears to be mostly broken line fragments.",
+    "Repeated lines may indicate headers or footers; review before curation.",
+    "Tables are mentioned; ensure they are preserved or explicitly marked as omitted."
+  ]
 }

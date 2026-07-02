@@ -1,0 +1,65 @@
+{
+  "canonical_id": "large-language-models-for-ontology-engineering-a-systematic-literature-review",
+  "title": "Large Language Models for Ontology Engineering: A Systematic Literature Review",
+  "authors": [
+    "Jiayi Li, Daniel Garijo, Maria Poveda"
+  ],
+  "year": "2025",
+  "journal": "",
+  "doi": "",
+  "pii": "",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "large-language-models-for-ontology-engineering-a-systematic-literature-review",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\large-language-models-for-ontology-engineering-a-systematic-literature-review.json",
+  "source_type": "metadata_only",
+  "source_path": null,
+  "zotero_key": "Y59FLW5I",
+  "pipeline_version": "oca-provider-v1",
+  "metadata_source": "zotero",
+  "content_source": "manual_markdown",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "provider_registry",
+  "doi_used": null,
+  "pii_used": null,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "generated_artifacts": [
+    "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.json",
+    "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.source_report.json",
+    "markdown/large-language-models-for-ontology-engineering-a-systematic-literature-review.manual.md",
+    "markdown/large-language-models-for-ontology-engineering-a-systematic-literature-review.canonical.md",
+    "metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.validation_report.json"
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "crossref_retrieval_status": null,
+  "lookup_doi": null,
+  "lookup_pii": null,
+  "xml_artifact_path": null,
+  "xml_markdown_artifact_path": null,
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-07-01T08:47:55.396735+00:00",
+  "curated_at": "2026-07-02T08:36:47.667390+00:00",
+  "updated_at": "2026-07-02T08:36:47.667390+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/large-language-models-for-ontology-engineering-a-systematic-literature-review.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/large-language-models-for-ontology-engineering-a-systematic-literature-review.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

@@ -18,6 +18,12 @@
           "reason": null
         },
         {
+          "kind": "issn",
+          "value": "2196-1115",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
           "kind": "url",
           "value": "https://doi.org/10.1186/s40537-023-00747-y",
           "status": "skipped",

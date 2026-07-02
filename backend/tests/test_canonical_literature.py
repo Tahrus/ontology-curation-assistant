@@ -379,6 +379,38 @@ def test_manual_markdown_upload_validates_and_selects_canonical(tmp_path: Path) 
     assert valid["content_source"] == "manual_markdown"
     assert Path(valid["markdown_file"]).exists()
 
+    fragmented = upload_manual_markdown(
+        paths,
+        entry["canonical_id"],
+        markdown="# Manual paper\n\nDOI: 10.1000/manual\n\n## Abstract\n\n"
+        + "\n".join(
+            [
+                "Manual line one",
+                "process line two",
+                "curation line three",
+                "evidence line four",
+                "bioprocess line five",
+                "antibody line six",
+                "chromatography line seven",
+                "quality line eight",
+                "measurement line nine",
+                "ontology line ten",
+                "manual line eleven",
+                "process line twelve",
+                "curation line thirteen",
+                "evidence line fourteen",
+                "bioprocess line fifteen",
+                "antibody line sixteen",
+            ]
+        ),
+    )
+    assert fragmented["markdown_available"] is True
+    assert fragmented["markdown_status"] == "manual_markdown_needs_review"
+    assert fragmented["state"] == "manual_review_required"
+    assert not fragmented["validation_errors"]
+    assert "Body text appears to be mostly broken line fragments." in fragmented["validation_warnings"]
+    assert Path(fragmented["markdown_file"]).exists()
+
 
 def test_acs_doi_with_crossref_pdf_link_creates_metadata_only_entry_without_pdf(tmp_path: Path) -> None:
     pdf_requests = []

@@ -1,0 +1,67 @@
+{
+  "canonical_id": "10.1002_eng2.70502",
+  "title": "Hybrid Modeling for Bioprocesses: Architectures, Applications, and Perspectives",
+  "authors": [
+    "Juan Federico Herrera-Ruiz",
+    "Javier Fontalvo",
+    "Oscar Andrés Prado-Rubio"
+  ],
+  "year": "2025",
+  "journal": "Engineering Reports",
+  "doi": "10.1002/eng2.70502",
+  "pii": "",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "10.1002_eng2.70502",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1002_eng2.70502.json",
+  "source_type": "metadata_only",
+  "source_path": null,
+  "zotero_key": "EBCWXAKC",
+  "pipeline_version": "oca-provider-v1",
+  "metadata_source": "zotero+crossref",
+  "content_source": "manual_markdown",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "provider_registry",
+  "doi_used": null,
+  "pii_used": null,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "generated_artifacts": [
+    "metadata/10.1002_eng2.70502.json",
+    "metadata/10.1002_eng2.70502.source_report.json",
+    "markdown/10.1002_eng2.70502.manual.md",
+    "markdown/10.1002_eng2.70502.canonical.md",
+    "metadata/10.1002_eng2.70502.validation_report.json"
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "crossref_retrieval_status": null,
+  "lookup_doi": null,
+  "lookup_pii": null,
+  "xml_artifact_path": null,
+  "xml_markdown_artifact_path": null,
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-07-01T08:48:02.096664+00:00",
+  "curated_at": "2026-07-02T08:59:22.849828+00:00",
+  "updated_at": "2026-07-02T08:59:22.849828+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/10.1002_eng2.70502.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/10.1002_eng2.70502.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

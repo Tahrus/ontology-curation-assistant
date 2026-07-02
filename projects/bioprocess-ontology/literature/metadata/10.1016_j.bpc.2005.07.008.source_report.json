@@ -18,6 +18,12 @@
           "reason": "response did not contain a structured full-text body"
         },
         {
+          "kind": "issn",
+          "value": "0301-4622",
+          "status": "skipped",
+          "reason": "not supported by Elsevier Article Retrieval API"
+        },
+        {
           "kind": "url",
           "value": "https://www.sciencedirect.com/science/article/pii/S0301462205001572",
           "status": "skipped",

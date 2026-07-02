@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [
+    "Tables are mentioned; ensure they are preserved or explicitly marked as omitted."
+  ]
+}

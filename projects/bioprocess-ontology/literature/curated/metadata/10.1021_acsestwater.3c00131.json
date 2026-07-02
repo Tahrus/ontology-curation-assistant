@@ -1,0 +1,67 @@
+{
+  "canonical_id": "10.1021_acsestwater.3c00131",
+  "title": "Hybrid Modeling of Engineered Biological Systems through Coupling Data-Driven Calibration of Kinetic Parameters with Mechanistic Prediction of System Performance",
+  "authors": [
+    "Zhang Cheng",
+    "Avner Ronen",
+    "Heyang Yuan"
+  ],
+  "year": "2024",
+  "journal": "ACS ES&amp;T Water",
+  "doi": "10.1021/acsestwater.3c00131",
+  "pii": "",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "10.1021_acsestwater.3c00131",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1021_acsestwater.3c00131.json",
+  "source_type": "metadata_only",
+  "source_path": null,
+  "zotero_key": "3AH3JSVM",
+  "pipeline_version": "oca-provider-v1",
+  "metadata_source": "zotero+crossref",
+  "content_source": "manual_markdown",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "acs",
+  "doi_used": null,
+  "pii_used": null,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "generated_artifacts": [
+    "metadata/10.1021_acsestwater.3c00131.json",
+    "metadata/10.1021_acsestwater.3c00131.source_report.json",
+    "markdown/10.1021_acsestwater.3c00131.manual.md",
+    "markdown/10.1021_acsestwater.3c00131.canonical.md",
+    "metadata/10.1021_acsestwater.3c00131.validation_report.json"
+  ],
+  "extraction_warnings": [
+    "No structured ACS full text was found. A literature entry was created from metadata. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "pdf_available_but_not_used",
+  "crossref_retrieval_status": null,
+  "lookup_doi": null,
+  "lookup_pii": null,
+  "xml_artifact_path": null,
+  "xml_markdown_artifact_path": null,
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-07-01T08:48:06.093429+00:00",
+  "curated_at": "2026-07-02T11:01:49.278947+00:00",
+  "updated_at": "2026-07-02T11:01:49.278947+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/10.1021_acsestwater.3c00131.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/10.1021_acsestwater.3c00131.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

@@ -173,7 +173,11 @@ def test_llm_test_endpoint_reports_mocked_success(client, monkeypatch):
             api_key_found=True,
             api_key_source=config.api_key_source,
             latency_ms=12,
-            response_preview="ok",
+            response_preview='{"answer":"understood","sample_count":{"value":42,"ontology_term_id":"OCA_TEST:0000003","ontology_term_label":"sample count"},"ph":{"value":7.4,"ontology_term_id":"OCA_TEST:0000004","ontology_term_label":"pH value"},"unit_operation":{"value":"chromatography","ontology_term_id":"OCA_TEST:0000002","ontology_term_label":"chromatography"}}',
+            raw_response_preview='{"answer":"understood","sample_count":{"value":42,"ontology_term_id":"OCA_TEST:0000003","ontology_term_label":"sample count"},"ph":{"value":7.4,"ontology_term_id":"OCA_TEST:0000004","ontology_term_label":"pH value"},"unit_operation":{"value":"chromatography","ontology_term_id":"OCA_TEST:0000002","ontology_term_label":"chromatography"}}',
+            parsed_json={"sample_count": {"value": 42, "ontology_term_id": "OCA_TEST:0000003", "ontology_term_label": "sample count"}, "ph": {"value": 7.4, "ontology_term_id": "OCA_TEST:0000004", "ontology_term_label": "pH value"}, "unit_operation": {"value": "chromatography", "ontology_term_id": "OCA_TEST:0000002", "ontology_term_label": "chromatography"}},
+            content_check_passed=True,
+            ontology_mapping_check_passed=True,
             status="ok",
         ),
     )
@@ -184,6 +188,10 @@ def test_llm_test_endpoint_reports_mocked_success(client, monkeypatch):
     assert tested.json()["ok"] is True
     assert tested.json()["latency_ms"] == 12
     assert tested.json()["api_key_source"] == "stored"
+    assert tested.json()["content_check_passed"] is True
+    assert tested.json()["parsed_json"]["sample_count"]["value"] == 42
+    assert tested.json()["parsed_json"]["sample_count"]["ontology_term_id"] == "OCA_TEST:0000003"
+    assert tested.json()["ontology_mapping_check_passed"] is True
     assert "secret" not in json.dumps(tested.json())
 
 
@@ -920,6 +928,79 @@ def test_zotero_sync_reports_yang_springer_manual_markdown_required(client, monk
     assert yang["markdown_status"] == "manual_markdown_required"
     assert yang["fulltext_status"] == "unsupported_publisher"
 
+
+def test_staged_literature_edit_validates_manual_markdown(client, tmp_path):
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "Manual Markdown Save",
+            "ontology_id": "manual-md",
+            "project_type": "domain_ontology",
+            "local_workspace_path": str(tmp_path / "workspace"),
+            "activate": True,
+        },
+    ).json()
+    imported = client.post(
+        "/api/literature/import",
+        json={"project": project["slug"], "doi": "10.1007/manual-md", "title": "Manual Markdown Article"},
+    )
+    assert imported.status_code == 200
+    entry_id = imported.json()["entry"]["id"]
+    markdown = """# Manual Markdown Article
+
+## Abstract
+
+DOI: 10.1007/manual-md. This structured manual Markdown contains enough article-like prose for curation review. It describes bioprocess steps, process inputs, process outputs, operating conditions, measurement context, and relevant ontology evidence in complete sentences.
+
+## Introduction
+
+The article discusses antibody manufacturing, batch operation, continuous operation, upstream processing, downstream purification, chromatography, filtration, buffer exchange, quality attributes, and economic comparison. This paragraph is intentionally long enough to pass the basic validation checks for manual structured Markdown.
+"""
+
+    saved = client.patch(
+        f"/api/literature/staged/{entry_id}",
+        json={"project": project["slug"], "markdown": markdown, "metadata": {"title": "Manual Markdown Article"}},
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["markdown_available"] is True
+    assert body["markdown_status"] == "markdown_validated"
+    assert body["content_source"] == "manual_markdown"
+
+    fragmented = "# Manual Markdown Article\n\nDOI: 10.1007/manual-md\n\n## Abstract\n\n" + "\n".join(
+        [
+            "Manual line one",
+            "process line two",
+            "curation line three",
+            "evidence line four",
+            "bioprocess line five",
+            "antibody line six",
+            "chromatography line seven",
+            "quality line eight",
+            "measurement line nine",
+            "ontology line ten",
+            "manual line eleven",
+            "process line twelve",
+            "curation line thirteen",
+            "evidence line fourteen",
+            "bioprocess line fifteen",
+            "antibody line sixteen",
+        ]
+    )
+    warning_save = client.patch(
+        f"/api/literature/staged/{entry_id}",
+        json={"project": project["slug"], "markdown": fragmented, "metadata": {"title": "Manual Markdown Article"}},
+    )
+    assert warning_save.status_code == 200
+    warning_body = warning_save.json()
+    assert warning_body["markdown_available"] is True
+    assert warning_body["markdown_status"] == "manual_markdown_needs_review"
+    assert "Body text appears to be mostly broken line fragments." in warning_body["validation_warnings"]
+    entries = client.get("/api/literature/canonical", params={"project": project["slug"]}).json()["staged_entries"]
+    assert any(entry["id"] == entry_id and entry["markdown_available"] for entry in entries)
+
+
 def test_zotero_import_preview_reports_yang_without_doi_or_pdf(client, monkeypatch, tmp_path):
     client.post(
         "/api/projects",
@@ -971,11 +1052,11 @@ def test_zotero_import_preview_reports_yang_without_doi_or_pdf(client, monkeypat
     assert body["preview_items"][0]["title"].startswith("Economic Analysis of Batch")
 
 
-def test_zotero_sync_reports_wrong_project_tag_when_required(client, monkeypatch, tmp_path):
+def test_zotero_sync_ignores_project_tags_for_import(client, monkeypatch, tmp_path):
     client.post(
         "/api/projects",
         json={
-            "name": "Project tag required",
+            "name": "Project tag ignored",
             "ontology_id": "required-tag",
             "project_type": "domain_ontology",
             "local_workspace_path": str(tmp_path / "workspace"),
@@ -1010,14 +1091,15 @@ def test_zotero_sync_reports_wrong_project_tag_when_required(client, monkeypatch
     client.post("/api/config/zotero", json={"library_type": "user", "library_id": "1"})
     client.post("/api/config/publisher", json={"literature_extraction_mode": "publisher_api_required"})
 
-    response = client.post("/api/zotero/sync", json={"require_project_tag": True})
+    response = client.post("/api/zotero/sync", json={})
 
     assert response.status_code == 200
     body = response.json()
-    assert body["result_counts"]["skipped_wrong_project_tag"] == 1
+    assert "skipped_wrong_project_tag" not in body["result_counts"]
+    assert body["result_counts"]["unsupported_publisher"] == 1
     result = body["failed_results"][0]
     assert result["zotero_key"] == "YANGTAG"
-    assert result["status"] == "skipped_wrong_project_tag"
+    assert result["status"] == "unsupported_publisher"
     assert result["tags"] == ["different-project"]
 
 
@@ -1328,7 +1410,7 @@ def test_zotero_sync_frontend_bindings_are_guarded():
         "zotero-collection-key",
         "zotero-api-base-url",
         "test-zotero",
-        "sync-zotero",
+        "preview-zotero-import",
         "import-test-zotero",
     ]:
         assert f'id="{selector}"' in html
@@ -1403,20 +1485,26 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "Literature Import Settings" in pipeline_section
     assert 'data-page="config"' in pipeline_section
     assert 'id="run-literature-pipeline"' in html
+    assert "Import from Zotero" in html
+    assert "Zotero Synchronization" not in html
+    assert 'id="sync-zotero"' not in html
     assert 'aria-live="polite"' in html
     assert 'role="status"' in html
     assert "zotero_literature_storage_path" in script
-    assert "/api/literature/import" in script
-    assert "Retrieving structured publisher XML" in script
+    assert 'api("/api/literature/import",' not in script
+    assert "/api/zotero/sync" in script
+    assert "Importing top-level Zotero literature metadata" in script
     assert "publisher_api_required" in script
     assert "/api/literature/import-diagnostics" in script
     assert "/api/literature/test-publisher-api" in script
     assert "button.disabled = true" in script
     assert "aria-busy" in script
     assert "action-toast" in html
-    assert "zotero-import-results" in html
+    assert "zotero-import-results" not in html
     assert "literature-import-results" in html
     assert "renderImportResults" in script
+    assert "Show detailed import report" in script
+    assert "import-report-details" in script
     assert "Preview Zotero Import" in html
     assert "preview_only" in script
     assert "unsupported_publisher" in script
@@ -1425,10 +1513,13 @@ def test_static_ui_has_current_routes_theme_literature_markdown_and_graph_contro
     assert "is-clicked" in styles
     assert "Error:" in script
     assert "complete." in script
-    assert "xml_imported" in script
-    assert "PDF used:" in script
-    assert "duplicates" in script
-    assert "combined_output_file" in script
+    assert "already existing:" in script
+    assert "metadata entries imported/updated:" in script
+    assert "manual Markdown required:" in script
+    assert "failed/skipped:" in script
+    assert "Load Markdown file" in script
+    assert "Markdown loaded from file:" in script
+    assert "drop-target" in styles
     assert "data-graph-controls" in html
     assert 'id="dashboard-project-hierarchy"' in html
     assert 'id="dashboard-project-tree"' in html
@@ -1976,3 +2067,5 @@ def test_api_zotero_sync_never_triggers_pdf_pipeline_in_strict_mode(client, monk
     entries = client.get("/api/literature/canonical", params={"project": project.json()["slug"]}).json()["staged_entries"]
     assert entries[0]["markdown_status"] == "manual_markdown_required"
     assert entries[0]["pdf_used"] is False
+
+

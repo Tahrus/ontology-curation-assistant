@@ -196,7 +196,6 @@ class ZoteroSyncPayload(BaseModel):
     collection_key: str | None = None
     limit: int | None = Field(default=None, ge=1, le=10000)
     preview_only: bool = False
-    require_project_tag: bool = False
 
 
 class OntologyPathPayload(BaseModel):
@@ -751,15 +750,6 @@ def _source_stable_identifiers(source: ParsedSource) -> dict[str, Any]:
 
 def _source_has_stable_identifier(source: ParsedSource) -> bool:
     return any(bool(value) for value in _source_stable_identifiers(source).values())
-
-
-def _source_has_project_tag(source: ParsedSource, project: Project | None, session: Session) -> bool:
-    if project is None:
-        return True
-    mapping = _canonical_project_tag_map(session)
-    wanted = _canonicalize_project_tag(project.ontology_id, mapping).casefold()
-    tags = {_canonicalize_project_tag(tag, mapping).casefold() for tag in source.tags if tag.strip()}
-    return wanted in tags
 
 
 def _source_provider_hint(source: ParsedSource) -> str | None:
@@ -1940,6 +1930,12 @@ def test_configured_llm(session: Session = Depends(get_session)) -> dict[str, An
         "latency_ms": result.latency_ms,
         "status": result.status,
         "response_preview": result.response_preview,
+        "raw_response_preview": result.raw_response_preview,
+        "parsed_json": result.parsed_json,
+        "json_parse_error": result.json_parse_error,
+        "validation_errors": result.validation_errors or [],
+        "content_check_passed": result.content_check_passed,
+        "ontology_mapping_check_passed": result.ontology_mapping_check_passed,
         "error": result.error,
     }
 
@@ -2403,7 +2399,26 @@ def read_staged_literature(entry_id: str, project: str | None = None, session: S
 def edit_staged_literature(entry_id: str, payload: LiteratureEntryEditPayload, session: Session = Depends(get_session)) -> dict[str, Any]:
     _, paths = _canonical_project_paths(session, payload.project)
     try:
-        return _canonical_entry_payload(update_staged_entry(paths, entry_id, metadata=payload.metadata, markdown=payload.markdown, project_tags=payload.project_tags))
+        current = next((entry for entry in list_canonical_entries(paths) if entry.get("canonical_id") == entry_id), None)
+        manual_needed = bool(current) and (
+            current.get("markdown_status") in {"manual_markdown_required", "manual_markdown_needs_review"}
+            or current.get("content_source") == "manual_markdown"
+            or current.get("source_quality") == "manual_markdown"
+            or bool(current.get("manual_markdown_path"))
+            or current.get("state") == "curation_blocked"
+            or not current.get("markdown_file")
+            or not current.get("markdown_available")
+        )
+        entry = update_staged_entry(
+            paths,
+            entry_id,
+            metadata=payload.metadata,
+            markdown=None if manual_needed else payload.markdown,
+            project_tags=payload.project_tags,
+        )
+        if manual_needed and payload.markdown:
+            entry = upload_manual_markdown(paths, entry_id, markdown=payload.markdown, validate=True)
+        return _canonical_entry_payload(entry)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -3229,9 +3244,8 @@ def sync_zotero(
     api_config = ElsevierApiConfig(api_key=publisher.api_key, inst_token=publisher.inst_token, base_url=publisher.base_url, enabled=publisher.enabled)
     storage_path = literature_config(session).zotero_literature_storage_path
     try:
-        active_project, canonical_paths = _canonical_project_paths(session)
+        _, canonical_paths = _canonical_project_paths(session)
     except LookupError:
-        active_project = None
         canonical_paths = None
 
     repository_keys = _repository_identity_key_set(canonical_paths) if canonical_paths else set()
@@ -3266,9 +3280,6 @@ def sync_zotero(
         if requested_collection and source.collections and requested_collection not in source.collections:
             status = "skipped_wrong_collection"
             reason = "The Zotero item is outside the requested collection."
-        elif payload.require_project_tag and not _source_has_project_tag(source, active_project, session):
-            status = "skipped_wrong_project_tag"
-            reason = f"The Zotero item does not have the required project tag '{active_project.ontology_id if active_project else ''}'."
         elif extraction_mode in {"pdf_only", "pdf_fallback_allowed"} and not attachment_trace.get("pdf_attachment_count"):
             status = "skipped_no_pdf"
             reason = "No Zotero PDF attachment was found for the configured PDF-capable import mode."
@@ -3327,9 +3338,6 @@ def sync_zotero(
             if requested_collection and source.collections and requested_collection not in source.collections:
                 item_results.append(_zotero_import_result(source, "skipped_wrong_collection", "The Zotero item is outside the requested collection.", attachment_trace=attachment_trace))
                 continue
-            if payload.require_project_tag and not _source_has_project_tag(source, active_project, session):
-                item_results.append(_zotero_import_result(source, "skipped_wrong_project_tag", f"The Zotero item does not have the required project tag '{active_project.ontology_id if active_project else ''}'.", attachment_trace=attachment_trace))
-                continue
             if _source_exists_in_repository(source, repository_keys):
                 item_results.append(_zotero_import_result(source, "already_exists", "This Zotero item already exists in the project literature repository.", attachment_trace=attachment_trace))
                 continue
@@ -3372,9 +3380,7 @@ def sync_zotero(
     else:
         for source in sources:
             attachment_trace = prechecked_attachments.get(source.provider_item_key or "")
-            if payload.require_project_tag and not _source_has_project_tag(source, active_project, session):
-                item_results.append(_zotero_import_result(source, "skipped_wrong_project_tag", f"The Zotero item does not have the required project tag '{active_project.ontology_id if active_project else ''}'.", attachment_trace=attachment_trace))
-            elif not attachment_trace or not attachment_trace.get("pdf_attachment_count"):
+            if not attachment_trace or not attachment_trace.get("pdf_attachment_count"):
                 item_results.append(_zotero_import_result(source, "skipped_no_pdf", "No Zotero PDF attachment was found for the configured PDF-only pipeline.", attachment_trace=attachment_trace))
             else:
                 item_results.append(_zotero_import_result(source, "imported", "Zotero metadata was synced. Markdown generation is handled by the configured PDF-only pipeline.", attachment_trace=attachment_trace))
@@ -4384,3 +4390,5 @@ def export_approved(
         media_type="text/tab-separated-values",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+

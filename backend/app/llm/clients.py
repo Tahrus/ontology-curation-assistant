@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -38,6 +40,12 @@ class LlmConnectionTestResult:
     api_key_source: str | None = None
     latency_ms: int | None = None
     response_preview: str | None = None
+    raw_response_preview: str | None = None
+    parsed_json: dict[str, Any] | None = None
+    json_parse_error: str | None = None
+    validation_errors: list[str] | None = None
+    content_check_passed: bool = False
+    ontology_mapping_check_passed: bool = False
     status: str = "not_configured"
     error: str | None = None
 
@@ -93,9 +101,10 @@ def test_llm_connection(config: LlmRuntimeConfig) -> LlmConnectionTestResult:
         )
     try:
         result = generate_text(
-            "Reply with the single word ok.",
-            system_prompt="This is a low-token connectivity test.",
+            _markdown_workflow_test_prompt(),
+            system_prompt="Read the supplied Markdown and OBO ontology. Return strict JSON only.",
             config=config,
+            json_mode=True,
         )
     except LlmClientError as exc:
         return LlmConnectionTestResult(
@@ -108,8 +117,23 @@ def test_llm_connection(config: LlmRuntimeConfig) -> LlmConnectionTestResult:
             status="error",
             error=str(exc),
         )
+    raw_preview = result.text[:1000]
+    parsed, parse_error = _parse_json_response(result.text)
+    validation_errors = _validate_markdown_workflow_payload(parsed) if parsed is not None else []
+    content_check_passed = parsed is not None and not any(error.startswith("content:") for error in validation_errors)
+    ontology_mapping_check_passed = parsed is not None and not any(error.startswith("ontology:") for error in validation_errors)
+    checks_passed = content_check_passed and ontology_mapping_check_passed and not validation_errors
+    if parse_error:
+        status = "invalid_json"
+        error = f"LLM response could not be parsed as JSON: {parse_error}"
+    elif validation_errors:
+        status = "validation_failed"
+        error = "LLM JSON response did not match the Markdown content: " + "; ".join(validation_errors)
+    else:
+        status = "ok"
+        error = None
     return LlmConnectionTestResult(
-        ok=True,
+        ok=checks_passed,
         provider=result.provider,
         provider_key=provider_key or result.provider,
         model=result.model,
@@ -117,9 +141,161 @@ def test_llm_connection(config: LlmRuntimeConfig) -> LlmConnectionTestResult:
         api_key_source=config.api_key_source,
         latency_ms=result.latency_ms,
         response_preview=result.text[:300],
-        status="ok",
+        raw_response_preview=raw_preview,
+        parsed_json=parsed,
+        json_parse_error=parse_error,
+        validation_errors=validation_errors,
+        content_check_passed=content_check_passed,
+        ontology_mapping_check_passed=ontology_mapping_check_passed,
+        status=status,
+        error=error,
     )
 
+
+def _markdown_workflow_test_prompt() -> str:
+    markdown = """# Test Literature Entry
+
+Title: Example bioprocess paper
+
+The experiment used 42 samples.
+The buffer pH was 7.4.
+The main unit operation was chromatography."""
+    obo = """format-version: 1.4
+ontology: oca-test
+
+[Term]
+id: OCA_TEST:0000001
+name: bioprocess experiment
+def: "An experiment performed to study or operate a bioprocess." []
+
+[Term]
+id: OCA_TEST:0000002
+name: chromatography
+def: "A separation unit operation based on differential interaction with a stationary phase." []
+is_a: OCA_TEST:0000001 ! bioprocess experiment
+
+[Term]
+id: OCA_TEST:0000003
+name: sample count
+def: "A data item representing the number of samples used in an experiment." []
+
+[Term]
+id: OCA_TEST:0000004
+name: pH value
+def: "A data item representing the acidity or alkalinity of a solution." []
+
+[Typedef]
+id: OCA_TEST:0000101
+name: has measurement value
+def: "A relation between a measured property and its numeric value." []"""
+    expected_shape = {
+        "answer": "short confirmation",
+        "sample_count": {
+            "value": 42,
+            "ontology_term_id": "OCA_TEST:0000003",
+            "ontology_term_label": "sample count",
+        },
+        "ph": {
+            "value": 7.4,
+            "ontology_term_id": "OCA_TEST:0000004",
+            "ontology_term_label": "pH value",
+        },
+        "unit_operation": {
+            "value": "chromatography",
+            "ontology_term_id": "OCA_TEST:0000002",
+            "ontology_term_label": "chromatography",
+        },
+    }
+    return "\n\n".join(
+        [
+            "Markdown:",
+            markdown,
+            "OBO ontology:",
+            obo,
+            "Prompt:",
+            "Read the Markdown text and the OBO ontology.",
+            "Extract the requested information from the Markdown and map it to the best matching OBO term.",
+            "Return JSON only.",
+            "Expected JSON shape:",
+            json.dumps(expected_shape, indent=2),
+        ]
+    )
+
+def _parse_json_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
+    body = (text or "").strip()
+    if not body:
+        return None, "empty response"
+    candidates = [body]
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.IGNORECASE | re.DOTALL)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    first = body.find("{")
+    last = body.rfind("}")
+    if first != -1 and last > first:
+        candidates.append(body[first : last + 1])
+    last_error = None
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+            continue
+        if not isinstance(payload, dict):
+            return None, "JSON response must be an object"
+        return payload, None
+    return None, last_error or "invalid JSON"
+
+
+def _validate_markdown_workflow_payload(payload: dict[str, Any] | None) -> list[str]:
+    if payload is None:
+        return ["content: no parsed JSON payload was available"]
+    errors: list[str] = []
+
+    sample_count = _object_field(payload, "sample_count", errors)
+    if sample_count is not None:
+        if sample_count.get("value") != 42:
+            errors.append("content: sample_count.value must be 42")
+        _require_ontology_mapping(sample_count, "sample_count", "OCA_TEST:0000003", "sample count", errors)
+
+    ph = _object_field(payload, "ph", errors)
+    if ph is not None:
+        try:
+            ph_value = float(ph.get("value"))
+        except (TypeError, ValueError):
+            errors.append("content: ph.value must be numeric value 7.4")
+        else:
+            if abs(ph_value - 7.4) > 0.001:
+                errors.append("content: ph.value must be 7.4")
+        _require_ontology_mapping(ph, "ph", "OCA_TEST:0000004", "pH value", errors)
+
+    unit_operation = _object_field(payload, "unit_operation", errors)
+    if unit_operation is not None:
+        if str(unit_operation.get("value") or "").strip().casefold() != "chromatography":
+            errors.append('content: unit_operation.value must be "chromatography"')
+        _require_ontology_mapping(unit_operation, "unit_operation", "OCA_TEST:0000002", "chromatography", errors)
+
+    return errors
+
+
+def _object_field(payload: dict[str, Any], field: str, errors: list[str]) -> dict[str, Any] | None:
+    value = payload.get(field)
+    if not isinstance(value, dict):
+        errors.append(f"content: {field} must be a JSON object")
+        return None
+    return value
+
+
+def _require_ontology_mapping(
+    value: dict[str, Any],
+    field: str,
+    expected_id: str,
+    expected_label: str,
+    errors: list[str],
+) -> None:
+    if str(value.get("ontology_term_id") or "").strip() != expected_id:
+        errors.append(f"ontology: {field}.ontology_term_id must be {expected_id}")
+    if str(value.get("ontology_term_label") or "").strip().casefold() != expected_label.casefold():
+        errors.append(f'ontology: {field}.ontology_term_label must be "{expected_label}"')
 
 def create_llm_client(config: LlmRuntimeConfig) -> LlmClient:
     provider = normalize_provider_id(config.provider) or ""
@@ -334,3 +510,9 @@ def _friendly_provider_error(exc: Exception) -> str:
     if any(term in normalized for term in ["network", "connect", "dns", "base url", "base_url"]):
         return f"Network error while contacting LLM provider: {message}"
     return message
+
+
+
+
+
+

@@ -1274,6 +1274,50 @@ function renderProjectTagFilters() {
   });
 }
 
+function isMarkdownUploadFile(file) {
+  const name = (file?.name || "").toLowerCase();
+  return name.endsWith(".md") || name.endsWith(".txt");
+}
+
+function wireMarkdownFileLoader(record) {
+  const textarea = record.querySelector('[data-field="markdown"]');
+  const input = record.querySelector('[data-field="markdown-file"]');
+  const button = record.querySelector('[data-action="load-markdown-file"]');
+  const status = record.querySelector('[data-field="markdown-file-status"]');
+  if (!textarea || !input || !button || !status) return;
+  const loadFile = (file) => {
+    if (!file) return;
+    if (!isMarkdownUploadFile(file)) {
+      status.textContent = "Choose a .md or .txt file.";
+      status.className = "message warning";
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      textarea.value = String(reader.result || "");
+      status.textContent = `Markdown loaded from file: ${file.name}`;
+      status.className = "message";
+    });
+    reader.addEventListener("error", () => {
+      status.textContent = `Could not read file: ${file.name}`;
+      status.className = "message warning";
+    });
+    reader.readAsText(file);
+  };
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => loadFile(input.files?.[0]));
+  textarea.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    textarea.classList.add("drop-target");
+  });
+  textarea.addEventListener("dragleave", () => textarea.classList.remove("drop-target"));
+  textarea.addEventListener("drop", (event) => {
+    event.preventDefault();
+    textarea.classList.remove("drop-target");
+    loadFile(event.dataTransfer?.files?.[0]);
+  });
+}
+
 function literatureEditor(entry, stage) {
   const record = document.createElement("article");
   record.className = "literature-record";
@@ -1288,7 +1332,8 @@ function literatureEditor(entry, stage) {
       <label>Journal<input data-field="journal" value="${escapeHtml(entry.journal || "")}" /></label>
       <label>DOI<input data-field="doi" value="${escapeHtml(entry.doi || "")}" /></label>
       <label>PII<input data-field="pii" value="${escapeHtml(entry.pii || "")}" /></label>
-      <label>Reviewed Markdown<textarea data-field="markdown" rows="18"></textarea></label>
+      <label>Reviewed Markdown<textarea data-field="markdown" rows="18" placeholder="Drop a .md or .txt file here, or paste structured Markdown"></textarea></label>
+      <div class="button-row markdown-file-loader"><button type="button" class="secondary" data-action="load-markdown-file">Load Markdown file</button><input data-field="markdown-file" type="file" accept=".md,.txt,text/markdown,text/plain" hidden /><span data-field="markdown-file-status" class="message"></span></div>
       <div><span class="helper">Project tags</span><div data-field="project_tags" class="project-tag-row"></div></div>
       <p class="description"><strong>Curation status:</strong> ${escapeHtml(status)} | <strong>Repository:</strong> ${escapeHtml(entry.repository_stage || stage)}</p>
       <p class="description"><strong>Content source:</strong> ${escapeHtml(literatureSourceLabel(entry.content_source, "content"))} | <strong>Metadata source:</strong> ${escapeHtml(literatureSourceLabel(entry.metadata_source, "metadata"))}</p>
@@ -1308,6 +1353,7 @@ function literatureEditor(entry, stage) {
     </div>
   </details>`;
   record.querySelector('[data-field="markdown"]').value = entry.literature_markdown || "";
+  wireMarkdownFileLoader(record);
   const tagContainer = record.querySelector('[data-field="project_tags"]');
   const rerenderTags = () => renderProjectTagButtons(tagContainer, [...selectedTagLabels], (label) => {
     const existing = [...selectedTagLabels].find((tag) => normalizeText(tag) === normalizeText(label));
@@ -1334,9 +1380,10 @@ function literatureEditor(entry, stage) {
   save.textContent = stage === "staged" ? "Save review" : "Save curated entry";
   save.addEventListener("click", async (event) => {
     await withButtonFeedback(event.currentTarget, "Saving", async () => {
-      await api(`/api/literature/${stage}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify(values()) });
+      const result = await api(`/api/literature/${stage}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify(values()) });
       await loadEntries();
-      setSuccess("#literature-repository-message", "Literature review saved.");
+      if (stage === "staged" && result.markdown_status === "manual_markdown_needs_review") setSuccess("#literature-repository-message", "Markdown saved. Quality warnings remain; please review before curation.");
+      else setSuccess("#literature-repository-message", "Literature review saved.");
     }).catch((error) => setError("#literature-repository-message", error.message));
   });
   actions.append(save);
@@ -1349,8 +1396,12 @@ function literatureEditor(entry, stage) {
       await withButtonFeedback(event.currentTarget, "Validating", async () => {
         const result = await api(`/api/literature/staged/${encodeURIComponent(entry.id)}/manual-markdown`, { method: "POST", body: JSON.stringify({ markdown: record.querySelector('[data-field="markdown"]').value }) });
         await loadEntries();
-        if (result.validation_report?.ok) setSuccess("#literature-repository-message", "Manual Markdown validated and selected as canonical Markdown.");
-        else setError("#literature-repository-message", `Manual Markdown is still blocked: ${(result.validation_report?.errors || []).join("; ")}`);
+        if (result.validation_report?.ok) {
+          const warnings = result.validation_report?.warnings || [];
+          setSuccess("#literature-repository-message", warnings.length ? "Markdown saved. Quality warnings remain; please review before curation." : "Manual Markdown validated and selected as canonical Markdown.");
+        } else {
+          setError("#literature-repository-message", `Manual Markdown is still blocked: ${(result.validation_report?.errors || []).join("; ")}`);
+        }
       }).catch((error) => setError("#literature-repository-message", error.message));
     });
     const promote = document.createElement("button");
@@ -2317,18 +2368,17 @@ function renderOlsMatches(node, candidate) {
 }
 
 const IMPORT_RESULT_LABELS = {
-  imported: "imported",
-  already_exists: "already exists",
-  skipped_wrong_project_tag: "wrong project tag",
-  skipped_wrong_collection: "wrong collection",
-  skipped_no_pdf: "no PDF",
-  skipped_no_identifier: "no identifier",
-  missing_attachment: "missing attachment",
-  missing_identifier: "missing identifier",
-  unsupported_publisher: "unsupported publisher",
-  api_failed: "API failed",
-  manual_markdown_required: "manual Markdown required",
-  failed: "failed",
+  imported: "Imported",
+  already_exists: "Already exists",
+  skipped_wrong_collection: "Skipped collection",
+  skipped_no_pdf: "Skipped no PDF",
+  skipped_no_identifier: "Manual Markdown required",
+  missing_attachment: "Skipped attachment/non-top-level item",
+  missing_identifier: "Manual Markdown required",
+  unsupported_publisher: "Unsupported publisher",
+  api_failed: "Failed",
+  manual_markdown_required: "Manual Markdown required",
+  failed: "Failed",
 };
 
 function importResultLine(item) {
@@ -2350,23 +2400,31 @@ function renderImportResults(selector, result) {
   if (!target) return;
   const successes = result.successful_results || [];
   const failed = result.failed_results || result.failures || [];
-  if (!successes.length && !failed.length) {
+  const preview = result.preview_items || [];
+  const detailsItems = [...preview, ...successes, ...failed];
+  if (!detailsItems.length) {
     target.innerHTML = "";
     return;
   }
-  const block = (title, items) => items.length
-    ? `<section><h3>${escapeHtml(title)}</h3><ul>${items.map((item) => `<li>${importResultLine(item)}</li>`).join("")}</ul></section>`
-    : "";
-  const preview = result.preview_items || [];
-  const previewBlock = preview.length
-    ? `<section><h3>Zotero import preview</h3><ul>${preview.map((item) => {
-        const tags = (item.tags || []).length ? `; tags ${(item.tags || []).join(", ")}` : "; no tags";
-        const collections = (item.collections || []).length ? `; collections ${(item.collections || []).join(", ")}` : "; no collections";
-        const attachmentText = `; attachments ${item.attachment_count || 0}; PDF ${item.pdf_attachment_found ? "yes" : "no"}`;
-        return `<li>${importResultLine(item)}${escapeHtml(tags + collections + attachmentText)}</li>`;
-      }).join("")}</ul></section>`
-    : "";
-  target.innerHTML = `${previewBlock}${block("Imported / already present", successes)}${block("Needs attention", failed)}`;
+  const counts = result.result_counts || {};
+  const manualCount = (counts.manual_markdown_required || 0) + (counts.skipped_no_identifier || 0) + (counts.missing_identifier || 0);
+  const skippedAttachmentCount = detailsItems.filter((item) => ["attachment", "note", "annotation"].includes(item.item_type) || /not top-level/i.test(item.reason || "")).length;
+  const failedCount = (counts.failed || 0) + (counts.api_failed || 0);
+  const summary = [
+    ["Already exists", counts.already_exists || 0],
+    ["Imported", counts.imported || 0],
+    ["Manual Markdown required", manualCount],
+    ["Unsupported publisher", counts.unsupported_publisher || 0],
+    ["Skipped attachment/non-top-level item", skippedAttachmentCount],
+    ["Failed", failedCount],
+  ];
+  const detailRows = detailsItems.map((item) => {
+    const tags = (item.tags || []).length ? `; tags ${(item.tags || []).join(", ")}` : "";
+    const collections = (item.collections || []).length ? `; collections ${(item.collections || []).join(", ")}` : "";
+    const attachmentText = item.attachment_count !== undefined ? `; attachments ${item.attachment_count || 0}; PDF ${item.pdf_attachment_found ? "yes" : "no"}` : "";
+    return `<li>${importResultLine(item)}${escapeHtml(tags + collections + attachmentText)}</li>`;
+  }).join("");
+  target.innerHTML = `<section class="import-summary"><h3>Import summary</h3><ul>${summary.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${value}</li>`).join("")}</ul></section><details class="import-report-details"><summary>Show detailed import report</summary><ul>${detailRows}</ul></details>`;
 }
 function bindZoteroMetadataSync() {
   const configForm = requiredZoteroElement("#zotero-config-form");
@@ -2429,37 +2487,11 @@ function bindZoteroMetadataSync() {
             method: "POST",
             body: JSON.stringify({ limit, preview_only: true }),
           });
-          setSuccess("#zotero-message", `Previewed ${result.fetched} Zotero item(s); no records imported.`);
-          renderImportResults("#zotero-import-results", result);
+          setSuccess("#literature-import-message", `Previewed ${result.fetched} Zotero item(s); no records imported.`);
+          renderImportResults("#literature-import-results", result);
         });
       } catch (error) {
-        setError("#zotero-message", error.message);
-      }
-    });
-  }
-
-  const syncButton = requiredZoteroElement("#sync-zotero");
-  if (syncButton) {
-    syncButton.addEventListener("click", async (event) => {
-      try {
-        await withButtonFeedback(event.currentTarget, "Syncing", async () => {
-          const limitToggle = document.querySelector("#zotero-use-limit");
-          const limitInput = document.querySelector("#zotero-limit");
-          if (!limitToggle || !limitInput) {
-            reportMissingZoteroElement(!limitToggle ? "#zotero-use-limit" : "#zotero-limit");
-            return;
-          }
-          const limit = limitToggle.checked ? Number(limitInput.value || 0) || null : null;
-          const result = await api("/api/zotero/sync", {
-            method: "POST",
-            body: JSON.stringify({ limit }),
-          });
-          setSuccess("#zotero-message", `Fetched ${result.fetched}; inserted ${result.inserted}; updated ${result.updated}; skipped ${result.skipped}. Attention needed: ${(result.failed_results || []).length}.`);
-          renderImportResults("#zotero-import-results", result);
-          await loadEntries();
-        });
-      } catch (error) {
-        setError("#zotero-message", error.message);
+        setError("#literature-import-message", error.message);
       }
     });
   }
@@ -2472,11 +2504,11 @@ function bindZoteroMetadataSync() {
       try {
         await withButtonFeedback(event.currentTarget, "Loading", async () => {
           const result = await api("/api/zotero/import-test", { method: "POST", body: "{}" });
-          setSuccess("#zotero-message", `Test entries loaded. Inserted ${result.inserted}; updated ${result.updated}.`);
+          setSuccess("#literature-import-message", `Test entries loaded. Inserted ${result.inserted}; updated ${result.updated}.`);
           await loadEntries();
         });
       } catch (error) {
-        setError("#zotero-message", error.message);
+        setError("#literature-import-message", error.message);
       }
     });
   }
@@ -2643,17 +2675,18 @@ document.querySelector("#refresh-literature-import-diagnostics")?.addEventListen
 
 document.querySelector("#run-literature-pipeline").addEventListener("click", async (event) => {
   try {
-    setMessage("#literature-import-message", "Retrieving structured publisher XML. PDFs are not used unless the configured mode explicitly allows them...");
+    setMessage("#literature-import-message", "Importing top-level Zotero literature metadata. PDFs are not used unless the configured mode explicitly allows them...");
     await withButtonFeedback(event.currentTarget, "Importing", async () => {
-      const form = document.querySelector("#literature-config-form");
-      const values = formPayload(form);
-      const body = values.local_literature_source_path
-        ? { pdf_dir: values.local_literature_source_path }
-        : { zotero_storage: values.zotero_literature_storage_path };
-      const result = await api("/api/literature/import", { method: "POST", body: JSON.stringify(body) });
+      const limitToggle = document.querySelector("#zotero-use-limit");
+      const limitInput = document.querySelector("#zotero-limit");
+      const limit = limitToggle?.checked ? Number(limitInput?.value || 0) || null : null;
+      const result = await api("/api/zotero/sync", { method: "POST", body: JSON.stringify({ limit }) });
+      const counts = result.result_counts || {};
+      const manualCount = (counts.manual_markdown_required || 0) + (counts.skipped_no_identifier || 0) + (counts.missing_identifier || 0);
+      const failedSkipped = (counts.failed || 0) + (counts.api_failed || 0) + (counts.skipped_no_pdf || 0) + (counts.skipped_wrong_collection || 0);
       setSuccess(
         "#literature-import-message",
-        `Import complete. Mode: ${result.extraction_mode || state.status?.publisher?.literature_extraction_mode || "publisher_api_required"}; XML imported: ${result.xml_imported ?? result.imported}; PDF used: ${result.pdf_used ? "Yes" : "No"}; fallback used: ${result.fallback_used ? "Yes" : "No"}; attention needed: ${(result.failed_results || []).length}.`
+        `Import complete. Discovered: ${result.fetched}; already existing: ${counts.already_exists || 0}; metadata entries imported/updated: ${(result.inserted || 0) + (result.updated || 0)}; manual Markdown required: ${manualCount}; unsupported publisher: ${counts.unsupported_publisher || 0}; failed/skipped: ${failedSkipped}.`
       );
       renderImportResults("#literature-import-results", result);
       state.activeLiteratureTab = "uncurated";
@@ -4203,7 +4236,6 @@ function renderOntologySuggestionStatus() {
   if (literature) {
     const entries = [...(status.literature.curated || []), ...(status.literature.uncurated || [])];
     literature.innerHTML = entries.map((entry) => `<option value="${escapeHtml(entry.id || entry.canonical_id)}">${escapeHtml(entry.title || entry.id || entry.canonical_id)}${entry.repository_stage === "curated" ? " [curated]" : " [uncurated]"}</option>`).join("");
-    if (entries[0]) literature.options[0].selected = true;
   }
 }
 
@@ -4216,53 +4248,43 @@ function ontologySuggestionPayload() {
 
 async function previewOntologySuggestions() {
   const result = await api("/api/ontology-suggestions/preview", { method: "POST", body: JSON.stringify(ontologySuggestionPayload()) });
-  document.querySelector("#ontology-suggestions-preview").innerHTML = `<p><strong>Estimated input tokens:</strong> ${result.estimated_input_tokens}</p><p><strong>Max output tokens:</strong> ${result.max_output_tokens}</p><p><strong>Estimated cost:</strong> ${result.cost.estimated_cost ?? "not configured"}</p><p>${escapeHtml(result.cost.message)}</p><pre>${escapeHtml(result.prompt).slice(0, 8000)}</pre>`;
+  const included = result.input_assembly?.included_literature || [];
+  document.querySelector("#ontology-suggestions-preview").innerHTML = `<p><strong>Included Markdown entries:</strong> ${included.length ? included.map((item) => `${escapeHtml(item.id)} (${escapeHtml(item.title)})`).join("; ") : "none selected"}</p><p><strong>Existing OBO context included:</strong> ${result.input_assembly?.ontology_loaded ? "yes" : "no"}</p><p><strong>Estimated input tokens:</strong> ${result.estimated_input_tokens}</p><p><strong>Max output tokens:</strong> ${result.max_output_tokens}</p><p><strong>Estimated cost:</strong> ${result.cost.estimated_cost ?? "not configured"}</p><p>${escapeHtml(result.cost.message)}</p><pre>${escapeHtml(result.prompt).slice(0, 8000)}</pre>`;
   setSuccess("#ontology-suggestions-message", result.requires_confirmation ? "Preview ready. Multi-paper runs require confirmation." : "Preview ready.");
 }
 
-function renderLlmPipelineDiagnostics(result) {
+function renderOntologyDraftResult(result, title = "Ontology draft result") {
   const target = document.querySelector("#ontology-suggestions-preview");
   if (!target) return;
-  target.innerHTML = `<h3>LLM pipeline test</h3>
+  const included = result.included_literature || result.input_assembly?.included_literature || [];
+  const parsed = result.parsed_payload || result.payload || null;
+  target.innerHTML = `<h3>${escapeHtml(title)}</h3>
     <dl>
       <dt>Status</dt><dd>${escapeHtml(result.status)}</dd>
       <dt>Provider</dt><dd>${escapeHtml(result.provider)}</dd>
       <dt>Model</dt><dd>${escapeHtml(result.model)}</dd>
-      <dt>API key present</dt><dd>${result.api_key_present ? "yes" : "no"}</dd>
-      <dt>Project</dt><dd>${escapeHtml(result.project_id)} / ${escapeHtml(result.project_title)}</dd>
-      <dt>Literature</dt><dd>${escapeHtml(result.selected_literature_id)} / ${escapeHtml(result.selected_literature_title)}</dd>
-      <dt>Ontology path</dt><dd>${escapeHtml(result.selected_ontology_path)}</dd>
-      <dt>Ontology context mode</dt><dd>${escapeHtml(result.ontology_context_mode)}</dd>
-      <dt>Prompt</dt><dd>${escapeHtml(result.selected_prompt_title)} (${escapeHtml(result.selected_prompt_id)} v${escapeHtml(result.selected_prompt_version)})</dd>
-      <dt>Literature limit</dt><dd>${escapeHtml(result.literature_character_limit)}</dd>
-      <dt>Ontology limit</dt><dd>${escapeHtml(result.ontology_context_character_limit)}</dd>
-      <dt>Markdown loaded</dt><dd>${result.markdown_loaded ? "yes" : "no"}</dd>
-      <dt>Markdown file</dt><dd>${escapeHtml(result.markdown_file_path || (result.markdown_file_paths || []).join("; "))}</dd>
-      <dt>Markdown chars before/sent</dt><dd>${escapeHtml(result.markdown_character_count_before_truncation)} / ${escapeHtml(result.markdown_character_count_sent)}</dd>
-      <dt>Ontology loaded</dt><dd>${result.ontology_loaded ? "yes" : "no"}</dd>
-      <dt>Ontology chars before/sent</dt><dd>${escapeHtml(result.ontology_context_character_count_before_truncation)} / ${escapeHtml(result.ontology_context_character_count_sent)}</dd>
-      <dt>Prompt loaded/chars</dt><dd>${result.prompt_loaded ? "yes" : "no"} / ${escapeHtml(result.prompt_character_count)}</dd>
-      <dt>Request chars</dt><dd>${escapeHtml(result.final_assembled_request_character_count)}</dd>
-      <dt>Estimated input tokens</dt><dd>${escapeHtml(result.estimated_input_tokens)}</dd>
-      <dt>Max output tokens</dt><dd>${escapeHtml(result.max_output_tokens)}</dd>
-      <dt>Response length</dt><dd>${escapeHtml(result.response_body_length)}</dd>
+      <dt>API key present</dt><dd>${result.api_key_present === undefined ? "" : (result.api_key_present ? "yes" : "no")}</dd>
+      <dt>Included Markdown entries</dt><dd>${included.length ? included.map((item) => `${escapeHtml(item.id)} (${escapeHtml(item.title)})`).join("; ") : "none selected"}</dd>
+      <dt>Existing OBO context included</dt><dd>${result.ontology_context_included || result.ontology_loaded ? "yes" : "no"}</dd>
       <dt>Parsed JSON</dt><dd>${result.parsed_json ? "yes" : "no"}</dd>
       <dt>JSON extraction</dt><dd>${escapeHtml(result.json_extraction_method)}</dd>
       <dt>JSON recovered</dt><dd>${result.json_recovered ? "yes" : "no"}</dd>
-      <dt>Schema valid</dt><dd>${result.schema_valid ? "yes" : "no"}</dd>
-      <dt>Warnings</dt><dd>${escapeHtml((result.warnings || []).join(" | "))}</dd>
-      <dt>Error type</dt><dd>${escapeHtml(result.error_type)}</dd>
-      <dt>Error message</dt><dd>${escapeHtml(result.error_message)}</dd>
-      <dt>Suggested fix</dt><dd>${escapeHtml(result.suggested_fix)}</dd>
+      <dt>Draft terms</dt><dd>${escapeHtml(result.draft_term_count ?? (parsed?.proposed_terms || []).length ?? "")}</dd>
+      <dt>Draft relations</dt><dd>${escapeHtml(result.draft_relation_count ?? (parsed?.proposed_relations || []).length ?? "")}</dd>
+      <dt>Validation errors</dt><dd>${escapeHtml((result.validation_errors || []).join(" | "))}</dd>
+      <dt>Error</dt><dd>${escapeHtml(result.error || result.error_message)}</dd>
     </dl>
-    <h3>Assembled prompt preview</h3><pre>${escapeHtml(result.assembled_prompt_preview || "")}</pre>
+    <h3>Parsed ontology draft</h3><pre>${escapeHtml(parsed ? JSON.stringify(parsed, null, 2) : "")}</pre>
     <h3>Raw response preview</h3><pre>${escapeHtml(result.raw_response_preview || "")}</pre>`;
+}
+function renderLlmPipelineDiagnostics(result) {
+  renderOntologyDraftResult(result, "LLM pipeline ontology draft test");
 }
 
 async function testOntologySuggestionsPipeline() {
   const result = await api("/api/ontology-suggestions/test-pipeline", { method: "POST", body: JSON.stringify(ontologySuggestionPayload()) });
   renderLlmPipelineDiagnostics(result);
-  setSuccess("#ontology-suggestions-message", result.ok ? "LLM pipeline test completed; no review suggestions were created." : "LLM pipeline test returned diagnostics.");
+  setSuccess("#ontology-suggestions-message", result.ok ? "LLM pipeline test completed; ontology draft JSON validated." : "LLM pipeline test returned diagnostics.");
 }
 
 function bindOntologySuggestions() {
@@ -4283,10 +4305,11 @@ function bindOntologySuggestions() {
   document.querySelector("#run-ontology-suggestions")?.addEventListener("click", async () => {
     try {
       const preview = await api("/api/ontology-suggestions/preview", { method: "POST", body: JSON.stringify(ontologySuggestionPayload()) });
-      const confirmed = !preview.requires_confirmation || window.confirm("Run ontology suggestions for multiple literature items?");
+      const confirmed = !preview.requires_confirmation || window.confirm("Run ontology draft generation for multiple literature items?");
       if (!confirmed) return;
       const result = await api("/api/ontology-suggestions/run", { method: "POST", body: JSON.stringify({ ...ontologySuggestionPayload(), confirmed }) });
-      setSuccess("#ontology-suggestions-message", `Run ${result.run_id} created ${result.suggestion_count} suggestion(s). Review them on the Suggestions page.`);
+      renderOntologyDraftResult(result, "Ontology draft generation");
+      setSuccess("#ontology-suggestions-message", result.ok ? `Run ${result.run_id} produced ${result.draft_term_count || 0} draft term(s) and ${result.draft_relation_count || 0} draft relation(s). Nothing was merged automatically.` : `Run ${result.run_id} returned validation diagnostics.`);
     } catch (error) { setError("#ontology-suggestions-message", error.message); }
   });
   document.querySelector("#save-ontology-suggestion-template")?.addEventListener("click", async () => {
@@ -4405,3 +4428,5 @@ function bindCuratePrompts() {
   });
 }
 bindCuratePrompts();
+
+

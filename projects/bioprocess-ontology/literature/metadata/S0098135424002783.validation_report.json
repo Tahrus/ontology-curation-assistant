@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [
+    "Body text appears to be mostly broken line fragments.",
+    "Repeated lines may indicate headers or footers; review before curation."
+  ]
+}

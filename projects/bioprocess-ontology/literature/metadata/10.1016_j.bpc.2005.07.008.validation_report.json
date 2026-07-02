@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [
+    "Repeated lines may indicate headers or footers; review before curation."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "canonical_id": "10.48550_arxiv.2602.16755",
+  "title": "PREFER: An Ontology for the PREcision FERmentation Community",
+  "authors": [
+    "Txell Amigó",
+    "Shawn Zheng Kai Tan",
+    "Angel Luu Phanthanourak",
+    "Sebastian Schulz",
+    "Pasquale D. Colaianni",
+    "Dominik M. Maszczyk",
+    "Ester Milesi",
+    "Ivan Schlembach",
+    "Mykhaylo Semenov Petrov",
+    "Marta Reventós Montané",
+    "Lars K. Nielsen",
+    "Jochen Förster",
+    "Bernhard Ø Palsson",
+    "Suresh Sudarsan",
+    "Alberto Santos"
+  ],
+  "year": "2026",
+  "journal": "",
+  "doi": "10.48550/arxiv.2602.16755",
+  "pii": "",
+  "project_tags": [],
+  "curation_status": "curated",
+  "staged_entry_id": "10.48550_arxiv.2602.16755",
+  "staged_metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.48550_arxiv.2602.16755.json",
+  "source_type": "metadata_only",
+  "source_path": null,
+  "zotero_key": "L9YP6JK3",
+  "pipeline_version": "oca-provider-v1",
+  "metadata_source": "zotero",
+  "content_source": "manual_markdown",
+  "extraction_mode": "publisher_api_required",
+  "used_api_provider": "provider_registry",
+  "doi_used": null,
+  "pii_used": null,
+  "xml_retrieved": false,
+  "pdf_used": false,
+  "fallback_used": false,
+  "fallback_authorized_by": null,
+  "extraction_status": "manual_markdown_required",
+  "extraction_errors": [
+    "API retrieval failed for all available identifiers. Human metadata fix required."
+  ],
+  "generated_artifacts": [
+    "metadata/10.48550_arxiv.2602.16755.json",
+    "metadata/10.48550_arxiv.2602.16755.source_report.json",
+    "markdown/10.48550_arxiv.2602.16755.manual.md",
+    "markdown/10.48550_arxiv.2602.16755.canonical.md",
+    "metadata/10.48550_arxiv.2602.16755.validation_report.json"
+  ],
+  "extraction_warnings": [
+    "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback."
+  ],
+  "api_retrieval_status": "structured_fulltext_unavailable",
+  "crossref_retrieval_status": null,
+  "lookup_doi": null,
+  "lookup_pii": null,
+  "xml_artifact_path": null,
+  "xml_markdown_artifact_path": null,
+  "pdf_fallback_markdown_path": null,
+  "imported_at": "2026-07-01T08:48:16.949366+00:00",
+  "curated_at": "2026-07-02T11:53:37.474909+00:00",
+  "updated_at": "2026-07-02T11:53:37.474909+00:00",
+  "artifacts": [
+    {
+      "path": "curated/markdown/10.48550_arxiv.2602.16755.md",
+      "artifact_type": "paper_markdown",
+      "ownership": "curated"
+    },
+    {
+      "path": "curated/metadata/10.48550_arxiv.2602.16755.json",
+      "artifact_type": "metadata_json",
+      "ownership": "curated"
+    }
+  ]
+}

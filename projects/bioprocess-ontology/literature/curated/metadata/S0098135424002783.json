@@ -20,7 +20,7 @@
   "zotero_key": "8DJ4GK5B",
   "pipeline_version": "oca-canonical-v2",
   "metadata_source": "zotero+elsevier_xml",
-  "content_source": "elsevier_xml",
+  "content_source": "manual_markdown",
   "extraction_mode": "publisher_api_required",
   "used_api_provider": "elsevier",
   "doi_used": "10.1016/j.compchemeng.2024.108860",
@@ -35,7 +35,10 @@
     "markdown/S0098135424002783.md",
     "markdown/S0098135424002783.md",
     "metadata/S0098135424002783.json",
-    "sources/S0098135424002783.elsevier.xml"
+    "sources/S0098135424002783.elsevier.xml",
+    "markdown/S0098135424002783.manual.md",
+    "markdown/S0098135424002783.canonical.md",
+    "metadata/S0098135424002783.validation_report.json"
   ],
   "extraction_warnings": [
     "Appendix-like XML content was detected but could not be parsed cleanly."
@@ -47,9 +50,9 @@
   "xml_artifact_path": "sources/S0098135424002783.elsevier.xml",
   "xml_markdown_artifact_path": "markdown/S0098135424002783.md",
   "pdf_fallback_markdown_path": null,
-  "imported_at": "2026-06-24T13:42:38.261011+00:00",
+  "imported_at": "2026-06-30T14:21:38.924361+00:00",
   "curated_at": "2026-06-24T13:57:41.267349+00:00",
-  "updated_at": "2026-06-24T13:57:41.267349+00:00",
+  "updated_at": "2026-07-02T08:52:58.343289+00:00",
   "artifacts": [
     {
       "path": "curated/markdown/S0098135424002783.md",

@@ -18,7 +18,7 @@
   "zotero_key": "7LAJX69S",
   "pipeline_version": "oca-canonical-v2",
   "metadata_source": "zotero+elsevier_xml",
-  "content_source": "elsevier_xml",
+  "content_source": "manual_markdown",
   "extraction_mode": "publisher_api_required",
   "used_api_provider": "elsevier",
   "doi_used": "10.1529/biophysj.105.074112",
@@ -33,7 +33,10 @@
     "markdown/S0006349506722494.md",
     "markdown/S0006349506722494.md",
     "metadata/S0006349506722494.json",
-    "sources/S0006349506722494.elsevier.xml"
+    "sources/S0006349506722494.elsevier.xml",
+    "markdown/S0006349506722494.manual.md",
+    "markdown/S0006349506722494.canonical.md",
+    "metadata/S0006349506722494.validation_report.json"
   ],
   "extraction_warnings": [],
   "api_retrieval_status": "success",
@@ -43,9 +46,9 @@
   "xml_artifact_path": "sources/S0006349506722494.elsevier.xml",
   "xml_markdown_artifact_path": "markdown/S0006349506722494.md",
   "pdf_fallback_markdown_path": null,
-  "imported_at": "2026-06-24T13:58:28.702060+00:00",
+  "imported_at": "2026-06-30T14:21:47.163068+00:00",
   "curated_at": "2026-06-24T13:57:33.830900+00:00",
-  "updated_at": "2026-06-25T12:19:37.180701+00:00",
+  "updated_at": "2026-07-02T08:52:16.474252+00:00",
   "artifacts": [
     {
       "path": "curated/markdown/S0006349506722494.md",

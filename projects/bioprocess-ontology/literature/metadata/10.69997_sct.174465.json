@@ -13,6 +13,8 @@
   "doi": "10.69997/sct.174465",
   "url": "https://PSEcommunity.org/LAPSE:2025.0422",
   "zotero_key": "V85YR859",
+  "place": "Ghent, Belgium",
+  "pages": "1682-1687",
   "journal": "Systems and Control Transactions",
   "publisher": "PSE Press",
   "issn": [
@@ -20,28 +22,28 @@
   ],
   "canonical_id": "10.69997_sct.174465",
   "source_type": "metadata_only",
-  "import_status": "staged",
-  "curation_status": "needs_manual_markdown",
-  "duplicate_status": "canonical_reused",
+  "import_status": "promoted",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
   "pipeline_version": "oca-provider-v1",
   "extraction_mode": "publisher_api_required",
   "metadata_source": "zotero+crossref",
-  "content_source": null,
+  "content_source": "manual_markdown",
   "used_api_provider": "provider_registry",
   "fulltext_status": "structured_fulltext_unavailable",
-  "markdown_status": "manual_markdown_required",
-  "source_quality": "metadata_only",
+  "markdown_status": "markdown_validated",
+  "source_quality": "manual_markdown",
   "metadata_quality": {
     "ok": true,
     "errors": [],
     "warnings": []
   },
-  "state": "curation_blocked",
-  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "state": "ready_for_curation",
+  "blocked_reason": null,
   "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
   "source_report_path": "metadata/10.69997_sct.174465.source_report.json",
-  "markdown_file": null,
-  "markdown_available": false,
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\10.69997_sct.174465.md",
+  "markdown_available": true,
   "xml_retrieved": false,
   "pdf_used": false,
   "fallback_used": false,
@@ -68,9 +70,9 @@
       "reason": "not supported by Elsevier Article Retrieval API"
     }
   ],
-  "created_at": "2026-06-30T11:28:07.663598+00:00",
-  "imported_at": "2026-06-30T11:28:07.663598+00:00",
-  "updated_at": "2026-06-30T14:22:10.051737+00:00",
+  "created_at": "2026-07-01T08:48:12.025507+00:00",
+  "imported_at": "2026-07-01T08:48:12.025507+00:00",
+  "updated_at": "2026-07-02T12:09:02.434292+00:00",
   "artifacts": [
     {
       "path": "metadata/10.69997_sct.174465.json",
@@ -81,12 +83,39 @@
       "path": "metadata/10.69997_sct.174465.source_report.json",
       "artifact_type": "source_report_json",
       "ownership": "staged"
+    },
+    {
+      "path": "markdown/10.69997_sct.174465.manual.md",
+      "artifact_type": "manual_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/10.69997_sct.174465.canonical.md",
+      "artifact_type": "canonical_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.69997_sct.174465.validation_report.json",
+      "artifact_type": "validation_report_json",
+      "ownership": "staged"
     }
   ],
   "generated_artifacts": [
     "metadata/10.69997_sct.174465.json",
-    "metadata/10.69997_sct.174465.source_report.json"
+    "metadata/10.69997_sct.174465.source_report.json",
+    "markdown/10.69997_sct.174465.manual.md",
+    "markdown/10.69997_sct.174465.canonical.md",
+    "metadata/10.69997_sct.174465.validation_report.json"
   ],
   "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.69997_sct.174465.json",
-  "repository_stage": "staged"
+  "repository_stage": "staged",
+  "pii": "",
+  "project_tags": [],
+  "manual_markdown_path": "markdown/10.69997_sct.174465.manual.md",
+  "validation_report_path": "metadata/10.69997_sct.174465.validation_report.json",
+  "validation_errors": [],
+  "validation_warnings": [],
+  "canonical_markdown_path": "markdown/10.69997_sct.174465.canonical.md",
+  "promoted_literature_id": "10.69997_sct.174465",
+  "promoted_at": "2026-07-02T12:09:02.437766+00:00"
 }

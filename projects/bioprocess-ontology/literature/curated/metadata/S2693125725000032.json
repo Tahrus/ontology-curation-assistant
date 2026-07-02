@@ -48,9 +48,9 @@
   "xml_artifact_path": "sources/S2693125725000032.elsevier.xml",
   "xml_markdown_artifact_path": "markdown/S2693125725000032.md",
   "pdf_fallback_markdown_path": null,
-  "imported_at": "2026-06-24T13:42:55.979292+00:00",
+  "imported_at": "2026-06-30T14:22:18.655821+00:00",
   "curated_at": "2026-06-24T13:57:46.399882+00:00",
-  "updated_at": "2026-06-24T13:57:46.399882+00:00",
+  "updated_at": "2026-07-02T11:54:16.854758+00:00",
   "artifacts": [
     {
       "path": "curated/markdown/S2693125725000032.md",

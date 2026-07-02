@@ -25,6 +25,30 @@ from backend.app.ontology_suggestions import (
 )
 
 
+
+def ontology_draft_payload() -> dict:
+    return {
+        "ontology_draft": {
+            "ontology_id": "ppo",
+            "title": "Protein Precipitation Ontology draft",
+            "scope_note": "Draft based on selected literature.",
+        },
+        "proposed_terms": [
+            {
+                "temporary_id": "TEMP:0001",
+                "label": "salt-induced precipitation",
+                "definition": "A precipitation process induced by salt.",
+                "parent_label": "protein precipitation",
+                "parent_id": "PPO:0000001",
+                "term_type": "class",
+                "evidence": [
+                    {"source_literature_id": "paper-1", "quote_or_summary": "Salt induced precipitation.", "confidence": "high"}
+                ],
+            }
+        ],
+        "proposed_relations": [],
+        "warnings": [],
+    }
 @pytest.fixture()
 def session(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -166,8 +190,9 @@ def test_pipeline_request_assembly_contains_real_inputs(session, project, monkey
         ontology_context_mode="labels_definitions_relations",
     )
 
-    assert "# Literature Markdown" in request["prompt"]
+    assert "# Selected Markdown Literature" in request["prompt"]
     assert "Ammonium sulfate precipitates proteins" in request["prompt"]
+    assert "```obo" in request["prompt"]
     assert "protein precipitation" in request["prompt"]
     assert "Conservative term suggestions" in request["prompt"]
     assert request["estimated_input_tokens"] > 0
@@ -183,14 +208,7 @@ def test_llm_pipeline_test_direct_json_validates(session, project, monkeypatch):
 
     def caller(prompt, config):
         seen["prompt"] = prompt
-        return json.dumps({
-            "status": "ok",
-            "task": "llm_pipeline_test",
-            "received_inputs": {"literature_markdown": True, "ontology_context": True, "prompt_template": True},
-            "detected_context": {"literature_title_or_topic": "salt precipitation", "ontology_terms_seen": ["protein precipitation"], "prompt_task_type": "term_suggestion"},
-            "test_suggestion": {"suggestion_type": "none", "label": None, "evidence_quote": None, "confidence": "none"},
-            "warnings": [],
-        })
+        return json.dumps(ontology_draft_payload())
 
     result = llm_pipeline_test(session, project_ref=project.slug, prompt_template_id="conservative_term_suggestions", literature_ids=["paper-1"], caller=caller)
 
@@ -208,7 +226,7 @@ def test_llm_pipeline_test_fenced_json_recovers_with_warning(session, project, m
     )
     monkeypatch.setattr("backend.app.ontology_suggestions.build_ontology_context", lambda project, mode: "PPO:0000001 | protein precipitation")
     body = """```json
-{"status":"ok","task":"llm_pipeline_test","received_inputs":{"literature_markdown":true,"ontology_context":true,"prompt_template":true},"detected_context":{"literature_title_or_topic":"salt","ontology_terms_seen":["protein precipitation"],"prompt_task_type":"term_suggestion"},"test_suggestion":{"suggestion_type":"none","label":null,"evidence_quote":null,"confidence":"none"},"warnings":[]}
+{"ontology_draft":{"ontology_id":"ppo","title":"Draft","scope_note":"Scope"},"proposed_terms":[{"temporary_id":"TEMP:0001","label":"salt-induced precipitation","definition":"A precipitation process induced by salt.","evidence":[{"source_literature_id":"paper-1","quote_or_summary":"Salt induced precipitation.","confidence":"high"}]}],"proposed_relations":[],"warnings":[]}
 ```"""
 
     result = llm_pipeline_test(session, project_ref=project.slug, prompt_template_id="conservative_term_suggestions", literature_ids=["paper-1"], caller=lambda prompt, config: body)
@@ -244,16 +262,27 @@ def test_prepare_request_missing_markdown_file_is_clear(session, project, tmp_pa
         prepare_suggestion_request(session, project_ref=project.slug, prompt_template_id="conservative_term_suggestions", literature_ids=["paper-1"])
 
 
-def test_prepare_request_missing_ontology_file_is_clear(session, project, monkeypatch):
+def test_prepare_request_missing_ontology_file_keeps_optional_context(session, project, monkeypatch):
     Path(project.editable_ontology_path).unlink()
     monkeypatch.setattr(
         "backend.app.ontology_suggestions.select_literature",
         lambda project, scope, literature_ids: [{"id": "paper-1", "title": "Paper", "literature_markdown": "# Paper"}],
     )
 
-    with pytest.raises(ValueError, match="no readable ontology file"):
-        prepare_suggestion_request(session, project_ref=project.slug, prompt_template_id="conservative_term_suggestions", literature_ids=["paper-1"])
+    request = prepare_suggestion_request(session, project_ref=project.slug, prompt_template_id="conservative_term_suggestions", literature_ids=["paper-1"])
 
+    assert request["ontology_path"] is None
+    assert "No existing OBO ontology context" in request["prompt"]
+
+
+def test_prepare_request_allows_no_selected_literature(session, project, monkeypatch):
+    monkeypatch.setattr("backend.app.ontology_suggestions.select_literature", lambda project, scope, literature_ids: [])
+    monkeypatch.setattr("backend.app.ontology_suggestions.build_ontology_context", lambda project, mode: "PPO:1 | term")
+
+    request = prepare_suggestion_request(session, project_ref=project.slug, prompt_template_id="conservative_term_suggestions", literature_ids=[])
+
+    assert request["entries"] == []
+    assert "No Markdown literature entries were selected." in request["prompt"]
 
 def test_malformed_prompt_front_matter_is_clear(tmp_path, monkeypatch):
     import backend.app.ontology_suggestions as service
@@ -277,19 +306,20 @@ def test_malformed_json_response_is_not_persisted(session, project, monkeypatch)
     )
     monkeypatch.setattr("backend.app.ontology_suggestions.build_ontology_context", lambda project, mode: "PPO:1 | term")
 
-    with pytest.raises(ValueError, match="not valid"):
-        run_suggestions(
-            session,
-            project_ref=project.slug,
-            prompt_template_id="relation_suggestions",
-            literature_scope="one",
-            literature_ids=["paper-1"],
-            ontology_context_mode="labels_definitions_relations",
-            caller=lambda prompt, config: "not json",
-        )
+    result = run_suggestions(
+        session,
+        project_ref=project.slug,
+        prompt_template_id="relation_suggestions",
+        literature_scope="one",
+        literature_ids=["paper-1"],
+        ontology_context_mode="labels_definitions_relations",
+        caller=lambda prompt, config: "not json",
+    )
 
+    assert result["ok"] is False
+    assert result["parsed_json"] is False
+    assert "JSON parser error" in result["error"]
     assert session.scalars(select(Suggestion)).all() == []
-
 
 def test_token_cost_estimation_warns_on_budget():
     result = estimate_cost(
@@ -309,27 +339,7 @@ def test_single_paper_suggestion_run_persists_reviewable_suggestion(session, pro
     )
     monkeypatch.setattr("backend.app.ontology_suggestions.build_ontology_context", lambda project, mode: "PPO:1 | term")
 
-    payload = {
-        "literature_id": "paper-1",
-        "project_id": project.slug,
-        "ontology_id": "ppo",
-        "prompt_template_id": "conservative_term_suggestions",
-        "suggestions": [
-            {
-                "suggestion_type": "class",
-                "label": "salt-induced precipitation",
-                "proposed_parent": "protein precipitation",
-                "definition": "A precipitation process induced by salt.",
-                "relation": None,
-                "target": None,
-                "evidence_quote": "Salt induced precipitation.",
-                "evidence_location": "Results",
-                "confidence": "high",
-                "rationale": "Directly stated.",
-                "requires_human_check": True,
-            }
-        ],
-    }
+    payload = ontology_draft_payload()
 
     result = run_suggestions(
         session,
@@ -341,12 +351,14 @@ def test_single_paper_suggestion_run_persists_reviewable_suggestion(session, pro
         caller=lambda prompt, config: json.dumps(payload),
     )
 
-    assert result["suggestion_count"] == 1
+    assert result["suggestion_count"] == 0
+    assert result["draft_term_count"] == 1
+    assert result["parsed_payload"]["proposed_terms"][0]["label"] == "salt-induced precipitation"
     assert result["preview"]["prompt_template_title"] == "Conservative term suggestions"
-    suggestion = session.scalar(select(Suggestion))
-    assert suggestion.label == "salt-induced precipitation"
+    assert session.scalars(select(Suggestion)).all() == []
     run = session.get(CurationRun, result["curation_run_id"])
     context = json.loads(run.context_configuration_json)
+    assert run.prompt_strategy == "ontology_draft"
     assert context["prompt_template_id"] == "conservative_term_suggestions"
     assert context["prompt_template_title"] == "Conservative term suggestions"
     assert context["prompt_template_version"] == 1
@@ -471,3 +483,9 @@ def test_valid_function_test_json_diagnostic():
     assert result.schema_valid is True
     assert result.json_extraction_method == "direct"
     assert result.json_recovered is False
+
+
+
+
+
+

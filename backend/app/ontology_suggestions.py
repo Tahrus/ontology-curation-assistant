@@ -38,7 +38,7 @@ LOG_DIR = DATA_ROOT / "logs"
 FUNCTION_TEST_LOG_DIR = LOG_DIR / "api_function_tests"
 LLM_PIPELINE_TEST_LOG_DIR = LOG_DIR / "llm_pipeline_tests"
 TEMPLATE_FILE = PROMPT_DIR / "templates.json"
-SYSTEM_PROMPT = "Return strict JSON only. Do not create ontology IDs or ontology files."
+SYSTEM_PROMPT = "Return strict JSON only. Propose draft ontology structure only; do not create ontology IDs or ontology files."
 PROMPT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 REQUIRED_TEMPLATE_FIELDS = {
     "id",
@@ -524,71 +524,96 @@ def build_literature_context(entries: list[dict[str, Any]], *, limit: int | None
     sent = 0
     markdown_paths = []
     titles = []
+    ids = []
     for entry in entries:
         text, path = _entry_markdown(entry)
         before += len(text)
         truncated = _truncate_text(text, limit)
         sent += len(truncated)
+        entry_id = _entry_id(entry)
         if path:
             markdown_paths.append(str(path))
         titles.append(entry.get("title") or "Untitled")
-        blocks.append(f"## Literature item {_entry_id(entry)}\nTitle: {entry.get('title') or 'Untitled'}\n\n{truncated}")
+        ids.append(entry_id)
+        blocks.append(
+            "\n".join(
+                [
+                    f"## Literature item {entry_id}",
+                    f"Title: {entry.get('title') or 'Untitled'}",
+                    "",
+                    truncated,
+                ]
+            )
+        )
+    if not blocks:
+        return "No Markdown literature entries were selected.", {
+            "markdown_loaded": False,
+            "markdown_file_path": None,
+            "markdown_file_paths": [],
+            "markdown_character_count_before_truncation": 0,
+            "markdown_character_count_sent": 0,
+            "selected_literature_title": None,
+            "selected_literature_ids": [],
+            "included_literature": [],
+        }
     return "\n\n".join(blocks), {
-        "markdown_loaded": bool(blocks),
+        "markdown_loaded": True,
         "markdown_file_path": markdown_paths[0] if len(markdown_paths) == 1 else None,
         "markdown_file_paths": markdown_paths,
         "markdown_character_count_before_truncation": before,
         "markdown_character_count_sent": sent,
         "selected_literature_title": titles[0] if len(titles) == 1 else None,
+        "selected_literature_ids": ids,
+        "included_literature": [{"id": item_id, "title": title} for item_id, title in zip(ids, titles, strict=False)],
+    }
+
+
+def ontology_draft_schema() -> dict[str, Any]:
+    return {
+        "ontology_draft": {
+            "ontology_id": "string",
+            "title": "string",
+            "scope_note": "string",
+        },
+        "proposed_terms": [
+            {
+                "temporary_id": "TEMP:0001",
+                "label": "string",
+                "definition": "string",
+                "parent_label": "string or null",
+                "parent_id": "existing OBO id if matched, otherwise null",
+                "term_type": "class",
+                "evidence": [
+                    {
+                        "source_literature_id": "string",
+                        "quote_or_summary": "short evidence from Markdown",
+                        "confidence": "low|medium|high",
+                    }
+                ],
+            }
+        ],
+        "proposed_relations": [
+            {
+                "subject_temporary_id": "TEMP:0001",
+                "relation_label": "string",
+                "relation_id": "existing OBO relation id if matched, otherwise null",
+                "object_temporary_id": "TEMP:0002 or null",
+                "object_label": "string",
+                "evidence": [
+                    {
+                        "source_literature_id": "string",
+                        "quote_or_summary": "short evidence from Markdown",
+                        "confidence": "low|medium|high",
+                    }
+                ],
+            }
+        ],
+        "warnings": ["string"],
     }
 
 
 def target_schema() -> dict[str, Any]:
-    return {
-        "literature_id": "string",
-        "project_id": "string",
-        "ontology_id": "string",
-        "prompt_template_id": "string",
-        "suggestions": [
-            {
-                "suggestion_type": "class | relation | synonym | definition | annotation | duplicate_warning",
-                "label": "string",
-                "proposed_parent": "string or null",
-                "definition": "string or null",
-                "relation": "string or null",
-                "target": "string or null",
-                "evidence_quote": "string",
-                "evidence_location": "string or null",
-                "confidence": "low | medium | high",
-                "rationale": "string",
-                "requires_human_check": True,
-            }
-        ],
-    }
-
-
-def llm_pipeline_test_schema() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "task": "llm_pipeline_test",
-        "received_inputs": {
-            "literature_markdown": True,
-            "ontology_context": True,
-            "prompt_template": True,
-        },
-        "detected_context": {
-            "literature_title_or_topic": "string or null",
-            "ontology_terms_seen": ["string"],
-            "prompt_task_type": "string or null",
-        },
-        "test_suggestion": {
-            "suggestion_type": "class | relation | definition | synonym | annotation | none",
-            "label": "string or null",
-            "evidence_quote": "string or null",
-            "confidence": "low | medium | high | none",
-        },
-        "warnings": [],
-    }
+    return ontology_draft_schema()
 
 
 def assemble_llm_pipeline_test_payload(
@@ -601,15 +626,17 @@ def assemble_llm_pipeline_test_payload(
     ontology_context_mode: str,
     output_schema: dict[str, Any],
 ) -> str:
+    ontology_block = ontology_context if ontology_context.strip() else "No existing OBO ontology context was available or selected."
     return "\n".join(
         [
             "# System / Role",
             "You are assisting with ontology curation.",
             "",
-            "# Task",
-            "Run an LLM pipeline test and return only JSON.",
+            "# Task Prompt",
+            "Given selected literature Markdown and optional existing OBO ontology context, propose a minimal first ontology structure.",
+            "Return JSON only. Do not write to or merge into the real ontology.",
             "",
-            "# Selected prompt template",
+            "# Selected Prompt Template",
             f"ID: {prompt_template.id}",
             f"Title: {prompt_template.title}",
             f"Task type: {prompt_template.task_type}",
@@ -617,19 +644,29 @@ def assemble_llm_pipeline_test_payload(
             "",
             prompt_text,
             "",
-            "# Literature Markdown",
+            "# Selected Markdown Literature",
+            "```markdown",
             literature_markdown,
+            "```",
             "",
-            "# Ontology context",
+            "# Existing OBO Ontology Context",
             f"Mode: {ontology_context_mode}",
-            ontology_context,
+            "```obo",
+            ontology_block,
+            "```",
             "",
-            "# Required JSON output schema",
+            "# Required JSON Output Shape",
             json.dumps(output_schema, indent=2),
+            "",
+            "# Validation Requirements",
+            "The response must be a JSON object with ontology_draft, proposed_terms, proposed_relations, and warnings.",
+            "Each proposed term must include temporary_id, label, definition, and evidence.",
+            "proposed_relations and warnings must be arrays, even when empty.",
             "",
             "# Constraints",
             "Return only JSON.",
-            "Do not invent information.",
+            "Do not invent permanent ontology IDs for new terms.",
+            "Use existing OBO IDs only when the provided context supports the match.",
             "Use only the provided literature and ontology context.",
             f"Project id: {project.slug}",
             f"Ontology id: {project.ontology_id}",
@@ -688,12 +725,8 @@ def prepare_suggestion_request(
     project = get_project(session, project_ref)
     template = get_prompt_template(prompt_template_id)
     entries = select_literature(project, literature_scope, literature_ids)
-    if not entries:
-        raise ValueError("No literature entries match the selected scope.")
     ontology_path = project_ontology_path(project)
-    if not ontology_path:
-        raise ValueError("The selected project has no readable ontology file.")
-    ontology_context = build_ontology_context(project, ontology_context_mode)
+    ontology_context = build_ontology_context(project, ontology_context_mode) if ontology_path else ""
     prompt, assembly = build_prompt(
         project=project,
         template=template,
@@ -732,6 +765,9 @@ def parse_json_response(text: str) -> tuple[Any, str, bool, str | None]:
     match = re.fullmatch(r"```\s*(.*?)\s*```", stripped, flags=re.DOTALL)
     if match:
         return json.loads(match.group(1).strip()), "extracted_json", True, "Recovered JSON from a Markdown fenced code block."
+    match = re.search(r"\{[\s\S]*\}", stripped)
+    if match:
+        return json.loads(match.group(0)), "extracted_json", True, "Recovered JSON object from surrounding response text."
     return json.loads(stripped), "failed", False, None
 
 
@@ -742,52 +778,54 @@ def validate_test_payload(payload: Any) -> dict[str, Any]:
 
 
 def validate_llm_pipeline_test_payload(payload: Any) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise ValueError("LLM pipeline test response must be a JSON object.")
-    if payload.get("status") != "ok":
-        raise ValueError("LLM pipeline test response field status must be 'ok'.")
-    if payload.get("task") != "llm_pipeline_test":
-        raise ValueError("LLM pipeline test response field task must be 'llm_pipeline_test'.")
-    received = payload.get("received_inputs")
-    if not isinstance(received, dict) or not all(received.get(key) is True for key in ["literature_markdown", "ontology_context", "prompt_template"]):
-        raise ValueError("LLM pipeline test did not confirm all required input channels.")
-    detected = payload.get("detected_context")
-    if not isinstance(detected, dict) or not isinstance(detected.get("ontology_terms_seen"), list):
-        raise ValueError("LLM pipeline test response detected_context is invalid.")
-    suggestion = payload.get("test_suggestion")
-    if not isinstance(suggestion, dict):
-        raise ValueError("LLM pipeline test response test_suggestion is invalid.")
-    if suggestion.get("suggestion_type") not in {"class", "relation", "definition", "synonym", "annotation", "none"}:
-        raise ValueError("LLM pipeline test response has unsupported test_suggestion.suggestion_type.")
-    if suggestion.get("confidence") not in {"low", "medium", "high", "none"}:
-        raise ValueError("LLM pipeline test response has unsupported test_suggestion.confidence.")
-    if not isinstance(payload.get("warnings", []), list):
-        raise ValueError("LLM pipeline test response warnings must be a list.")
+    errors = ontology_draft_validation_errors(payload)
+    if errors:
+        raise ValueError("; ".join(errors))
     return payload
 
 
-def _diagnostic_base_from_request(request: dict[str, Any]) -> dict[str, Any]:
-    project = request["project"]
-    template = request["template"]
-    entries = request["entries"]
-    config = request["config"]
-    return {
-        "provider": normalize_provider_id(config.provider),
-        "model": config.model,
-        "api_key_present": bool(config.resolved_api_key),
-        "project_id": project.slug,
-        "project_title": project.name,
-        "selected_literature_id": _entry_id(entries[0]) if entries else None,
-        "selected_literature_title": request["assembly"].get("selected_literature_title"),
-        "selected_ontology_path": str(request["ontology_path"]),
-        "ontology_context_mode": request["ontology_context_mode"],
-        "selected_prompt_id": template.id,
-        "selected_prompt_title": template.title,
-        "selected_prompt_version": template.version,
-        "estimated_input_tokens": request["estimated_input_tokens"],
-        "max_output_tokens": config.max_output_tokens,
-        **request["assembly"],
-    }
+def ontology_draft_validation_errors(payload: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return ["parsed JSON response must be an object"]
+    if not isinstance(payload.get("ontology_draft"), dict):
+        errors.append("ontology_draft must be an object")
+    proposed_terms = payload.get("proposed_terms")
+    if not isinstance(proposed_terms, list):
+        errors.append("proposed_terms must be an array")
+        proposed_terms = []
+    for index, term in enumerate(proposed_terms, start=1):
+        if not isinstance(term, dict):
+            errors.append(f"proposed_terms[{index}] must be an object")
+            continue
+        for field in ["temporary_id", "label", "definition", "evidence"]:
+            if field not in term or term.get(field) in (None, ""):
+                errors.append(f"proposed_terms[{index}].{field} is required")
+        if "evidence" in term and not isinstance(term.get("evidence"), list):
+            errors.append(f"proposed_terms[{index}].evidence must be an array")
+    if not isinstance(payload.get("proposed_relations"), list):
+        errors.append("proposed_relations must be an array")
+    if not isinstance(payload.get("warnings"), list):
+        errors.append("warnings must be an array")
+    return errors
+
+
+def validate_ontology_draft_payload(payload: Any, *, project: Project | None = None, template_id: str | None = None) -> dict[str, Any]:
+    errors = ontology_draft_validation_errors(payload)
+    if errors:
+        raise ValueError("Ontology draft response validation failed: " + "; ".join(errors))
+    return payload
+
+
+def validate_suggestion_payload(payload: Any, *, project: Project, template_id: str) -> dict[str, Any]:
+    return validate_ontology_draft_payload(payload, project=project, template_id=template_id)
+
+
+
+def _result_text(result: str | LlmTextResult) -> tuple[str, dict[str, Any] | None]:
+    if isinstance(result, LlmTextResult):
+        return result.text, result.usage
+    return str(result), None
 
 
 def _write_pipeline_test_log(payload: dict[str, Any]) -> dict[str, Any]:
@@ -797,38 +835,32 @@ def _write_pipeline_test_log(payload: dict[str, Any]) -> dict[str, Any]:
     stored = {**payload, "run_id": run_id, "output_path": str(path)}
     path.write_text(json.dumps(stored, indent=2), encoding="utf-8")
     return stored
-
-
-def validate_suggestion_payload(payload: Any, *, project: Project, template_id: str) -> dict[str, Any]:
-    if not isinstance(payload, dict) or not isinstance(payload.get("suggestions"), list):
-        raise ValueError("Ontology suggestion response must contain a suggestions array.")
-    required = {"suggestion_type", "label", "evidence_quote", "confidence", "rationale", "requires_human_check"}
-    allowed_types = {"class", "relation", "synonym", "definition", "annotation", "duplicate_warning"}
-    allowed_confidence = {"low", "medium", "high"}
-    for index, suggestion in enumerate(payload["suggestions"], start=1):
-        if not isinstance(suggestion, dict):
-            raise ValueError(f"Suggestion {index} must be an object.")
-        missing = sorted(required - suggestion.keys())
-        if missing:
-            raise ValueError(f"Suggestion {index} is missing required fields: {', '.join(missing)}.")
-        if suggestion["suggestion_type"] not in allowed_types:
-            raise ValueError(f"Suggestion {index} has unsupported suggestion_type.")
-        if suggestion["confidence"] not in allowed_confidence:
-            raise ValueError(f"Suggestion {index} has unsupported confidence.")
-        if suggestion["requires_human_check"] is not True:
-            raise ValueError(f"Suggestion {index} must require human check.")
-    payload.setdefault("project_id", project.slug)
-    payload.setdefault("ontology_id", project.ontology_id)
-    payload.setdefault("prompt_template_id", template_id)
-    return payload
-
-
-def _result_text(result: str | LlmTextResult) -> tuple[str, dict[str, Any] | None]:
-    if isinstance(result, LlmTextResult):
-        usage = getattr(result, "usage", None)
-        return result.text, usage
-    return result, None
-
+def _diagnostic_base_from_request(request: dict[str, Any]) -> dict[str, Any]:
+    project = request["project"]
+    template = request["template"]
+    config = request["config"]
+    entries = request["entries"]
+    assembly = request["assembly"]
+    return {
+        "provider": normalize_provider_id(config.provider) if config.provider else None,
+        "model": config.model,
+        "base_url": config.base_url,
+        "api_key_present": bool(config.resolved_api_key),
+        "api_key_source": config.api_key_source,
+        "project_id": project.slug,
+        "project_title": project.name,
+        "selected_literature_id": ", ".join(_entry_id(entry) for entry in entries),
+        "selected_literature_title": assembly.get("selected_literature_title"),
+        "included_literature": assembly.get("included_literature", []),
+        "selected_ontology_path": str(request["ontology_path"] or ""),
+        "ontology_context_included": bool(assembly.get("ontology_loaded")),
+        "ontology_context_mode": request["ontology_context_mode"],
+        "selected_prompt_id": template.id,
+        "selected_prompt_title": template.title,
+        "selected_prompt_version": template.version,
+        "estimated_input_tokens": request["estimated_input_tokens"],
+        "input_assembly": assembly,
+    }
 
 def preview_run(
     session: Session,
@@ -889,7 +921,7 @@ def llm_pipeline_test(
         ontology_context_mode=ontology_context_mode,
         prompt_text=prompt_text,
         limits=PIPELINE_TEST_LIMITS,
-        output_schema=llm_pipeline_test_schema(),
+        output_schema=ontology_draft_schema(),
     )
     config = request["config"]
     base = _diagnostic_base_from_request(request)
@@ -921,6 +953,7 @@ def llm_pipeline_test(
     recovered = False
     recovery_warning = None
     warnings: list[str] = []
+    validation_errors: list[str] = []
     status = "success"
     error_type = None
     error_message = None
@@ -928,8 +961,13 @@ def llm_pipeline_test(
     try:
         raw, _usage = _result_text(caller(request["prompt"], config) if caller else generate_text(request["prompt"], system_prompt=SYSTEM_PROMPT, config=config, json_mode=True))
         payload, method, recovered, recovery_warning = parse_json_response(raw)
-        validate_llm_pipeline_test_payload(payload)
-        if recovered:
+        validation_errors = ontology_draft_validation_errors(payload)
+        if validation_errors:
+            status = "error"
+            error_type = "schema_validation_error"
+            error_message = "; ".join(validation_errors)
+            suggested_fix = "Check that the model returned the required ontology_draft, proposed_terms, proposed_relations, and warnings fields."
+        elif recovered:
             status = "warning"
             warnings.append(recovery_warning or "Recovered JSON from a fenced response.")
     except json.JSONDecodeError as exc:
@@ -937,9 +975,9 @@ def llm_pipeline_test(
         error_type = "invalid_json_response"
         error_message = f"JSON parser error: {exc}"
         suggested_fix = "Ask the provider for JSON-only output or enable provider-native JSON mode where available."
-    except (ValueError, LlmClientError) as exc:
+    except LlmClientError as exc:
         status = "error"
-        error_type = "schema_validation_error" if payload is not None else "llm_request_error"
+        error_type = "llm_request_error"
         error_message = str(exc)
         suggested_fix = "Check selected literature, ontology context, prompt template, model, and provider diagnostics."
     result = {
@@ -948,7 +986,9 @@ def llm_pipeline_test(
         "status": status,
         "stage": "schema_validation" if payload is not None else "json_parse",
         "parsed_json": payload is not None,
-        "schema_valid": payload is not None and status in {"success", "warning"},
+        "parsed_payload": payload,
+        "schema_valid": payload is not None and not validation_errors and status in {"success", "warning"},
+        "validation_errors": validation_errors,
         "json_extraction_method": method,
         "json_recovered": recovered,
         "json_recovery_warning": recovery_warning,
@@ -1014,7 +1054,7 @@ def run_suggestions(
         prompt_text=prompt_text,
     )
     if preview["requires_confirmation"] and not confirmed:
-        raise ValueError("Multi-paper ontology suggestion runs require explicit confirmation.")
+        raise ValueError("Multi-paper ontology draft runs require explicit confirmation.")
     request = prepare_suggestion_request(
         session,
         project_ref=project_ref,
@@ -1029,7 +1069,7 @@ def run_suggestions(
     template = request["template"]
     config = request["config"]
     if not config.provider or not config.resolved_api_key:
-        raise LlmUnavailableError("No API key was found. Configure an LLM provider before running suggestions.")
+        raise LlmUnavailableError("No API key was found. Configure an LLM provider before running ontology draft generation.")
     raw = ""
     usage = None
     payload = None
@@ -1038,23 +1078,32 @@ def run_suggestions(
     json_extraction_method = "failed"
     json_recovered = False
     json_recovery_warning = None
+    validation_errors: list[str] = []
     try:
         raw, usage = _result_text(caller(request["prompt"], config) if caller else generate_text(request["prompt"], system_prompt=SYSTEM_PROMPT, config=config, json_mode=True))
-        parsed, json_extraction_method, json_recovered, json_recovery_warning = parse_json_response(raw)
-        payload = validate_suggestion_payload(parsed, project=project, template_id=template.id)
-    except (json.JSONDecodeError, ValueError, LlmClientError) as exc:
+        payload, json_extraction_method, json_recovered, json_recovery_warning = parse_json_response(raw)
+        validation_errors = ontology_draft_validation_errors(payload)
+        if validation_errors:
+            status = "failed"
+            error = "; ".join(validation_errors)
+    except json.JSONDecodeError as exc:
+        status = "failed"
+        error = f"JSON parser error: {exc}"
+    except LlmClientError as exc:
         status = "failed"
         error = str(exc)
     run_file = _write_run_file(
         {
-            "run_type": "suggestion_run",
+            "run_type": "ontology_draft_run",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": status,
             "provider": normalize_provider_id(config.provider),
             "model": config.model,
             "project_id": project.slug,
             "literature_ids": preview["literature_ids"],
+            "included_literature": preview["input_assembly"].get("included_literature", []),
             "ontology_context_mode": ontology_context_mode,
+            "ontology_context_included": bool(preview["input_assembly"].get("ontology_loaded")),
             "prompt_template_id": template.id,
             "prompt_template_title": template.title,
             "prompt_template_version": template.version,
@@ -1065,67 +1114,61 @@ def run_suggestions(
             "json_extraction_method": json_extraction_method,
             "json_recovered": json_recovered,
             "json_recovery_warning": json_recovery_warning,
+            "validation_errors": validation_errors,
             "error": error,
             "raw_response": raw,
             "payload": payload,
             "debug_prompt_logged": False,
         }
     )
-    if status != "ok":
-        raise ValueError(f"Ontology suggestion response was not valid: {error}")
-    curation_run = CurationRun(
-        project_id=project.id,
-        name=f"Ontology suggestions {run_file['run_id']}",
-        model=config.model,
-        prompt_strategy="ontology_suggestions",
-        context_configuration_json=json.dumps(
-            {
-                "workflow_run_id": run_file["run_id"],
-                "literature_ids": preview["literature_ids"],
-                "ontology_context_mode": ontology_context_mode,
-                "prompt_template_id": template.id,
-                "prompt_template_title": template.title,
-                "prompt_template_version": template.version,
-                "input_assembly": request["assembly"],
-            }
-        ),
-        prompt_text=prompt_text or template.prompt_text,
-        literature_snapshot_path=None,
-        ontology_snapshot_path=str(project_ontology_path(project) or ""),
-        raw_output=raw,
-        status="created",
-    )
-    session.add(curation_run)
-    session.flush()
-    for item in payload["suggestions"]:
-        session.add(
-            Suggestion(
-                project_id=project.id,
-                curation_run_id=curation_run.id,
-                suggestion_type=item["suggestion_type"],
-                label=item["label"],
-                definition=item.get("definition"),
-                parent_class=item.get("proposed_parent"),
-                relation=item.get("relation"),
-                target=item.get("target"),
-                evidence_text=item.get("evidence_quote"),
-                evidence_source=item.get("evidence_location"),
-                evidence_json=json.dumps(
-                    [{"quote": item.get("evidence_quote"), "location": item.get("evidence_location")}]
-                ),
-                confidence=item.get("confidence"),
-                raw_llm_output=json.dumps(item),
-            )
+    curation_run_id = None
+    if status == "ok":
+        curation_run = CurationRun(
+            project_id=project.id,
+            name=f"Ontology draft {run_file['run_id']}",
+            model=config.model,
+            prompt_strategy="ontology_draft",
+            context_configuration_json=json.dumps(
+                {
+                    "workflow_run_id": run_file["run_id"],
+                    "literature_ids": preview["literature_ids"],
+                    "included_literature": preview["input_assembly"].get("included_literature", []),
+                    "ontology_context_mode": ontology_context_mode,
+                    "ontology_context_included": bool(preview["input_assembly"].get("ontology_loaded")),
+                    "prompt_template_id": template.id,
+                    "prompt_template_title": template.title,
+                    "prompt_template_version": template.version,
+                    "input_assembly": request["assembly"],
+                }
+            ),
+            prompt_text=prompt_text or template.prompt_text,
+            literature_snapshot_path=None,
+            ontology_snapshot_path=str(project_ontology_path(project) or ""),
+            raw_output=raw,
+            status="drafted",
         )
-    session.commit()
+        session.add(curation_run)
+        session.commit()
+        curation_run_id = curation_run.id
     return {
-        "ok": True,
+        "ok": status == "ok",
+        "status": status,
+        "error": error,
         "run_id": run_file["run_id"],
-        "curation_run_id": curation_run.id,
-        "suggestion_count": len(payload["suggestions"]),
+        "curation_run_id": curation_run_id,
+        "suggestion_count": 0,
+        "draft_term_count": len(payload.get("proposed_terms", [])) if isinstance(payload, dict) else 0,
+        "draft_relation_count": len(payload.get("proposed_relations", [])) if isinstance(payload, dict) else 0,
         "output_path": run_file["path"],
         "json_extraction_method": json_extraction_method,
         "json_recovered": json_recovered,
+        "json_recovery_warning": json_recovery_warning,
+        "parsed_json": payload is not None,
+        "parsed_payload": payload,
+        "validation_errors": validation_errors,
+        "raw_response_preview": raw[:1000],
+        "included_literature": preview["input_assembly"].get("included_literature", []),
+        "ontology_context_included": bool(preview["input_assembly"].get("ontology_loaded")),
         "preview": {key: value for key, value in preview.items() if key != "prompt"},
     }
 
@@ -1243,3 +1286,10 @@ def _write_run_file(payload: dict[str, Any]) -> dict[str, str]:
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(log_payload) + "\n")
     return {"run_id": run_id, "path": str(path)}
+
+
+
+
+
+
+

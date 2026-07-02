@@ -552,7 +552,7 @@ def create_metadata_only_entry(
     return entry, duplicate
 
 
-def validate_markdown_candidate(markdown: str, entry: dict[str, Any]) -> dict[str, Any]:
+def validate_markdown_candidate(markdown: str, entry: dict[str, Any], *, manual_upload: bool = False) -> dict[str, Any]:
     text = markdown.strip()
     errors: list[str] = []
     warnings: list[str] = []
@@ -569,7 +569,11 @@ def validate_markdown_candidate(markdown: str, entry: dict[str, Any]) -> dict[st
     if lines:
         short_line_ratio = sum(1 for line in lines if len(line) < 35 and not line.startswith("#")) / len(lines)
         if short_line_ratio > 0.65:
-            errors.append("Body text appears to be mostly broken line fragments.")
+            message = "Body text appears to be mostly broken line fragments."
+            if manual_upload:
+                warnings.append(message)
+            else:
+                errors.append(message)
         repeated_ratio = (len(lines) - len(set(lines))) / len(lines)
         if repeated_ratio > 0.25:
             warnings.append("Repeated lines may indicate headers or footers; review before curation.")
@@ -589,7 +593,7 @@ def upload_manual_markdown(paths: RepositoryPaths, entry_id: str, *, markdown: s
     validation_path = paths.metadata / f"{entry_id}.validation_report.json"
     cleaned = clean_llm_markdown(markdown, title=entry.get("title") or "Untitled article", pii=entry.get("pii") or "", doi=entry.get("doi") or "")
     manual_path.write_text(cleaned, encoding="utf-8")
-    validation = validate_markdown_candidate(cleaned, entry) if validate else {"ok": True, "errors": [], "warnings": []}
+    validation = validate_markdown_candidate(cleaned, entry, manual_upload=True) if validate else {"ok": True, "errors": [], "warnings": []}
     validation_path.write_text(json.dumps(validation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     entry["manual_markdown_path"] = _relative_artifact_path(paths, manual_path)
     entry["validation_report_path"] = _relative_artifact_path(paths, validation_path)
@@ -604,8 +608,12 @@ def upload_manual_markdown(paths: RepositoryPaths, entry_id: str, *, markdown: s
         entry["markdown_file"] = str(canonical_path)
         entry["canonical_markdown_path"] = _relative_artifact_path(paths, canonical_artifact_path)
         entry["markdown_available"] = True
-        entry["markdown_status"] = "markdown_validated"
-        entry["state"] = "ready_for_curation"
+        if validation.get("warnings"):
+            entry["markdown_status"] = "manual_markdown_needs_review"
+            entry["state"] = "manual_review_required"
+        else:
+            entry["markdown_status"] = "markdown_validated"
+            entry["state"] = "ready_for_curation"
         entry["curation_status"] = "needs_review"
         entry["content_source"] = "manual_markdown"
         entry["source_quality"] = "manual_markdown"

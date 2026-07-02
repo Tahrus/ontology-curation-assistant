@@ -11,35 +11,35 @@
   "doi": "10.1016/j.biotechadv.2016.11.005",
   "url": "https://www.sciencedirect.com/science/article/pii/S0734975016301513",
   "zotero_key": "RFYDECCI",
+  "issn": "0734-9750",
+  "volume": "35",
+  "pages": "41-50",
   "journal": "Biotechnology Advances",
   "publisher": "Elsevier BV",
-  "issn": [
-    "0734-9750"
-  ],
   "canonical_id": "10.1016_j.biotechadv.2016.11.005",
   "source_type": "metadata_only",
-  "import_status": "staged",
-  "curation_status": "needs_manual_markdown",
-  "duplicate_status": "canonical_reused",
+  "import_status": "promoted",
+  "curation_status": "needs_review",
+  "duplicate_status": "unique",
   "pipeline_version": "oca-provider-v1",
   "extraction_mode": "publisher_api_required",
   "metadata_source": "zotero+crossref",
-  "content_source": null,
+  "content_source": "manual_markdown",
   "used_api_provider": "provider_registry",
   "fulltext_status": "structured_fulltext_unavailable",
-  "markdown_status": "manual_markdown_required",
-  "source_quality": "metadata_only",
+  "markdown_status": "markdown_validated",
+  "source_quality": "manual_markdown",
   "metadata_quality": {
     "ok": true,
     "errors": [],
     "warnings": []
   },
-  "state": "curation_blocked",
-  "blocked_reason": "API retrieval failed for all available identifiers. Human metadata fix required. No structured full text was staged. Please upload structured Markdown manually, or explicitly approve PDF fallback.",
+  "state": "ready_for_curation",
+  "blocked_reason": null,
   "recommended_action": "Upload structured Markdown manually, or explicitly approve PDF fallback for this item.",
   "source_report_path": "metadata/10.1016_j.biotechadv.2016.11.005.source_report.json",
-  "markdown_file": null,
-  "markdown_available": false,
+  "markdown_file": "projects\\bioprocess-ontology\\literature\\markdown\\10.1016_j.biotechadv.2016.11.005.md",
+  "markdown_available": true,
   "xml_retrieved": false,
   "pdf_used": false,
   "fallback_used": false,
@@ -66,15 +66,21 @@
       "reason": "response did not contain a structured full-text body"
     },
     {
+      "kind": "issn",
+      "value": "0734-9750",
+      "status": "skipped",
+      "reason": "not supported by Elsevier Article Retrieval API"
+    },
+    {
       "kind": "url",
       "value": "https://www.sciencedirect.com/science/article/pii/S0734975016301513",
       "status": "skipped",
       "reason": "not supported by Elsevier Article Retrieval API"
     }
   ],
-  "created_at": "2026-06-30T11:28:21.823502+00:00",
-  "imported_at": "2026-06-30T11:28:21.823502+00:00",
-  "updated_at": "2026-06-30T14:22:23.896675+00:00",
+  "created_at": "2026-07-01T08:48:20.697034+00:00",
+  "imported_at": "2026-07-01T08:48:20.697034+00:00",
+  "updated_at": "2026-07-02T12:04:48.592239+00:00",
   "artifacts": [
     {
       "path": "metadata/10.1016_j.biotechadv.2016.11.005.json",
@@ -85,12 +91,39 @@
       "path": "metadata/10.1016_j.biotechadv.2016.11.005.source_report.json",
       "artifact_type": "source_report_json",
       "ownership": "staged"
+    },
+    {
+      "path": "markdown/10.1016_j.biotechadv.2016.11.005.manual.md",
+      "artifact_type": "manual_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "markdown/10.1016_j.biotechadv.2016.11.005.canonical.md",
+      "artifact_type": "canonical_markdown",
+      "ownership": "staged"
+    },
+    {
+      "path": "metadata/10.1016_j.biotechadv.2016.11.005.validation_report.json",
+      "artifact_type": "validation_report_json",
+      "ownership": "staged"
     }
   ],
   "generated_artifacts": [
     "metadata/10.1016_j.biotechadv.2016.11.005.json",
-    "metadata/10.1016_j.biotechadv.2016.11.005.source_report.json"
+    "metadata/10.1016_j.biotechadv.2016.11.005.source_report.json",
+    "markdown/10.1016_j.biotechadv.2016.11.005.manual.md",
+    "markdown/10.1016_j.biotechadv.2016.11.005.canonical.md",
+    "metadata/10.1016_j.biotechadv.2016.11.005.validation_report.json"
   ],
   "metadata_file": "projects\\bioprocess-ontology\\literature\\metadata\\10.1016_j.biotechadv.2016.11.005.json",
-  "repository_stage": "staged"
+  "repository_stage": "staged",
+  "pii": "",
+  "project_tags": [],
+  "manual_markdown_path": "markdown/10.1016_j.biotechadv.2016.11.005.manual.md",
+  "validation_report_path": "metadata/10.1016_j.biotechadv.2016.11.005.validation_report.json",
+  "validation_errors": [],
+  "validation_warnings": [],
+  "canonical_markdown_path": "markdown/10.1016_j.biotechadv.2016.11.005.canonical.md",
+  "promoted_literature_id": "10.1016_j.biotechadv.2016.11.005",
+  "promoted_at": "2026-07-02T12:04:48.596864+00:00"
 }

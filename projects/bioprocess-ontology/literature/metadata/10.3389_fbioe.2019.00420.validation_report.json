@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [
+    "Body text appears to be mostly broken line fragments."
+  ]
+}
